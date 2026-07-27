@@ -4,6 +4,8 @@ using GymLink.Infrastructure.Security;
 using GymLink.Infrastructure.Identity;
 using GymLink.Application.Identity;
 using GymLink.Infrastructure.Seeding;
+using GymLink.Infrastructure.Memberships;
+using GymLink.Application.Memberships;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -103,6 +105,7 @@ public static class DependencyInjection
         services.AddScoped<IAccessTokenIssuer, JwtAccessTokenIssuer>();
         services.AddScoped<IRefreshTokenSettings, RefreshTokenSettings>();
         services.AddScoped<IApplicationTransaction, ApplicationTransaction>();
+        services.AddScoped<IMembershipWorkflowEventRecorder, LoggingMembershipWorkflowEventRecorder>();
         services.AddOptions<DevelopmentSeedOptions>()
             .Bind(configuration.GetSection(DevelopmentSeedOptions.SectionName));
         services.AddScoped<DevelopmentDataSeeder>();

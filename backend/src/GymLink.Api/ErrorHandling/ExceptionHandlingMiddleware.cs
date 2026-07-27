@@ -47,6 +47,10 @@ internal sealed class ExceptionHandlingMiddleware(
                 StatusCodes.Status403Forbidden,
                 authorization.Code,
                 authorization.Message),
+            DomainException domain when domain.Code == "invalid_state_transition" => (
+                StatusCodes.Status409Conflict,
+                domain.Code,
+                domain.Message),
             DomainException domain => (StatusCodes.Status400BadRequest, domain.Code, domain.Message),
             ApplicationRuleException rule => (StatusCodes.Status400BadRequest, rule.Code, rule.Message),
             DbUpdateConcurrencyException => (

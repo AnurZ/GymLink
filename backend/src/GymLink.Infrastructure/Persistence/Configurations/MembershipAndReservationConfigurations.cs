@@ -61,9 +61,14 @@ internal sealed class MembershipConfiguration : EntityConfiguration<Membership>
         builder.Property(x => x.Price).HasPrecision(18, 2);
         builder.Property(x => x.Currency).HasMaxLength(3).IsFixedLength().IsRequired();
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
-        builder.HasIndex(x => new { x.TenantId, x.MemberUserId, x.GymId, x.Status });
+        builder.Property(x => x.StatusReason).HasMaxLength(1000);
+        builder.HasIndex(x => new { x.TenantId, x.MemberUserId, x.GymId })
+            .IsUnique()
+            .HasFilter("[Status] IN (N'PendingPayment', N'Active', N'Suspended')");
         builder.HasIndex(x => x.MembershipRequestId).IsUnique();
         builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.MemberUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.StatusChangedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Gym>().WithMany().HasForeignKey(x => x.GymId)
             .OnDelete(DeleteBehavior.Restrict);

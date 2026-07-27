@@ -29,6 +29,8 @@ public interface IApplicationDbContext
     DbSet<TrainerTrainingType> TrainerTrainingTypes { get; }
     DbSet<TrainerServiceOffering> TrainerServiceOfferings { get; }
     DbSet<MembershipPlan> MembershipPlans { get; }
+    DbSet<MembershipRequest> MembershipRequests { get; }
+    DbSet<Membership> Memberships { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -2,6 +2,7 @@ using System.Reflection;
 using GymLink.Application.Catalog;
 using GymLink.Application.Administration;
 using GymLink.Application.Identity;
+using GymLink.Application.Memberships;
 using GymLink.Application.ReferenceData;
 using GymLink.Application.Registration;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,6 +25,8 @@ public static class DependencyInjection
         services.AddScoped<IGymRegistrationService, GymRegistrationService>();
         services.AddScoped<ITenantAdministrationService, TenantAdministrationService>();
         services.AddScoped<IUserAdministrationService, UserAdministrationService>();
+        services.AddScoped<IMembershipRequestService, MembershipRequestService>();
+        services.AddScoped<IMembershipService, MembershipService>();
         return services;
     }
 }

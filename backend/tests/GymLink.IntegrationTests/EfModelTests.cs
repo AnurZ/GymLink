@@ -90,6 +90,13 @@ public sealed class EfModelTests
             context.Model.FindEntityType(typeof(MembershipRequest))!.GetIndexes(),
             index => index.IsUnique && index.GetFilter() is not null);
         Assert.Contains(
+            context.Model.FindEntityType(typeof(Membership))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["TenantId", "MemberUserId", "GymId"]) &&
+                index.GetFilter()!.Contains("PendingPayment", StringComparison.Ordinal) &&
+                index.GetFilter()!.Contains("Active", StringComparison.Ordinal) &&
+                index.GetFilter()!.Contains("Suspended", StringComparison.Ordinal));
+        Assert.Contains(
             context.Model.FindEntityType(typeof(Review))!.GetIndexes(),
             index => index.IsUnique &&
                 PropertyNames(index).SequenceEqual(["ReservationId"]));
