@@ -7,10 +7,19 @@ namespace GymLink.Infrastructure.Persistence;
 
 public sealed class TenantAuditSaveChangesInterceptor(
     ITenantContext tenantContext,
+    ITenantMutationScope tenantMutationScope,
     ICurrentUser currentUser,
     TimeProvider timeProvider)
     : SaveChangesInterceptor
 {
+    public TenantAuditSaveChangesInterceptor(
+        ITenantContext tenantContext,
+        ICurrentUser currentUser,
+        TimeProvider timeProvider)
+        : this(tenantContext, new NoTenantMutationScope(), currentUser, timeProvider)
+    {
+    }
+
     public override InterceptionResult<int> SavingChanges(
         DbContextEventData eventData,
         InterceptionResult<int> result)
@@ -45,17 +54,16 @@ public sealed class TenantAuditSaveChangesInterceptor(
 
             if (entry.Entity is ITenantOwned tenantOwned)
             {
-                if (!tenantContext.TenantId.HasValue)
-                {
-                    throw new InvalidOperationException("A tenant context is required for tenant-owned writes.");
-                }
-
-                if (entry.State == EntityState.Added && tenantOwned.TenantId == Guid.Empty)
+                if (entry.State == EntityState.Added &&
+                    tenantOwned.TenantId == Guid.Empty &&
+                    tenantContext.TenantId.HasValue)
                 {
                     tenantOwned.TenantId = tenantContext.TenantId.Value;
                 }
 
-                if (tenantOwned.TenantId != tenantContext.TenantId.Value)
+                if ((!tenantContext.TenantId.HasValue ||
+                     tenantOwned.TenantId != tenantContext.TenantId.Value) &&
+                    !tenantMutationScope.Allows(tenantOwned.TenantId))
                 {
                     throw new InvalidOperationException("Cross-tenant writes are not permitted.");
                 }
@@ -63,7 +71,10 @@ public sealed class TenantAuditSaveChangesInterceptor(
                 if (entry.State is EntityState.Modified or EntityState.Deleted)
                 {
                     var originalTenantId = entry.Property(nameof(ITenantOwned.TenantId)).OriginalValue;
-                    if (originalTenantId is Guid original && original != tenantContext.TenantId.Value)
+                    if (originalTenantId is Guid original &&
+                        ((!tenantContext.TenantId.HasValue ||
+                          original != tenantContext.TenantId.Value) &&
+                         !tenantMutationScope.Allows(original)))
                     {
                         throw new InvalidOperationException("Cross-tenant writes are not permitted.");
                     }
@@ -96,5 +107,13 @@ public sealed class TenantAuditSaveChangesInterceptor(
                 throw new InvalidOperationException("All DateTime values must use UTC.");
             }
         }
+    }
+
+    private sealed class NoTenantMutationScope : ITenantMutationScope
+    {
+        public bool Allows(Guid tenantId) => false;
+
+        public IDisposable Begin(params Guid[] tenantIds) =>
+            throw new NotSupportedException();
     }
 }

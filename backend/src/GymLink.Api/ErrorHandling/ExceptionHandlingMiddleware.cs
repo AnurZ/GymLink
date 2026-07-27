@@ -39,6 +39,14 @@ internal sealed class ExceptionHandlingMiddleware(
         {
             NotFoundException notFound => (StatusCodes.Status404NotFound, notFound.Code, notFound.Message),
             ConflictException conflict => (StatusCodes.Status409Conflict, conflict.Code, conflict.Message),
+            AuthenticationFailedException authentication => (
+                StatusCodes.Status401Unauthorized,
+                authentication.Code,
+                authentication.Message),
+            AuthorizationDeniedException authorization => (
+                StatusCodes.Status403Forbidden,
+                authorization.Code,
+                authorization.Message),
             DomainException domain => (StatusCodes.Status400BadRequest, domain.Code, domain.Message),
             ApplicationRuleException rule => (StatusCodes.Status400BadRequest, rule.Code, rule.Message),
             DbUpdateConcurrencyException => (

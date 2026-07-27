@@ -26,7 +26,7 @@ internal sealed class PaymentConfiguration : EntityConfiguration<Payment>
         builder.HasIndex(x => x.LastProviderEventId).IsUnique()
             .HasFilter("[LastProviderEventId] IS NOT NULL");
         builder.HasIndex(x => new { x.TenantId, x.Purpose, x.TargetId, x.Status });
-        builder.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId)
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.UserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId)
             .OnDelete(DeleteBehavior.Restrict);
@@ -51,7 +51,7 @@ internal sealed class RefundConfiguration : EntityConfiguration<Refund>
         builder.HasIndex(x => new { x.TenantId, x.PaymentId });
         builder.HasOne<Payment>().WithMany().HasForeignKey(x => x.PaymentId)
             .OnDelete(DeleteBehavior.Restrict);
-        builder.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.RequestedByUserId)
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.RequestedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId)
             .OnDelete(DeleteBehavior.Restrict);

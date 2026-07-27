@@ -1,30 +1,79 @@
 using GymLink.Api.ErrorHandling;
-using GymLink.Api.Security;
 using GymLink.Application.Authorization;
 using GymLink.Domain.Common;
-using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.OpenApi;
+using System.Text.Json.Serialization;
 
 namespace GymLink.Api;
 
 public static class DependencyInjection
 {
-    private const string FailClosedScheme = "Phase3Pending";
+    private const string CorsPolicy = "ConfiguredOrigins";
 
-    public static IServiceCollection AddGymLinkApi(this IServiceCollection services)
+    public static IServiceCollection AddGymLinkApi(
+        this IServiceCollection services,
+        IConfiguration configuration)
     {
-        services.AddControllers();
-        services.AddAuthentication(FailClosedScheme)
-            .AddScheme<AuthenticationSchemeOptions, FailClosedAuthenticationHandler>(
-                FailClosedScheme,
-                _ => { });
+        services.AddProblemDetails();
+        services.AddControllers()
+            .AddJsonOptions(options =>
+                options.JsonSerializerOptions.UnmappedMemberHandling =
+                    JsonUnmappedMemberHandling.Disallow)
+            .ConfigureApiBehaviorOptions(options =>
+            {
+                options.InvalidModelStateResponseFactory = context =>
+                {
+                    var details = new ValidationProblemDetails(context.ModelState)
+                    {
+                        Status = StatusCodes.Status400BadRequest,
+                        Title = "validation_failed",
+                        Detail = "One or more validation errors occurred.",
+                    };
+                    details.Extensions["traceId"] = context.HttpContext.TraceIdentifier;
+                    return new BadRequestObjectResult(details);
+                };
+            });
+        var origins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+        services.AddCors(options =>
+            options.AddPolicy(
+                CorsPolicy,
+                policy =>
+                {
+                    if (origins.Length > 0)
+                    {
+                        policy.WithOrigins(origins)
+                            .AllowAnyHeader()
+                            .AllowAnyMethod();
+                    }
+                }));
         services.AddAuthorizationBuilder()
             .AddPolicy(
                 PolicyNames.CentralAdminOnly,
                 policy => policy.RequireAuthenticatedUser().RequireRole(RoleNames.CentralAdmin))
             .AddPolicy(
                 PolicyNames.TenantGymAdmin,
-                policy => policy.RequireAuthenticatedUser().RequireRole(RoleNames.GymAdmin));
+                policy => policy
+                    .RequireAuthenticatedUser()
+                    .RequireRole(RoleNames.GymAdmin)
+                    .RequireClaim("tenant_id")
+                    .RequireClaim("tenant_role", RoleNames.GymAdmin))
+            .AddPolicy(
+                PolicyNames.TenantTrainer,
+                policy => policy
+                    .RequireAuthenticatedUser()
+                    .RequireRole(RoleNames.Trainer)
+                    .RequireClaim("tenant_id")
+                    .RequireClaim("tenant_role", RoleNames.Trainer))
+            .AddPolicy(
+                PolicyNames.TenantStaff,
+                policy => policy
+                    .RequireAuthenticatedUser()
+                    .RequireRole(RoleNames.GymAdmin, RoleNames.Trainer)
+                    .RequireClaim("tenant_id"))
+            .AddPolicy(
+                PolicyNames.MemberSelf,
+                policy => policy.RequireAuthenticatedUser().RequireRole(RoleNames.Member));
         services.AddEndpointsApiExplorer();
         services.AddSwaggerGen(options =>
         {
@@ -32,7 +81,7 @@ public static class DependencyInjection
             {
                 Title = "GymLink API",
                 Version = "v1",
-                Description = "GymLink catalog API. Protected writes remain fail-closed until Phase 3 JWT authorization.",
+                Description = "GymLink API.",
             });
             options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
             {
@@ -41,6 +90,10 @@ public static class DependencyInjection
                 Scheme = "bearer",
                 BearerFormat = "JWT",
                 In = ParameterLocation.Header,
+            });
+            options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+            {
+                [new OpenApiSecuritySchemeReference("Bearer", document)] = [],
             });
         });
         return services;
@@ -55,6 +108,7 @@ public static class DependencyInjection
             app.UseSwaggerUI();
         }
 
+        app.UseCors(CorsPolicy);
         app.UseAuthentication();
         app.UseAuthorization();
         return app;

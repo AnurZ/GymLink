@@ -3,7 +3,10 @@ using GymLink.Domain.Memberships;
 using GymLink.Domain.Payments;
 using GymLink.Domain.Reservations;
 using GymLink.Domain.Tenancy;
+using GymLink.Domain.Identity;
+using GymLink.Infrastructure.Identity;
 using GymLink.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 
@@ -74,12 +77,51 @@ public sealed class EfModelTests
             index => index.IsUnique &&
                 PropertyNames(index).SequenceEqual(["TenantId", "UserId", "Role"]));
         Assert.Contains(
+            context.Model.FindEntityType(typeof(UserGymAssignment))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["UserId"]) &&
+                index.GetFilter()!.Contains("GymAdmin", StringComparison.Ordinal));
+        Assert.Contains(
+            context.Model.FindEntityType(typeof(GymRegistrationRequest))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["ApplicantUserId"]) &&
+                index.GetFilter()!.Contains("Submitted", StringComparison.Ordinal));
+        Assert.Contains(
             context.Model.FindEntityType(typeof(MembershipRequest))!.GetIndexes(),
             index => index.IsUnique && index.GetFilter() is not null);
         Assert.Contains(
             context.Model.FindEntityType(typeof(Review))!.GetIndexes(),
             index => index.IsUnique &&
                 PropertyNames(index).SequenceEqual(["ReservationId"]));
+    }
+
+    [Fact]
+    public void Identity_uses_explicit_tables_and_shared_profile_key()
+    {
+        using var context = CreateContext(Guid.NewGuid());
+
+        Assert.Equal(
+            "IdentityUsers",
+            context.Model.FindEntityType(typeof(GymLinkIdentityUser))!.GetTableName());
+        Assert.Equal(
+            "IdentityRoles",
+            context.Model.FindEntityType(typeof(IdentityRole<Guid>))!.GetTableName());
+        Assert.Equal(
+            "IdentityUserRoles",
+            context.Model.FindEntityType(typeof(IdentityUserRole<Guid>))!.GetTableName());
+
+        var emailIndex = context.Model.FindEntityType(typeof(GymLinkIdentityUser))!
+            .GetIndexes()
+            .Single(index => PropertyNames(index).SequenceEqual(["NormalizedEmail"]));
+        Assert.True(emailIndex.IsUnique);
+
+        var profile = context.Model.FindEntityType(typeof(UserProfile))!;
+        Assert.Contains(
+            profile.GetForeignKeys(),
+            foreignKey =>
+                foreignKey.PrincipalEntityType.ClrType == typeof(GymLinkIdentityUser) &&
+                PropertyNames(foreignKey.PrincipalKey).SequenceEqual(["Id"]) &&
+                foreignKey.Properties.Select(x => x.Name).SequenceEqual(["Id"]));
     }
 
     private static GymLinkDbContext CreateContext(Guid? tenantId)
@@ -104,4 +146,7 @@ public sealed class EfModelTests
 
     private static IEnumerable<string> PropertyNames(IReadOnlyIndex index) =>
         index.Properties.Select(x => x.Name);
+
+    private static IEnumerable<string> PropertyNames(IReadOnlyKey key) =>
+        key.Properties.Select(x => x.Name);
 }

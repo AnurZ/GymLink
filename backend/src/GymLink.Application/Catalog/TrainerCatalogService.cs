@@ -1,5 +1,7 @@
 using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
+using GymLink.Application.Identity;
+using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Trainers;
 using Microsoft.EntityFrameworkCore;
@@ -8,7 +10,8 @@ namespace GymLink.Application.Catalog;
 
 public sealed class TrainerCatalogService(
     IApplicationDbContext dbContext,
-    ITenantContext tenantContext) : ITrainerCatalogService
+    ITenantContext tenantContext,
+    IIdentityAccountManager accounts) : ITrainerCatalogService
 {
     public async Task<PagedResult<TrainerDto>> SearchAsync(
         TrainerSearchRequest request,
@@ -18,7 +21,7 @@ public sealed class TrainerCatalogService(
         request.Validate();
         var query =
             from trainer in dbContext.TrainerProfiles.AsNoTracking()
-            join user in dbContext.Users.AsNoTracking() on trainer.UserId equals user.Id
+            join user in dbContext.UserProfiles.AsNoTracking() on trainer.UserId equals user.Id
             select new { Trainer = trainer, User = user };
 
         if (!string.IsNullOrWhiteSpace(request.Query))
@@ -80,7 +83,7 @@ public sealed class TrainerCatalogService(
             ?? throw new NotFoundException("gym_not_found", "The gym was not found.");
         var rows = await (
                 from trainer in dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
-                join user in dbContext.Users.AsNoTracking() on trainer.UserId equals user.Id
+                join user in dbContext.UserProfiles.AsNoTracking() on trainer.UserId equals user.Id
                 where trainer.TenantId == gym.TenantId && trainer.IsActive && user.IsActive
                 orderby user.DisplayName
                 select new
@@ -117,9 +120,20 @@ public sealed class TrainerCatalogService(
         CancellationToken cancellationToken)
     {
         var tenantId = RequireTenant();
-        var user = await dbContext.Users.AsNoTracking()
+        var user = await dbContext.UserProfiles.AsNoTracking()
             .SingleOrDefaultAsync(x => x.Id == request.UserId && x.IsActive, cancellationToken)
             ?? throw new NotFoundException("user_not_found", "The selected user was not found.");
+        if (!await accounts.IsInRoleAsync(request.UserId, RoleNames.Trainer) ||
+            !await dbContext.UserGymAssignments.AnyAsync(
+                x => x.UserId == request.UserId &&
+                     x.Role == RoleNames.Trainer &&
+                     x.Status == AssignmentStatus.Active,
+                cancellationToken))
+        {
+            throw new ConflictException(
+                "trainer_assignment_required",
+                "The selected user must have the Trainer role and an active assignment in this gym.");
+        }
         if (await dbContext.TrainerProfiles.AnyAsync(x => x.UserId == request.UserId, cancellationToken))
         {
             throw new ConflictException("trainer_duplicate", "This user already has a trainer profile in the gym.");
@@ -157,7 +171,7 @@ public sealed class TrainerCatalogService(
             throw new ConflictException("trainer_user_immutable", "A trainer profile cannot be moved to another user.");
         }
 
-        var user = await dbContext.Users.AsNoTracking()
+        var user = await dbContext.UserProfiles.AsNoTracking()
             .SingleAsync(x => x.Id == trainer.UserId, cancellationToken);
         var trainingTypeIds = await ValidateTrainingTypesAsync(request.TrainingTypeIds, cancellationToken);
         trainer.Biography = request.Biography.Trim();

@@ -11,6 +11,9 @@ using GymLink.Domain.ReferenceData;
 using GymLink.Domain.Reservations;
 using GymLink.Domain.Tenancy;
 using GymLink.Domain.Trainers;
+using GymLink.Infrastructure.Identity;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
@@ -19,12 +22,14 @@ namespace GymLink.Infrastructure.Persistence;
 public sealed class GymLinkDbContext(
     DbContextOptions<GymLinkDbContext> options,
     ITenantContext tenantContext)
-    : DbContext(options), IApplicationDbContext
+    : IdentityDbContext<GymLinkIdentityUser, IdentityRole<Guid>, Guid>(options),
+        IApplicationDbContext
 {
     public Guid? CurrentTenantId => tenantContext.TenantId;
 
-    public DbSet<ApplicationUser> Users => Set<ApplicationUser>();
+    public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
     public DbSet<RefreshTokenSession> RefreshTokenSessions => Set<RefreshTokenSession>();
+    public DbSet<SecurityAuditRecord> SecurityAuditRecords => Set<SecurityAuditRecord>();
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<GymRegistrationRequest> GymRegistrationRequests => Set<GymRegistrationRequest>();
     public DbSet<UserGymAssignment> UserGymAssignments => Set<UserGymAssignment>();
@@ -56,11 +61,13 @@ public sealed class GymLinkDbContext(
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<Refund> Refunds => Set<Refund>();
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    protected override void OnModelCreating(ModelBuilder builder)
     {
-        modelBuilder.ApplyConfigurationsFromAssembly(typeof(GymLinkDbContext).Assembly);
+        base.OnModelCreating(builder);
+        builder.ApplyConfigurationsFromAssembly(typeof(GymLinkDbContext).Assembly);
+        ConfigureIdentityTables(builder);
 
-        foreach (var entityType in modelBuilder.Model.GetEntityTypes()
+        foreach (var entityType in builder.Model.GetEntityTypes()
                      .Where(x => typeof(ITenantOwned).IsAssignableFrom(x.ClrType)))
         {
             var parameter = Expression.Parameter(entityType.ClrType, "entity");
@@ -73,7 +80,7 @@ public sealed class GymLinkDbContext(
             var hasTenant = Expression.Property(currentTenantId, nameof(Nullable<Guid>.HasValue));
             var matchesTenant = Expression.Equal(tenantId, currentTenantId);
             var body = Expression.AndAlso(hasTenant, matchesTenant);
-            modelBuilder.Entity(entityType.ClrType)
+            builder.Entity(entityType.ClrType)
                 .HasQueryFilter(Expression.Lambda(body, parameter));
         }
 
@@ -86,7 +93,7 @@ public sealed class GymLinkDbContext(
                 ? DateTime.SpecifyKind(value.Value, DateTimeKind.Utc)
                 : value);
 
-        foreach (var property in modelBuilder.Model.GetEntityTypes()
+        foreach (var property in builder.Model.GetEntityTypes()
                      .SelectMany(entityType => entityType.GetProperties()))
         {
             if (property.ClrType == typeof(DateTime))
@@ -98,7 +105,30 @@ public sealed class GymLinkDbContext(
                 property.SetValueConverter(nullableUtcConverter);
             }
         }
+    }
 
-        base.OnModelCreating(modelBuilder);
+    private static void ConfigureIdentityTables(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<GymLinkIdentityUser>(builder =>
+        {
+            builder.ToTable("IdentityUsers");
+            builder.Property(x => x.UserName).HasMaxLength(160);
+            builder.Property(x => x.NormalizedUserName).HasMaxLength(160);
+            builder.Property(x => x.Email).HasMaxLength(320);
+            builder.Property(x => x.NormalizedEmail).HasMaxLength(320);
+            builder.HasIndex(x => x.NormalizedEmail)
+                .IsUnique()
+                .HasFilter("[NormalizedEmail] IS NOT NULL");
+            builder.HasOne(x => x.Profile)
+                .WithOne()
+                .HasForeignKey<UserProfile>(x => x.Id)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<IdentityRole<Guid>>().ToTable("IdentityRoles");
+        modelBuilder.Entity<IdentityUserRole<Guid>>().ToTable("IdentityUserRoles");
+        modelBuilder.Entity<IdentityUserClaim<Guid>>().ToTable("IdentityUserClaims");
+        modelBuilder.Entity<IdentityRoleClaim<Guid>>().ToTable("IdentityRoleClaims");
+        modelBuilder.Entity<IdentityUserLogin<Guid>>().ToTable("IdentityUserLogins");
+        modelBuilder.Entity<IdentityUserToken<Guid>>().ToTable("IdentityUserTokens");
     }
 }

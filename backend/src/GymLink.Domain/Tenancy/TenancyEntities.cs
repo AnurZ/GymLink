@@ -30,8 +30,12 @@ public sealed class GymRegistrationRequest : AuditedEntity, IConcurrencyTracked
 {
     public Guid ApplicantUserId { get; set; }
     public string ProposedGymName { get; set; } = string.Empty;
+    public string ProposedDescription { get; set; } = string.Empty;
     public string ProposedAddress { get; set; } = string.Empty;
     public Guid CityId { get; set; }
+    public decimal Latitude { get; set; }
+    public decimal Longitude { get; set; }
+    public string? PhoneNumber { get; set; }
     public GymRegistrationStatus Status { get; set; } = GymRegistrationStatus.Draft;
     public DateTime? SubmittedAtUtc { get; set; }
     public Guid? DecidedByUserId { get; set; }

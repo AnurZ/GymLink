@@ -17,7 +17,7 @@ internal sealed class TrainerProfileConfiguration : EntityConfiguration<TrainerP
         builder.Property(x => x.Credentials).HasMaxLength(2000);
         builder.Property(x => x.AverageRating).HasPrecision(3, 2);
         builder.HasIndex(x => new { x.TenantId, x.UserId }).IsUnique();
-        builder.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.UserId)
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.UserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId)
             .OnDelete(DeleteBehavior.Restrict);

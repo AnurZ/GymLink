@@ -50,7 +50,8 @@ public sealed class ArchitectureTests
             new TestTenantContext(Guid.NewGuid()));
 
         Assert.All(
-            context.Model.GetEntityTypes(),
+            context.Model.GetEntityTypes()
+                .Where(entityType => typeof(Entity).IsAssignableFrom(entityType.ClrType)),
             entityType => Assert.Contains(entityType.ClrType, configuredTypes));
     }
 }

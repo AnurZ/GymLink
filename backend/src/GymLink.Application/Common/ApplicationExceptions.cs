@@ -21,3 +21,17 @@ public sealed class ConflictException : Exception
 
     public string Code { get; }
 }
+
+public sealed class AuthenticationFailedException(
+    string code = "invalid_credentials",
+    string message = "The supplied credentials are invalid.") : Exception(message)
+{
+    public string Code { get; } = code;
+}
+
+public sealed class AuthorizationDeniedException(
+    string code = "access_denied",
+    string message = "You are not authorized to perform this action.") : Exception(message)
+{
+    public string Code { get; } = code;
+}

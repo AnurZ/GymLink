@@ -10,8 +10,12 @@ namespace GymLink.Application.Abstractions;
 
 public interface IApplicationDbContext
 {
-    DbSet<ApplicationUser> Users { get; }
+    DbSet<UserProfile> UserProfiles { get; }
+    DbSet<RefreshTokenSession> RefreshTokenSessions { get; }
+    DbSet<SecurityAuditRecord> SecurityAuditRecords { get; }
     DbSet<Tenant> Tenants { get; }
+    DbSet<GymRegistrationRequest> GymRegistrationRequests { get; }
+    DbSet<UserGymAssignment> UserGymAssignments { get; }
     DbSet<Country> Countries { get; }
     DbSet<City> Cities { get; }
     DbSet<Equipment> Equipment { get; }

@@ -38,9 +38,9 @@ internal sealed class MembershipRequestConfiguration : EntityConfiguration<Membe
         builder.HasIndex(x => new { x.TenantId, x.MemberUserId, x.GymId })
             .IsUnique()
             .HasFilter("[Status] = N'Pending'");
-        builder.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.MemberUserId)
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.MemberUserId)
             .OnDelete(DeleteBehavior.Restrict);
-        builder.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.DecidedByUserId)
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.DecidedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Gym>().WithMany().HasForeignKey(x => x.GymId)
             .OnDelete(DeleteBehavior.Restrict);
@@ -63,7 +63,7 @@ internal sealed class MembershipConfiguration : EntityConfiguration<Membership>
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
         builder.HasIndex(x => new { x.TenantId, x.MemberUserId, x.GymId, x.Status });
         builder.HasIndex(x => x.MembershipRequestId).IsUnique();
-        builder.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.MemberUserId)
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.MemberUserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Gym>().WithMany().HasForeignKey(x => x.GymId)
             .OnDelete(DeleteBehavior.Restrict);
@@ -90,9 +90,9 @@ internal sealed class AppointmentReservationConfiguration : EntityConfiguration<
         builder.Property(x => x.CancellationReason).HasMaxLength(1000);
         builder.HasIndex(x => new { x.TenantId, x.TrainerProfileId, x.StartsAtUtc, x.EndsAtUtc });
         builder.HasIndex(x => new { x.TenantId, x.MemberUserId, x.StartsAtUtc, x.EndsAtUtc });
-        builder.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.MemberUserId)
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.MemberUserId)
             .OnDelete(DeleteBehavior.Restrict);
-        builder.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.CancelledByUserId)
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.CancelledByUserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<TrainerProfile>().WithMany().HasForeignKey(x => x.TrainerProfileId)
             .OnDelete(DeleteBehavior.Restrict);
@@ -118,7 +118,7 @@ internal sealed class ReviewConfiguration : EntityConfiguration<Review>
         builder.HasIndex(x => x.ReservationId).IsUnique();
         builder.HasOne<AppointmentReservation>().WithOne().HasForeignKey<Review>(x => x.ReservationId)
             .OnDelete(DeleteBehavior.Restrict);
-        builder.HasOne<ApplicationUser>().WithMany().HasForeignKey(x => x.ReviewerUserId)
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.ReviewerUserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<TrainerProfile>().WithMany().HasForeignKey(x => x.TrainerProfileId)
             .OnDelete(DeleteBehavior.Restrict);
