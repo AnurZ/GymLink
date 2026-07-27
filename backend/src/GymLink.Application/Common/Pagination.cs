@@ -1,6 +1,6 @@
 namespace GymLink.Application.Common;
 
-public sealed record PagedRequest
+public record PagedRequest
 {
     public const int MaximumPageSize = 100;
 

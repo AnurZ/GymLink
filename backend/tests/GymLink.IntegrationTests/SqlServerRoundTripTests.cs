@@ -12,8 +12,7 @@ public sealed class SqlServerRoundTripTests
     public async Task SqlServerRoundTripEnforcesTenantFilterAndAuditGuard()
     {
         var databaseName = $"GymLink_Phase1_{Guid.NewGuid():N}";
-        var connectionString =
-            $"Server=(localdb)\\MSSQLLocalDB;Database={databaseName};Integrated Security=true;TrustServerCertificate=true";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
         var tenantA = Guid.NewGuid();
         var tenantB = Guid.NewGuid();
         var userId = Guid.NewGuid();

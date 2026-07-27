@@ -85,7 +85,7 @@ public sealed class EfModelTests
     private static GymLinkDbContext CreateContext(Guid? tenantId)
     {
         var options = new DbContextOptionsBuilder<GymLinkDbContext>()
-            .UseSqlServer("Server=(localdb)\\MSSQLLocalDB;Database=GymLinkModelOnly;Integrated Security=true")
+            .UseSqlServer(TestSqlServer.ConnectionString("GymLinkModelOnly"))
             .Options;
         return new GymLinkDbContext(options, new TestTenantContext(tenantId));
     }

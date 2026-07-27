@@ -19,7 +19,7 @@ namespace GymLink.Infrastructure.Persistence;
 public sealed class GymLinkDbContext(
     DbContextOptions<GymLinkDbContext> options,
     ITenantContext tenantContext)
-    : DbContext(options)
+    : DbContext(options), IApplicationDbContext
 {
     public Guid? CurrentTenantId => tenantContext.TenantId;
 

@@ -1,11 +1,23 @@
 {
   "profiles": {
-    "GymLink.Api": {
+    "http": {
       "commandName": "Project",
       "launchBrowser": true,
+      "launchUrl": "swagger",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       },
+      "dotnetRunMessages": true,
+      "applicationUrl": "http://localhost:62287"
+    },
+    "https": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "dotnetRunMessages": true,
       "applicationUrl": "https://localhost:62286;http://localhost:62287"
     }
   }

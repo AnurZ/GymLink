@@ -60,6 +60,32 @@ public sealed class TrainerServiceOffering : TenantEntity, IConcurrencyTracked
     public string Currency { get; private set; } = string.Empty;
     public bool IsActive { get; set; } = true;
     public byte[] RowVersion { get; set; } = [];
+
+    public void UpdateDetails(
+        Guid trainingTypeId,
+        string name,
+        int durationMinutes,
+        decimal price,
+        string currency,
+        bool isActive)
+    {
+        if (durationMinutes <= 0)
+        {
+            throw new DomainException("invalid_duration", "Duration must be greater than zero.");
+        }
+
+        if (price < 0)
+        {
+            throw new DomainException("invalid_price", "Price cannot be negative.");
+        }
+
+        TrainingTypeId = trainingTypeId;
+        Name = name;
+        DurationMinutes = durationMinutes;
+        Price = price;
+        Currency = currency;
+        IsActive = isActive;
+    }
 }
 
 public sealed class TrainerAvailabilitySlot : TenantEntity, IConcurrencyTracked

@@ -45,7 +45,7 @@ public sealed class ArchitectureTests
 
         using var context = new GymLinkDbContext(
             new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<GymLinkDbContext>()
-                .UseSqlServer("Server=(localdb)\\MSSQLLocalDB;Database=GymLinkArchitectureOnly;Integrated Security=true")
+                .UseSqlServer(TestSqlServer.ConnectionString("GymLinkArchitectureOnly"))
                 .Options,
             new TestTenantContext(Guid.NewGuid()));
 

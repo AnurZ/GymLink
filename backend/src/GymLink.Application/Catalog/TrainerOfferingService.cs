@@ -1,0 +1,215 @@
+using GymLink.Application.Abstractions;
+using GymLink.Application.Common;
+using GymLink.Domain.Trainers;
+using Microsoft.EntityFrameworkCore;
+
+namespace GymLink.Application.Catalog;
+
+public sealed class TrainerOfferingService(
+    IApplicationDbContext dbContext,
+    ITenantContext tenantContext) : ITrainerOfferingService
+{
+    public Task<PagedResult<TrainerOfferingDto>> SearchAsync(
+        CatalogSearchRequest request,
+        CancellationToken cancellationToken)
+    {
+        RequireTenant();
+        request.Validate();
+        var query =
+            from offering in dbContext.TrainerServiceOfferings.AsNoTracking()
+            join trainingType in dbContext.TrainingTypes.AsNoTracking()
+                on offering.TrainingTypeId equals trainingType.Id
+            select new { Offering = offering, TrainingType = trainingType.Name };
+        if (!string.IsNullOrWhiteSpace(request.Query))
+        {
+            var pattern = $"%{request.Query.Trim()}%";
+            query = query.Where(x =>
+                EF.Functions.Like(x.Offering.Name, pattern) ||
+                EF.Functions.Like(x.TrainingType, pattern));
+        }
+
+        if (request.IsActive.HasValue)
+        {
+            query = query.Where(x => x.Offering.IsActive == request.IsActive.Value);
+        }
+
+        return query.OrderBy(x => x.Offering.Name).ThenBy(x => x.Offering.Id)
+            .Select(x => new TrainerOfferingDto(
+                x.Offering.Id,
+                x.Offering.TrainerProfileId,
+                x.Offering.TrainingTypeId,
+                x.TrainingType,
+                x.Offering.Name,
+                x.Offering.DurationMinutes,
+                x.Offering.Price,
+                x.Offering.Currency,
+                x.Offering.IsActive))
+            .ToPagedResultAsync(request, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<TrainerOfferingDto>> GetPublicByTrainerAsync(
+        Guid trainerId,
+        CancellationToken cancellationToken)
+    {
+        var trainer = await dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == trainerId && x.IsActive, cancellationToken)
+            ?? throw new NotFoundException("trainer_not_found", "The trainer was not found.");
+        var visibleTenant = await dbContext.Tenants.AsNoTracking()
+            .AnyAsync(x => x.Id == trainer.TenantId && x.Status == Domain.Enums.TenantStatus.Active, cancellationToken);
+        var visibleGym = await dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
+            .AnyAsync(x => x.TenantId == trainer.TenantId && x.IsPubliclyVisible, cancellationToken);
+        if (!visibleTenant || !visibleGym)
+        {
+            throw new NotFoundException("trainer_not_found", "The trainer was not found.");
+        }
+
+        return await (
+                from offering in dbContext.TrainerServiceOfferings.IgnoreQueryFilters().AsNoTracking()
+                join trainingType in dbContext.TrainingTypes.AsNoTracking()
+                    on offering.TrainingTypeId equals trainingType.Id
+                where offering.TrainerProfileId == trainerId && offering.IsActive
+                orderby offering.Name
+                select new TrainerOfferingDto(
+                    offering.Id,
+                    offering.TrainerProfileId,
+                    offering.TrainingTypeId,
+                    trainingType.Name,
+                    offering.Name,
+                    offering.DurationMinutes,
+                    offering.Price,
+                    offering.Currency,
+                    offering.IsActive))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<TrainerOfferingDto> CreateAsync(
+        CreateTrainerOfferingRequest request,
+        CancellationToken cancellationToken)
+    {
+        var tenantId = RequireTenant();
+        await ValidateParentsAsync(
+            request.TrainerProfileId,
+            request.TrainingTypeId,
+            cancellationToken);
+        var name = request.Name.Trim();
+        await EnsureUniqueAsync(request.TrainerProfileId, name, null, cancellationToken);
+        var entity = new TrainerServiceOffering(
+            tenantId,
+            request.TrainerProfileId,
+            request.TrainingTypeId,
+            name,
+            request.DurationMinutes,
+            request.Price,
+            request.Currency.Trim().ToUpperInvariant());
+        dbContext.TrainerServiceOfferings.Add(entity);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        var typeName = await TrainingTypeNameAsync(entity.TrainingTypeId, cancellationToken);
+        return ToDto(entity, typeName);
+    }
+
+    public async Task<TrainerOfferingDto> UpdateAsync(
+        Guid id,
+        UpdateTrainerOfferingRequest request,
+        CancellationToken cancellationToken)
+    {
+        RequireTenant();
+        var entity = await dbContext.TrainerServiceOfferings.SingleOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken)
+            ?? throw new NotFoundException("trainer_offering_not_found", "The trainer offering was not found.");
+        if (entity.TrainerProfileId != request.TrainerProfileId)
+        {
+            throw new ConflictException(
+                "offering_trainer_immutable",
+                "An offering cannot be moved to another trainer.");
+        }
+
+        await ValidateParentsAsync(
+            request.TrainerProfileId,
+            request.TrainingTypeId,
+            cancellationToken);
+        var name = request.Name.Trim();
+        await EnsureUniqueAsync(request.TrainerProfileId, name, id, cancellationToken);
+        entity.UpdateDetails(
+            request.TrainingTypeId,
+            name,
+            request.DurationMinutes,
+            request.Price,
+            request.Currency.Trim().ToUpperInvariant(),
+            request.IsActive);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return ToDto(entity, await TrainingTypeNameAsync(entity.TrainingTypeId, cancellationToken));
+    }
+
+    public async Task DeactivateAsync(Guid id, CancellationToken cancellationToken)
+    {
+        RequireTenant();
+        var entity = await dbContext.TrainerServiceOfferings.SingleOrDefaultAsync(
+                x => x.Id == id,
+                cancellationToken)
+            ?? throw new NotFoundException("trainer_offering_not_found", "The trainer offering was not found.");
+        entity.IsActive = false;
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task ValidateParentsAsync(
+        Guid trainerId,
+        Guid trainingTypeId,
+        CancellationToken cancellationToken)
+    {
+        if (!await dbContext.TrainerProfiles.AnyAsync(
+                x => x.Id == trainerId && x.IsActive,
+                cancellationToken))
+        {
+            throw new NotFoundException("trainer_not_found", "The trainer was not found.");
+        }
+
+        if (!await dbContext.TrainingTypes.AnyAsync(
+                x => x.Id == trainingTypeId && x.IsActive,
+                cancellationToken))
+        {
+            throw new NotFoundException("training_type_not_found", "The training type was not found.");
+        }
+    }
+
+    private async Task EnsureUniqueAsync(
+        Guid trainerId,
+        string name,
+        Guid? excludedId,
+        CancellationToken cancellationToken)
+    {
+        if (await dbContext.TrainerServiceOfferings.AnyAsync(
+                x => x.TrainerProfileId == trainerId &&
+                    x.Name == name &&
+                    (!excludedId.HasValue || x.Id != excludedId.Value),
+                cancellationToken))
+        {
+            throw new ConflictException(
+                "trainer_offering_duplicate",
+                "The trainer already has an offering with the same name.");
+        }
+    }
+
+    private Task<string> TrainingTypeNameAsync(Guid id, CancellationToken cancellationToken) =>
+        dbContext.TrainingTypes.Where(x => x.Id == id)
+            .Select(x => x.Name)
+            .SingleAsync(cancellationToken);
+
+    private Guid RequireTenant() =>
+        tenantContext.TenantId
+        ?? throw new InvalidOperationException("A selected tenant is required.");
+
+    private static TrainerOfferingDto ToDto(
+        TrainerServiceOffering offering,
+        string trainingType) =>
+        new(
+            offering.Id,
+            offering.TrainerProfileId,
+            offering.TrainingTypeId,
+            trainingType,
+            offering.Name,
+            offering.DurationMinutes,
+            offering.Price,
+            offering.Currency,
+            offering.IsActive);
+}

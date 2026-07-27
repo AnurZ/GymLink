@@ -61,7 +61,7 @@ public sealed class TenantGuardTests
     private static GymLinkDbContext CreateContext(Guid? tenantId)
     {
         var options = new DbContextOptionsBuilder<GymLinkDbContext>()
-            .UseSqlServer("Server=(localdb)\\MSSQLLocalDB;Database=GymLinkGuardOnly;Integrated Security=true")
+            .UseSqlServer(TestSqlServer.ConnectionString("GymLinkGuardOnly"))
             .Options;
         return new GymLinkDbContext(options, new TestTenantContext(tenantId));
     }

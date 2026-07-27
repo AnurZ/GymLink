@@ -22,6 +22,8 @@ public static class DependencyInjection
         services.TryAddScoped<ICurrentUser, FailClosedRequestContext>();
         services.TryAddScoped<ITenantContext, FailClosedRequestContext>();
         services.AddScoped<TenantAuditSaveChangesInterceptor>();
+        services.AddScoped<IApplicationDbContext>(provider =>
+            provider.GetRequiredService<GymLinkDbContext>());
         services.AddDbContext<GymLinkDbContext>((provider, options) =>
             options.UseSqlServer(connectionString)
                 .AddInterceptors(provider.GetRequiredService<TenantAuditSaveChangesInterceptor>()));
