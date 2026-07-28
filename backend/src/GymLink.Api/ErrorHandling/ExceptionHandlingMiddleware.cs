@@ -47,6 +47,10 @@ internal sealed class ExceptionHandlingMiddleware(
                 StatusCodes.Status403Forbidden,
                 authorization.Code,
                 authorization.Message),
+            ExternalServiceUnavailableException unavailable => (
+                StatusCodes.Status503ServiceUnavailable,
+                unavailable.Code,
+                unavailable.Message),
             DomainException domain when domain.Code == "invalid_state_transition" => (
                 StatusCodes.Status409Conflict,
                 domain.Code,

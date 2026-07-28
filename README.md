@@ -26,14 +26,16 @@ Server=localhost;Database=230038;Trusted_Connection=True;TrustServerCertificate=
 2. Keep `ConnectionStrings__GymLink` pointed at your local SQL Server, or change only that value for your installed instance.
 3. Replace `Jwt__SigningKey` and `PasswordReset__CodePepper` with separate
    local values containing at least 32 UTF-8 bytes each.
-4. Restore tools and packages:
+4. Set `Geocoding__UserAgent` and `Geocoding__ContactEmail` to identify your
+   development instance when using public Nominatim.
+5. Restore tools and packages:
 
 ```powershell
 dotnet tool restore
 dotnet restore backend/GymLink.sln
 ```
 
-5. Apply the committed EF Core migrations. The API never applies migrations automatically:
+6. Apply the committed EF Core migrations. The API never applies migrations automatically:
 
 ```powershell
 dotnet ef database update `
@@ -41,7 +43,7 @@ dotnet ef database update `
   --startup-project backend/src/GymLink.Api
 ```
 
-6. To create the linked evaluation dataset, set this value in `.env`:
+7. To create the linked evaluation dataset, set this value in `.env`:
 
 ```text
 Seed__Enabled=true
@@ -67,6 +69,20 @@ In Visual Studio:
 4. Start the project. The selected profile opens `/swagger`.
 
 Use Swagger's **Authorize** button with `Bearer <access-token>` after calling `POST /api/auth/login`.
+
+### Address search
+
+The CentralAdmin gym wizard uses explicit, server-mediated OpenStreetMap
+Nominatim searches. Search is limited to Bosnia and Herzegovina, results are
+bounded, cached, and globally throttled to one upstream request per second.
+Typing does not call the provider: press **Pretraži** or submit the field.
+
+Configure `Geocoding__BaseUrl`, identifying `Geocoding__UserAgent` and contact,
+timeout, cache duration, and minimum interval in `.env`. Public Nominatim is
+appropriate only for moderate development/evaluation use; replace the base URL
+with a compliant hosted or self-hosted provider for heavier traffic. Every
+accepted result is resolved to the local active BiH city catalog before its
+`CityId` is persisted, and the desktop keeps OpenStreetMap attribution visible.
 
 ## Start RabbitMQ, Mailpit, and the Worker
 
@@ -150,15 +166,21 @@ Login accepts either the username or email. Staff access tokens automatically co
 
 1. Sign in to the Windows app as `centraladmin`.
 2. Open **Teretane** and select **Dodaj teretanu**.
-3. Enter the basic profile, select an active city, and place the location pin.
-4. Ask the owner to register a normal account.
-5. In **Korisnici i uloge**, assign that account the `GymAdmin` role for the
-   new gym.
-6. The GymAdmin signs in to the Windows app and completes working hours,
-   equipment, training types, and at least one active membership plan.
-7. CentralAdmin returns to **Teretane** and activates the gym.
+3. Enter the gym identity and description. Search an address explicitly,
+   select a mapped result, and adjust the map pin if necessary.
+4. Enter all seven working-day states/hours, choose equipment and training
+   types, and create the initial active membership plan.
+5. Select an active Member account as GymAdmin and enter the audit reason.
+   The intended owner must register a normal account before this step.
+6. Review and confirm the consequential action. Creation commits the private
+   gym, complete catalog, plan, role assignment, session revocation, and audits
+   atomically.
+7. The new row is immediately marked ready; CentralAdmin separately confirms
+   **Aktiviraj** to publish it.
 
-New gyms remain private and `PendingActivation` until these steps are complete.
+New gyms remain private and `PendingActivation` until the final activation.
+Each gym can have only one active GymAdmin, and that account can administer only
+one gym. Revoke the existing assignment explicitly before moving an owner.
 Owner-submitted registration requests are retained only as a legacy API and
 have no client entry.
 
@@ -205,6 +227,11 @@ Membership and reservation rules use handled application exceptions that the
 API middleware converts to stable `409 ProblemDetails` responses. If Visual
 Studio stops on the `throw` line but the Flutter app continues after pressing
 Continue, this is a first-chance debugger pause rather than an unhandled crash.
+
+The same applies when activation raises `tenant_admin_required` or
+`tenant_catalog_incomplete`: middleware returns `409`, while the desktop
+refreshes readiness and shows **Aktivacija nije moguća** with the current
+blockers. This is not a backend `500` or a Flutter crash.
 
 Open **Debug → Windows → Exception Settings** and disable **Break on thrown**
 for the relevant handled application exception type. Keep breaking on

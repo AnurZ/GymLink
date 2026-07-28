@@ -18,8 +18,21 @@ public sealed class ReferenceDataService(
         ReferenceSearchRequest request,
         CancellationToken cancellationToken)
     {
+        request.Validate();
         var query = dbContext.Countries.AsNoTracking();
-        query = ApplyReferenceFilter(query, request);
+        if (!string.IsNullOrWhiteSpace(request.Query))
+        {
+            var pattern = $"%{request.Query.Trim()}%";
+            query = query.Where(x =>
+                EF.Functions.Like(x.Name, pattern) ||
+                EF.Functions.Like(x.Code, pattern));
+        }
+
+        if (request.IsActive.HasValue)
+        {
+            query = query.Where(x => x.IsActive == request.IsActive.Value);
+        }
+
         return query.OrderBy(x => x.Name)
             .Select(x => new CountryDto(x.Id, x.Code, x.Name, x.IsActive))
             .ToPagedResultAsync(request, cancellationToken);

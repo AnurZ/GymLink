@@ -91,6 +91,10 @@ internal sealed class UserGymAssignmentConfiguration : EntityConfiguration<UserG
         builder.HasIndex(x => x.UserId)
             .IsUnique()
             .HasFilter("[Status] = 'Active' AND [Role] IN ('GymAdmin', 'Trainer')");
+        builder.HasIndex(x => x.TenantId)
+            .HasDatabaseName("IX_UserGymAssignments_TenantId_ActiveGymAdmin")
+            .IsUnique()
+            .HasFilter("[Status] = 'Active' AND [Role] = 'GymAdmin'");
         builder.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.UserId)
             .OnDelete(DeleteBehavior.Restrict);

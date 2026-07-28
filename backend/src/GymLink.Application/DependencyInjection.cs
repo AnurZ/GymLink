@@ -27,8 +27,10 @@ public static class DependencyInjection
         services.AddScoped<IProfileService, ProfileService>();
         services.AddScoped<IGymRegistrationService, GymRegistrationService>();
         services.AddScoped<IGymAdministrationService, GymAdministrationService>();
+        services.AddScoped<ITenantActivationReadinessService, TenantActivationReadinessService>();
         services.AddScoped<ITenantAdministrationService, TenantAdministrationService>();
         services.AddScoped<IUserAdministrationService, UserAdministrationService>();
+        services.AddScoped<IGymAdminAssignmentCoordinator, GymAdminAssignmentCoordinator>();
         services.AddScoped<IMembershipRequestService, MembershipRequestService>();
         services.AddScoped<IMembershipService, MembershipService>();
         services.AddScoped<IAvailabilityService, AvailabilityService>();

@@ -61,6 +61,8 @@ public interface IIdentityAccountManager
     Task<IReadOnlyList<string>> GetRolesAsync(Guid userId);
     Task<(IReadOnlyList<IdentityAccount> Items, long TotalCount)> SearchAsync(
         string? query,
+        string? role,
+        bool? isActive,
         int skip,
         int take,
         CancellationToken cancellationToken);

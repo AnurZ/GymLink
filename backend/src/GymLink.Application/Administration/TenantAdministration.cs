@@ -46,6 +46,7 @@ internal sealed class TenantAdministrationService(
     IApplicationTransaction transaction,
     ICurrentUser currentUser,
     ITenantMutationScope tenantMutationScope,
+    ITenantActivationReadinessService readinessService,
     IOutboxWriter outbox,
     IRequestMetadata requestMetadata,
     TimeProvider timeProvider) : ITenantAdministrationService
@@ -136,37 +137,15 @@ internal sealed class TenantAdministrationService(
 
     private async Task EnsureCatalogReadyAsync(Guid tenantId, CancellationToken cancellationToken)
     {
-        var hasActiveGymAdmin = await dbContext.UserGymAssignments.IgnoreQueryFilters()
-            .AnyAsync(
-                x => x.TenantId == tenantId &&
-                     x.Role == RoleNames.GymAdmin &&
-                     x.Status == AssignmentStatus.Active,
-                cancellationToken);
-        if (!hasActiveGymAdmin)
+        var readiness = await readinessService.GetAsync(tenantId, cancellationToken);
+        if (readiness.MissingRequirements.Contains(ActivationRequirementCodes.GymAdmin))
         {
             throw new ConflictException(
                 "tenant_admin_required",
                 "An active GymAdmin must be assigned before activation.");
         }
 
-        var gym = await dbContext.Gyms.IgnoreQueryFilters()
-            .SingleOrDefaultAsync(x => x.TenantId == tenantId, cancellationToken)
-            ?? throw new ConflictException(
-                "tenant_catalog_incomplete",
-                "The tenant must have a gym before activation.");
-        var hasHours = await dbContext.GymWorkingHours.IgnoreQueryFilters()
-            .AnyAsync(x => x.TenantId == tenantId && !x.IsClosed, cancellationToken);
-        var hasEquipment = await dbContext.GymEquipment.IgnoreQueryFilters()
-            .AnyAsync(x => x.TenantId == tenantId, cancellationToken);
-        var hasTrainingType = await dbContext.GymTrainingTypes.IgnoreQueryFilters()
-            .AnyAsync(x => x.TenantId == tenantId, cancellationToken);
-        var hasPlan = await dbContext.MembershipPlans.IgnoreQueryFilters()
-            .AnyAsync(x => x.TenantId == tenantId && x.IsActive, cancellationToken);
-        if (string.IsNullOrWhiteSpace(gym.Description) ||
-            !hasHours ||
-            !hasEquipment ||
-            !hasTrainingType ||
-            !hasPlan)
+        if (!readiness.CanActivate)
         {
             throw new ConflictException(
                 "tenant_catalog_incomplete",

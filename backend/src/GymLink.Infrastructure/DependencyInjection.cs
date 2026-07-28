@@ -1,4 +1,5 @@
 using GymLink.Application.Abstractions;
+using GymLink.Application.Administration;
 using GymLink.Infrastructure.Persistence;
 using GymLink.Infrastructure.Security;
 using GymLink.Infrastructure.Identity;
@@ -8,6 +9,7 @@ using GymLink.Infrastructure.Seeding;
 using GymLink.Infrastructure.Memberships;
 using GymLink.Infrastructure.Reservations;
 using GymLink.Infrastructure.Messaging;
+using GymLink.Infrastructure.Geocoding;
 using GymLink.Application.Reservations;
 using GymLink.Application.Memberships;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -32,6 +34,26 @@ public static class DependencyInjection
                 "Environment variable ConnectionStrings__GymLink is required.");
 
         services.AddSingleton(TimeProvider.System);
+        services.AddHttpClient("Nominatim", (provider, client) =>
+        {
+            var settings = provider.GetRequiredService<
+                Microsoft.Extensions.Options.IOptions<GeocodingOptions>>().Value;
+            client.Timeout = TimeSpan.FromSeconds(settings.TimeoutSeconds);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd(settings.UserAgent);
+            client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+        });
+        services.AddOptions<GeocodingOptions>()
+            .Bind(configuration.GetSection(GeocodingOptions.SectionName))
+            .Validate(
+                options => !options.Enabled ||
+                    (Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out _) &&
+                     !string.IsNullOrWhiteSpace(options.UserAgent) &&
+                     options.TimeoutSeconds is > 0 and <= 60 &&
+                     options.CacheHours is > 0 and <= 168 &&
+                     options.MinimumIntervalMilliseconds >= 1000),
+                "Enabled geocoding configuration is incomplete or invalid.")
+            .ValidateOnStart();
+        services.AddScoped<ILocationSearchService, NominatimLocationSearchService>();
         services.AddHttpContextAccessor();
         services.AddScoped<ClaimsRequestContext>();
         services.AddScoped<ICurrentUser>(provider =>

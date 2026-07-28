@@ -147,6 +147,8 @@ internal sealed class IdentityAccountManager(
 
     public async Task<(IReadOnlyList<IdentityAccount> Items, long TotalCount)> SearchAsync(
         string? query,
+        string? role,
+        bool? isActive,
         int skip,
         int take,
         CancellationToken cancellationToken)
@@ -154,10 +156,31 @@ internal sealed class IdentityAccountManager(
         var users = userManager.Users.AsNoTracking();
         if (!string.IsNullOrWhiteSpace(query))
         {
-            var normalized = query.Trim().ToUpperInvariant();
+            var search = query.Trim();
+            var normalized = search.ToUpperInvariant();
             users = users.Where(x =>
                 (x.NormalizedUserName != null && x.NormalizedUserName.Contains(normalized)) ||
-                (x.NormalizedEmail != null && x.NormalizedEmail.Contains(normalized)));
+                (x.NormalizedEmail != null && x.NormalizedEmail.Contains(normalized)) ||
+                dbContext.UserProfiles.Any(profile =>
+                    profile.Id == x.Id && profile.DisplayName.Contains(search)));
+        }
+
+        if (!string.IsNullOrWhiteSpace(role))
+        {
+            var normalizedRole = role.Trim().ToUpperInvariant();
+            users = users.Where(user =>
+                dbContext.UserRoles.Any(userRole =>
+                    userRole.UserId == user.Id &&
+                    dbContext.Roles.Any(identityRole =>
+                        identityRole.Id == userRole.RoleId &&
+                        identityRole.NormalizedName == normalizedRole)));
+        }
+
+        if (isActive.HasValue)
+        {
+            users = users.Where(user =>
+                dbContext.UserProfiles.Any(profile =>
+                    profile.Id == user.Id && profile.IsActive == isActive.Value));
         }
 
         var total = await users.LongCountAsync(cancellationToken);

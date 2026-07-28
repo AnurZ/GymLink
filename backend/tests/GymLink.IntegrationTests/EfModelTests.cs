@@ -85,6 +85,12 @@ public sealed class EfModelTests
                 PropertyNames(index).SequenceEqual(["UserId"]) &&
                 index.GetFilter()!.Contains("GymAdmin", StringComparison.Ordinal));
         Assert.Contains(
+            context.Model.FindEntityType(typeof(UserGymAssignment))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["TenantId"]) &&
+                index.GetFilter()!.Contains("GymAdmin", StringComparison.Ordinal) &&
+                index.GetFilter()!.Contains("Active", StringComparison.Ordinal));
+        Assert.Contains(
             context.Model.FindEntityType(typeof(GymRegistrationRequest))!.GetIndexes(),
             index => index.IsUnique &&
                 PropertyNames(index).SequenceEqual(["ApplicantUserId"]) &&

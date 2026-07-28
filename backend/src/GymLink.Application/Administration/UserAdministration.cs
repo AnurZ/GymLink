@@ -14,6 +14,11 @@ public sealed record UserSearchRequest : PagedRequest
 {
     [MaxLength(320)]
     public string? Query { get; init; }
+
+    [MaxLength(32)]
+    public string? Role { get; init; }
+
+    public bool? IsActive { get; init; }
 }
 
 public sealed record RoleAssignmentRequest
@@ -75,6 +80,7 @@ internal sealed class UserAdministrationService(
     IApplicationTransaction transaction,
     ICurrentUser currentUser,
     ITenantMutationScope tenantMutationScope,
+    IGymAdminAssignmentCoordinator gymAdminAssignment,
     TimeProvider timeProvider) : IUserAdministrationService
 {
     public async Task<PagedResult<AdminUserDto>> SearchAsync(
@@ -82,8 +88,18 @@ internal sealed class UserAdministrationService(
         CancellationToken cancellationToken)
     {
         request.Validate();
+        if (!string.IsNullOrWhiteSpace(request.Role) &&
+            !RoleNames.All.Contains(request.Role.Trim()))
+        {
+            throw new ApplicationRuleException(
+                "role_invalid",
+                "The requested role filter is not supported.");
+        }
+
         var (items, totalCount) = await accounts.SearchAsync(
             request.Query,
+            request.Role?.Trim(),
+            request.IsActive,
             (request.Page - 1) * request.PageSize,
             request.PageSize,
             cancellationToken);
@@ -104,96 +120,124 @@ internal sealed class UserAdministrationService(
         return await BuildAsync(account, cancellationToken);
     }
 
-    public Task<AdminUserDto> AssignRoleAsync(
+    public async Task<AdminUserDto> AssignRoleAsync(
         RoleAssignmentRequest request,
-        CancellationToken cancellationToken) =>
-        transaction.ExecuteAsync(async token =>
+        CancellationToken cancellationToken)
+    {
+        try
         {
-            if (!RoleNames.All.Contains(request.Role))
+            return await transaction.ExecuteSerializableAsync(async token =>
             {
-                throw new ApplicationRuleException("role_invalid", "The requested role is not supported.");
-            }
-
-            var actorId = RequireActor();
-            var account = await FindRequiredAsync(request.Identifier, token);
-            if (account.Role == RoleNames.CentralAdmin &&
-                request.Role != RoleNames.CentralAdmin)
-            {
-                await EnsureNotLastCentralAdminAsync(token);
-            }
-
-            Tenant? tenant = null;
-            if (request.Role is RoleNames.GymAdmin or RoleNames.Trainer)
-            {
-                if (!request.TenantId.HasValue)
+                if (!RoleNames.All.Contains(request.Role))
                 {
                     throw new ApplicationRuleException(
-                        "tenant_required",
-                        "A gym tenant is required for staff roles.");
+                        "role_invalid",
+                        "The requested role is not supported.");
                 }
 
-                tenant = await dbContext.Tenants
-                    .SingleOrDefaultAsync(x => x.Id == request.TenantId, token)
-                    ?? throw new NotFoundException("tenant_not_found", "The tenant was not found.");
-                var allowed = request.Role == RoleNames.GymAdmin
-                    ? tenant.Status is TenantStatus.PendingActivation or TenantStatus.Active
-                    : tenant.Status == TenantStatus.Active;
-                if (!allowed)
+                var actorId = RequireActor();
+                var account = await FindRequiredAsync(request.Identifier, token);
+                if (account.Role == RoleNames.CentralAdmin &&
+                    request.Role != RoleNames.CentralAdmin)
                 {
-                    throw new ConflictException(
-                        "tenant_unavailable",
-                        "The tenant status does not permit this staff assignment.");
+                    await EnsureNotLastCentralAdminAsync(token);
                 }
-            }
-            else if (request.TenantId.HasValue)
-            {
-                throw new ApplicationRuleException(
-                    "tenant_not_allowed",
-                    "Member and CentralAdmin roles cannot have a tenant assignment.");
-            }
 
-            using var tenantWrite = await BeginAssignmentMutationAsync(account.Id, tenant?.Id, token);
-            await EndActiveStaffAssignmentsAsync(account.Id, request.Reason, token);
-            if (tenant is not null)
-            {
-                var assignment = await dbContext.UserGymAssignments
-                    .IgnoreQueryFilters()
-                    .SingleOrDefaultAsync(
-                        x => x.UserId == account.Id &&
-                             x.TenantId == tenant.Id &&
-                             x.Role == request.Role,
-                        token);
-                if (assignment is null)
+                Tenant? tenant = null;
+                if (request.Role is RoleNames.GymAdmin or RoleNames.Trainer)
                 {
-                    dbContext.UserGymAssignments.Add(new UserGymAssignment
+                    if (!request.TenantId.HasValue)
                     {
-                        TenantId = tenant.Id,
-                        UserId = account.Id,
-                        Role = request.Role,
-                        Status = AssignmentStatus.Active,
-                        StartsAtUtc = timeProvider.GetUtcNow().UtcDateTime,
-                        ApprovedByUserId = actorId,
-                        Reason = request.Reason.Trim(),
-                    });
-                }
-                else
-                {
-                    assignment.Status = AssignmentStatus.Active;
-                    assignment.StartsAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-                    assignment.EndsAtUtc = null;
-                    assignment.ApprovedByUserId = actorId;
-                    assignment.Reason = request.Reason.Trim();
-                }
-            }
+                        throw new ApplicationRuleException(
+                            "tenant_required",
+                            "A gym tenant is required for staff roles.");
+                    }
 
-            EnsureSucceeded(await accounts.ReplaceRoleAsync(account.Id, request.Role, token));
-            await RevokeSessionsAsync(account.Id, "role_changed", token);
-            AddAudit(actorId, account.Id, tenant?.Id, "user.role_assigned", request.Reason);
-            await dbContext.SaveChangesAsync(token);
-            return await BuildAsync(
-                await FindRequiredAsync(account.Id.ToString(), token),
-                token);
-        }, cancellationToken);
+                    tenant = await dbContext.Tenants
+                        .SingleOrDefaultAsync(x => x.Id == request.TenantId, token)
+                        ?? throw new NotFoundException(
+                            "tenant_not_found",
+                            "The tenant was not found.");
+                    var allowed = request.Role == RoleNames.GymAdmin
+                        ? tenant.Status is TenantStatus.PendingActivation or TenantStatus.Active
+                        : tenant.Status == TenantStatus.Active;
+                    if (!allowed)
+                    {
+                        throw new ConflictException(
+                            "tenant_unavailable",
+                            "The tenant status does not permit this staff assignment.");
+                    }
+                }
+                else if (request.TenantId.HasValue)
+                {
+                    throw new ApplicationRuleException(
+                        "tenant_not_allowed",
+                        "Member and CentralAdmin roles cannot have a tenant assignment.");
+                }
+
+                if (request.Role == RoleNames.GymAdmin && tenant is not null)
+                {
+                    await gymAdminAssignment.AssignAsync(
+                        account.Id,
+                        tenant.Id,
+                        request.Reason,
+                        actorId,
+                        token);
+                    await dbContext.SaveChangesAsync(token);
+                    return await BuildAsync(
+                        await FindRequiredAsync(account.Id.ToString(), token),
+                        token);
+                }
+
+                using var tenantWrite =
+                    await BeginAssignmentMutationAsync(account.Id, tenant?.Id, token);
+                await EndActiveStaffAssignmentsAsync(account.Id, request.Reason, token);
+                if (tenant is not null)
+                {
+                    var assignment = await dbContext.UserGymAssignments
+                        .IgnoreQueryFilters()
+                        .SingleOrDefaultAsync(
+                            x => x.UserId == account.Id &&
+                                 x.TenantId == tenant.Id &&
+                                 x.Role == request.Role,
+                            token);
+                    if (assignment is null)
+                    {
+                        dbContext.UserGymAssignments.Add(new UserGymAssignment
+                        {
+                            TenantId = tenant.Id,
+                            UserId = account.Id,
+                            Role = request.Role,
+                            Status = AssignmentStatus.Active,
+                            StartsAtUtc = timeProvider.GetUtcNow().UtcDateTime,
+                            ApprovedByUserId = actorId,
+                            Reason = request.Reason.Trim(),
+                        });
+                    }
+                    else
+                    {
+                        assignment.Status = AssignmentStatus.Active;
+                        assignment.StartsAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+                        assignment.EndsAtUtc = null;
+                        assignment.ApprovedByUserId = actorId;
+                        assignment.Reason = request.Reason.Trim();
+                    }
+                }
+
+                EnsureSucceeded(await accounts.ReplaceRoleAsync(account.Id, request.Role, token));
+                await RevokeSessionsAsync(account.Id, "role_changed", token);
+                AddAudit(actorId, account.Id, tenant?.Id, "user.role_assigned", request.Reason);
+                await dbContext.SaveChangesAsync(token);
+                return await BuildAsync(
+                    await FindRequiredAsync(account.Id.ToString(), token),
+                    token);
+            }, cancellationToken);
+        }
+        catch (Exception exception) when (ContainsDbUpdateException(exception))
+        {
+            throw await ResolveGymAdminConflictAsync(request, exception, cancellationToken);
+        }
+    }
 
     public Task<AdminUserDto> RevokeRoleAsync(
         UserActionRequest request,
@@ -377,6 +421,59 @@ internal sealed class UserAdministrationService(
                 "last_central_admin",
                 "The last active CentralAdmin cannot be removed or deactivated.");
         }
+    }
+
+    private async Task<ConflictException> ResolveGymAdminConflictAsync(
+        RoleAssignmentRequest request,
+        Exception exception,
+        CancellationToken cancellationToken)
+    {
+        if (request.Role == RoleNames.GymAdmin && request.TenantId.HasValue)
+        {
+            if (await dbContext.UserGymAssignments.IgnoreQueryFilters().AsNoTracking()
+                    .AnyAsync(
+                        x => x.TenantId == request.TenantId.Value &&
+                             x.Role == RoleNames.GymAdmin &&
+                             x.Status == AssignmentStatus.Active,
+                        cancellationToken))
+            {
+                return new ConflictException(
+                    "tenant_gym_admin_exists",
+                    "This gym already has an active GymAdmin.",
+                    exception);
+            }
+
+            var account = await FindRequiredAsync(request.Identifier, cancellationToken);
+            if (await dbContext.UserGymAssignments.IgnoreQueryFilters().AsNoTracking()
+                    .AnyAsync(
+                        x => x.UserId == account.Id &&
+                             x.Status == AssignmentStatus.Active,
+                        cancellationToken))
+            {
+                return new ConflictException(
+                    "gym_admin_already_assigned",
+                    "The selected account already has an active gym assignment. Revoke it before assigning another gym.",
+                    exception);
+            }
+        }
+
+        return new ConflictException(
+            "role_change_failed",
+            "The role assignment conflicted with another change. Reload and try again.",
+            exception);
+    }
+
+    private static bool ContainsDbUpdateException(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException!)
+        {
+            if (current is DbUpdateException)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void AddAudit(

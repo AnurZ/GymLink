@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:intl/intl.dart';
@@ -8,6 +10,10 @@ import '../../core/api.dart';
 import '../../shared/widgets.dart';
 
 const _registrationStatuses = ['Draft', 'Submitted', 'Approved', 'Rejected'];
+
+class CentralAdminRefresh extends ChangeNotifier {
+  void dataChanged() => notifyListeners();
+}
 
 class CentralDashboardScreen extends StatefulWidget {
   const CentralDashboardScreen({super.key});
@@ -20,11 +26,28 @@ class _CentralDashboardScreenState extends State<CentralDashboardScreen> {
   Object? _error;
   Map<String, int> _counts = const {};
   List<Map<String, dynamic>> _recent = const [];
+  CentralAdminRefresh? _refresh;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final refresh = context.read<CentralAdminRefresh>();
+    if (!identical(refresh, _refresh)) {
+      _refresh?.removeListener(_load);
+      _refresh = refresh..addListener(_load);
+    }
+  }
+
+  @override
+  void dispose() {
+    _refresh?.removeListener(_load);
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -327,7 +350,6 @@ class GymManagementScreen extends StatefulWidget {
 class _GymManagementScreenState extends State<GymManagementScreen> {
   final _search = TextEditingController();
   List<Map<String, dynamic>> _items = const [];
-  List<Map<String, dynamic>> _cities = const [];
   bool _loading = true;
   Object? _error;
   int? _status;
@@ -348,20 +370,10 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
     setState(() => _loading = true);
     try {
       final api = context.read<ApiClient>();
-      final results = await Future.wait([
-        api.page(
-          '/api/admin/gyms',
-          query: {'query': _search.text.trim(), 'status': _status},
-        ),
-        api.get('/api/reference-data/lookups', authenticated: false),
-      ]);
-      _items = (results[0] as PagedData).items;
-      final lookups = Map<String, dynamic>.from(results[1]! as Map);
-      _cities = (lookups['cities'] as List? ?? const [])
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .where((item) => item['isActive'] == true)
-          .toList();
+      _items = (await api.page(
+        '/api/admin/gyms',
+        query: {'query': _search.text.trim(), 'status': _status},
+      )).items;
       _error = null;
     } catch (error) {
       _error = error;
@@ -374,24 +386,47 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
     final created = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _GymCreateDialog(cities: _cities),
+      builder: (_) => const _GymCreateDialog(),
     );
     if (created == true) {
       await _load();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'Teretana je kreirana i čeka dodjelu administratora.',
-            ),
+            content: Text('Teretana je kreirana i spremna za aktivaciju.'),
           ),
         );
+        context.read<CentralAdminRefresh>().dataChanged();
       }
     }
   }
 
+  Future<void> _assignGymAdmin(Map<String, dynamic> item) async {
+    final assigned = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _GymAdminAssignmentDialog(gym: item),
+    );
+    if (assigned != true || !mounted) return;
+    await _load();
+    if (!mounted) return;
+    context.read<CentralAdminRefresh>().dataChanged();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('GymAdmin je uspješno dodijeljen.')),
+    );
+  }
+
   Future<void> _tenantAction(Map<String, dynamic> item, String action) async {
     final api = context.read<ApiClient>();
+    if (action == 'activate') {
+      final confirmed = await confirmAction(
+        context,
+        title: 'Aktiviraj teretanu',
+        message:
+            'Teretana ${item['name']} će postati javno vidljiva članovima.',
+      );
+      if (!confirmed || !mounted) return;
+    }
     final reason = action == 'activate'
         ? null
         : await _reasonDialog(context, 'Razlog promjene statusa');
@@ -402,13 +437,58 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
         body: reason == null ? null : {'reason': reason},
       );
       await _load();
+      if (mounted) context.read<CentralAdminRefresh>().dataChanged();
     } on ApiProblem catch (error) {
-      if (mounted) {
+      if (!mounted) return;
+      if (error.status == 409 &&
+          (error.code == 'tenant_admin_required' ||
+              error.code == 'tenant_catalog_incomplete')) {
+        await _load();
+        if (!mounted) return;
+        Map<String, dynamic> refreshed = item;
+        for (final candidate in _items) {
+          if (candidate['tenantId'] == item['tenantId']) {
+            refreshed = candidate;
+            break;
+          }
+        }
+        await showDialog<void>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Aktivacija nije moguća'),
+            content: Text(
+              _readinessText(refreshed['missingActivationRequirements']),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('U redu'),
+              ),
+            ],
+          ),
+        );
+      } else {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(error.message)));
       }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Zahtjev trenutno nije moguće izvršiti. Pokušajte ponovo.',
+            ),
+          ),
+        );
+      }
     }
+  }
+
+  static String _readinessText(Object? raw) {
+    final codes = (raw as List? ?? const []).map((value) => value.toString());
+    if (codes.isEmpty) return 'Osvježite podatke i pokušajte ponovo.';
+    return 'Nedostaje: ${codes.map(_activationRequirementLabel).join(', ')}.';
   }
 
   @override
@@ -431,6 +511,7 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
           SizedBox(
             width: 230,
             child: DropdownButtonFormField<int?>(
+              isExpanded: true,
               initialValue: _status,
               decoration: const InputDecoration(labelText: 'Status'),
               items: const [
@@ -448,7 +529,7 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
           ),
           const Spacer(),
           FilledButton.icon(
-            onPressed: _cities.isEmpty ? null : _create,
+            onPressed: _create,
             icon: const Icon(Icons.add),
             label: const Text('Dodaj teretanu'),
           ),
@@ -469,6 +550,14 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
                     itemBuilder: (_, index) {
                       final item = _items[index];
                       final status = (item['status'] as num?)?.toInt() ?? 0;
+                      final adminCount =
+                          (item['activeGymAdminCount'] as num?)?.toInt() ?? 0;
+                      final canAssignAdmin =
+                          (status == 0 || status == 1) && adminCount == 0;
+                      final canActivate = item['canActivate'] == true;
+                      final readiness = _readinessText(
+                        item['missingActivationRequirements'],
+                      );
                       const labels = [
                         'PendingActivation',
                         'Active',
@@ -482,7 +571,8 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
                         title: Text(item['name'].toString()),
                         subtitle: Text(
                           '${item['address']}, ${item['cityName']}\n'
-                          'Aktivni administratori: ${item['activeGymAdminCount']}',
+                          'Aktivni administratori: ${item['activeGymAdminCount']}\n'
+                          '${canActivate ? 'Spremna za aktivaciju' : readiness}',
                         ),
                         isThreeLine: true,
                         trailing: Row(
@@ -491,13 +581,30 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
                             StatusPill(labels[status.clamp(0, 3)]),
                             PopupMenuButton<String>(
                               tooltip: 'Promijeni status',
-                              onSelected: (action) =>
-                                  _tenantAction(item, action),
+                              onSelected: (action) => action == 'assign-admin'
+                                  ? _assignGymAdmin(item)
+                                  : _tenantAction(item, action),
                               itemBuilder: (_) => [
+                                PopupMenuItem(
+                                  value: 'assign-admin',
+                                  enabled: canAssignAdmin,
+                                  child: Text(
+                                    adminCount > 0
+                                        ? 'GymAdmin je već dodijeljen'
+                                        : status == 0 || status == 1
+                                        ? 'Dodijeli GymAdmina'
+                                        : 'Dodjela GymAdmina nije dostupna',
+                                  ),
+                                ),
                                 if (status == 0)
-                                  const PopupMenuItem(
+                                  PopupMenuItem(
                                     value: 'activate',
-                                    child: Text('Aktiviraj'),
+                                    enabled: canActivate,
+                                    child: Text(
+                                      canActivate
+                                          ? 'Aktiviraj'
+                                          : 'Aktivacija nije dostupna',
+                                    ),
                                   ),
                                 if (status == 1) ...[
                                   const PopupMenuItem(
@@ -529,9 +636,7 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
 }
 
 class _GymCreateDialog extends StatefulWidget {
-  const _GymCreateDialog({required this.cities});
-
-  final List<Map<String, dynamic>> cities;
+  const _GymCreateDialog();
 
   @override
   State<_GymCreateDialog> createState() => _GymCreateDialogState();
@@ -543,11 +648,42 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
   final _description = TextEditingController();
   final _address = TextEditingController();
   final _phone = TextEditingController();
+  final _locationSearch = TextEditingController();
+  final _planName = TextEditingController();
+  final _planDuration = TextEditingController(text: '30');
+  final _planPrice = TextEditingController(text: '50');
+  final _adminSearch = TextEditingController();
+  final _adminReason = TextEditingController();
+  final _mapController = MapController();
+  final _days = List.generate(
+    7,
+    (index) =>
+        _WorkingDayState(dayOfWeek: index, isClosed: index == 0 || index == 6),
+  );
   Map<String, dynamic>? _city;
+  List<Map<String, dynamic>> _locationResults = const [];
+  List<Map<String, dynamic>> _equipment = const [];
+  List<Map<String, dynamic>> _trainingTypes = const [];
+  final Set<String> _equipmentIds = {};
+  final Set<String> _trainingTypeIds = {};
+  List<Map<String, dynamic>> _adminCandidates = const [];
+  Map<String, dynamic>? _gymAdmin;
+  Timer? _adminDebounce;
+  bool _loadingSetup = true;
+  bool _locationLoading = false;
+  bool _adminLoading = false;
+  String? _locationError;
   LatLng? _location;
+  int _step = 0;
   bool _busy = false;
   String? _error;
   Map<String, List<String>> _fieldErrors = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSetup();
+  }
 
   @override
   void dispose() {
@@ -555,7 +691,106 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
     _description.dispose();
     _address.dispose();
     _phone.dispose();
+    _locationSearch.dispose();
+    _planName.dispose();
+    _planDuration.dispose();
+    _planPrice.dispose();
+    _adminSearch.dispose();
+    _adminReason.dispose();
+    _adminDebounce?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadSetup() async {
+    try {
+      final api = context.read<ApiClient>();
+      final results = await Future.wait([
+        api.page(
+          '/api/admin/reference-data/equipment',
+          query: {'isActive': true, 'pageSize': 100},
+        ),
+        api.page(
+          '/api/admin/reference-data/training-types',
+          query: {'isActive': true, 'pageSize': 100},
+        ),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _equipment = results[0].items;
+        _trainingTypes = results[1].items;
+        _loadingSetup = false;
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error is ApiProblem ? error.message : error.toString();
+          _loadingSetup = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _searchLocation() async {
+    final query = _locationSearch.text.trim();
+    if (query.length < 2) {
+      setState(() => _locationError = 'Unesite najmanje dva znaka.');
+      return;
+    }
+    setState(() {
+      _locationLoading = true;
+      _locationError = null;
+      _locationResults = const [];
+    });
+    try {
+      final raw = await context.read<ApiClient>().get(
+        '/api/admin/locations/search',
+        query: {'query': query},
+      );
+      if (!mounted) return;
+      final results = (raw as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+      setState(() {
+        _locationResults = results;
+        if (results.isEmpty) {
+          _locationError = 'Nema rezultata za unesenu adresu.';
+        }
+      });
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _locationResults = const [];
+          _locationError = error.code == 'location_search_unavailable'
+              ? 'Pretraga lokacija trenutno nije dostupna. Pokušajte ponovo.'
+              : error.message;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _locationError =
+              'Pretraga lokacija trenutno nije dostupna. Pokušajte ponovo.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _locationLoading = false);
+    }
+  }
+
+  void _selectLocation(Map<String, dynamic> result) {
+    final point = LatLng(
+      (result['latitude'] as num).toDouble(),
+      (result['longitude'] as num).toDouble(),
+    );
+    setState(() {
+      _city = {'id': result['cityId'], 'name': result['cityName']};
+      _address.text = result['address'].toString();
+      _location = point;
+      _locationResults = const [];
+      _locationError = null;
+    });
+    _mapController.move(point, 15);
   }
 
   String? _serverError(String field) {
@@ -567,12 +802,120 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
     return null;
   }
 
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
-    if (_location == null) {
-      setState(() => _error = 'Označite lokaciju teretane na mapi.');
+  void _adminSearchChanged(String value) {
+    if (_gymAdmin != null &&
+        value.trim() != _gymAdmin!['displayName']?.toString()) {
+      _gymAdmin = null;
+    }
+    _adminDebounce?.cancel();
+    final query = value.trim();
+    if (query.length < 2) {
+      setState(() => _adminCandidates = const []);
       return;
     }
+    _adminDebounce = Timer(
+      const Duration(milliseconds: 300),
+      () => _loadAdminCandidates(query),
+    );
+  }
+
+  Future<void> _loadAdminCandidates(String query) async {
+    setState(() {
+      _adminLoading = true;
+      _error = null;
+    });
+    try {
+      final result = await context.read<ApiClient>().page(
+        '/api/admin/users',
+        query: {
+          'query': query,
+          'role': 'Member',
+          'isActive': true,
+          'pageSize': 10,
+        },
+      );
+      if (!mounted || _adminSearch.text.trim() != query) return;
+      setState(() => _adminCandidates = result.items);
+    } on ApiProblem catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted && _adminSearch.text.trim() == query) {
+        setState(() => _adminLoading = false);
+      }
+    }
+  }
+
+  void _selectAdmin(Map<String, dynamic> candidate) {
+    setState(() {
+      _gymAdmin = candidate;
+      _adminSearch.text = candidate['displayName'].toString();
+      _adminSearch.selection = TextSelection.collapsed(
+        offset: _adminSearch.text.length,
+      );
+      _adminCandidates = const [];
+      _error = null;
+    });
+  }
+
+  bool _validateStep() {
+    String? message;
+    if (_step == 0) {
+      if (_name.text.trim().length < 2) {
+        message = 'Unesite naziv teretane.';
+      } else if (_description.text.trim().length < 10) {
+        message = 'Opis mora imati najmanje 10 znakova.';
+      } else if (_city == null || _location == null) {
+        message = 'Pretražite i izaberite lokaciju iz ponuđene liste.';
+      } else if (_address.text.trim().length < 3) {
+        message = 'Unesite adresu.';
+      }
+    } else if (_step == 1) {
+      if (!_days.any((day) => !day.isClosed)) {
+        message = 'Najmanje jedan dan mora biti otvoren.';
+      } else if (_days.any(
+        (day) =>
+            !day.isClosed &&
+            (day.closes.hour * 60 + day.closes.minute <=
+                day.opens.hour * 60 + day.opens.minute),
+      )) {
+        message = 'Vrijeme zatvaranja mora biti nakon vremena otvaranja.';
+      } else if (_equipmentIds.isEmpty) {
+        message = 'Izaberite najmanje jednu stavku opreme.';
+      } else if (_trainingTypeIds.isEmpty) {
+        message = 'Izaberite najmanje jedan tip treninga.';
+      } else if (_planName.text.trim().isEmpty ||
+          (int.tryParse(_planDuration.text) ?? 0) <= 0 ||
+          double.tryParse(_planPrice.text.replaceFirst(',', '.')) == null) {
+        message = 'Unesite ispravne podatke početnog plana članstva.';
+      }
+    } else if (_step == 2) {
+      if (_gymAdmin == null) {
+        message = 'Izaberite aktivnog Member korisnika.';
+      } else if (_adminReason.text.trim().length < 2) {
+        message = 'Unesite razlog dodjele GymAdmin uloge.';
+      }
+    }
+    setState(() => _error = message);
+    return message == null;
+  }
+
+  void _continue() {
+    if (!_validateStep()) return;
+    setState(() {
+      _step++;
+      _error = null;
+    });
+  }
+
+  Future<void> _submit() async {
+    if (!_validateStep()) return;
+    final confirmed = await confirmAction(
+      context,
+      title: 'Kreiraj teretanu',
+      message:
+          '${_gymAdmin!['displayName']} će postati GymAdmin za ${_name.text.trim()}. Korisničke sesije bit će opozvane, a teretana će biti spremna za aktivaciju.',
+    );
+    if (!confirmed || !mounted) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -589,14 +932,656 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
           'latitude': _location!.latitude,
           'longitude': _location!.longitude,
           'phoneNumber': _phone.text.trim().isEmpty ? null : _phone.text.trim(),
+          'workingHours': _days
+              .map(
+                (day) => {
+                  'dayOfWeek': day.dayOfWeek,
+                  'opensAt': day.isClosed ? null : _timeValue(day.opens),
+                  'closesAt': day.isClosed ? null : _timeValue(day.closes),
+                  'isClosed': day.isClosed,
+                },
+              )
+              .toList(),
+          'equipmentIds': _equipmentIds.toList(),
+          'trainingTypeIds': _trainingTypeIds.toList(),
+          'membershipPlan': {
+            'name': _planName.text.trim(),
+            'durationDays': int.parse(_planDuration.text),
+            'price': double.parse(_planPrice.text.replaceFirst(',', '.')),
+            'currency': 'BAM',
+          },
+          'gymAdminUserId': _gymAdmin!['id'],
+          'gymAdminAssignmentReason': _adminReason.text.trim(),
         },
       );
       if (mounted) Navigator.pop(context, true);
     } on ApiProblem catch (error) {
       if (mounted) {
         setState(() {
-          _error = error.message;
+          _error = switch (error.code) {
+            'gym_admin_already_assigned' =>
+              'Odabrani korisnik je već dodijeljen drugoj teretani.',
+            'tenant_gym_admin_exists' =>
+              'Ova teretana već ima aktivnog GymAdmina.',
+            'location_search_unavailable' =>
+              'Pretraga lokacija trenutno nije dostupna.',
+            _ => error.message,
+          };
           _fieldErrors = error.fieldErrors;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _error =
+              'Zahtjev trenutno nije moguće izvršiti. Pokušajte ponovo.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  static String _timeValue(TimeOfDay value) =>
+      '${value.hour.toString().padLeft(2, '0')}:'
+      '${value.minute.toString().padLeft(2, '0')}:00';
+
+  Widget _detailsStep() => ListView(
+    children: [
+      Row(
+        children: [
+          Expanded(
+            child: TextFormField(
+              controller: _name,
+              decoration: InputDecoration(
+                labelText: 'Naziv',
+                errorText: _serverError('Name'),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextFormField(
+              controller: _phone,
+              decoration: InputDecoration(
+                labelText: 'Telefon (opcionalno)',
+                errorText: _serverError('PhoneNumber'),
+              ),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _description,
+        minLines: 3,
+        maxLines: 4,
+        decoration: InputDecoration(
+          labelText: 'Opis',
+          errorText: _serverError('Description'),
+        ),
+      ),
+      const SizedBox(height: 16),
+      const Text('Lokacija', style: TextStyle(fontWeight: FontWeight.w800)),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              key: const Key('gym-location-search'),
+              controller: _locationSearch,
+              onSubmitted: (_) => _searchLocation(),
+              decoration: const InputDecoration(
+                hintText: 'Pretraži adresu',
+                prefixIcon: Icon(Icons.search),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          OutlinedButton.icon(
+            key: const Key('gym-location-search-button'),
+            onPressed: _locationLoading ? null : _searchLocation,
+            icon: _locationLoading
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.search),
+            label: const Text('Pretraži'),
+          ),
+        ],
+      ),
+      if (_locationResults.isNotEmpty)
+        Container(
+          constraints: const BoxConstraints(maxHeight: 150),
+          margin: const EdgeInsets.only(top: 6),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: Colors.black12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: _locationResults.length,
+              separatorBuilder: (_, _) => const Divider(height: 1),
+              itemBuilder: (_, index) {
+                final result = _locationResults[index];
+                return ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.place_outlined),
+                  title: Text(result['displayName'].toString()),
+                  subtitle: Text(result['cityName'].toString()),
+                  onTap: () => _selectLocation(result),
+                );
+              },
+            ),
+          ),
+        ),
+      if (_locationError != null) ...[
+        const SizedBox(height: 6),
+        Text(_locationError!, style: const TextStyle(color: Colors.red)),
+      ],
+      const SizedBox(height: 10),
+      TextFormField(
+        controller: _address,
+        decoration: InputDecoration(
+          labelText: 'Odabrana adresa',
+          prefixIcon: const Icon(Icons.location_on_outlined),
+          errorText: _serverError('Address'),
+        ),
+      ),
+      if (_city != null) ...[
+        const SizedBox(height: 6),
+        Text('Grad/općina: ${_city!['name']}'),
+      ],
+      const SizedBox(height: 10),
+      SizedBox(
+        height: 250,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: const LatLng(43.8563, 18.4131),
+              initialZoom: 12,
+              onTap: (_, point) => setState(() => _location = point),
+            ),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'ba.gymlink.gymlink_desktop',
+              ),
+              if (_location != null)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _location!,
+                      width: 52,
+                      height: 52,
+                      child: const Icon(
+                        Icons.location_pin,
+                        color: Colors.red,
+                        size: 48,
+                      ),
+                    ),
+                  ],
+                ),
+              const RichAttributionWidget(
+                attributions: [
+                  TextSourceAttribution('OpenStreetMap contributors'),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+      const SizedBox(height: 6),
+      const Text('Nakon izbora rezultat možete precizirati klikom na mapu.'),
+    ],
+  );
+
+  Widget _catalogStep() => ListView(
+    children: [
+      const Text(
+        'Radno vrijeme',
+        style: TextStyle(fontWeight: FontWeight.w800),
+      ),
+      const SizedBox(height: 8),
+      ..._days.map(
+        (day) => Card(
+          child: Row(
+            children: [
+              SizedBox(
+                width: 120,
+                child: SwitchListTile(
+                  dense: true,
+                  title: Text(_weekdayLabel(day.dayOfWeek)),
+                  value: !day.isClosed,
+                  onChanged: (value) => setState(() => day.isClosed = !value),
+                ),
+              ),
+              if (!day.isClosed) ...[
+                TextButton(
+                  onPressed: () => _pickTime(day, true),
+                  child: Text('Od ${day.opens.format(context)}'),
+                ),
+                TextButton(
+                  onPressed: () => _pickTime(day, false),
+                  child: Text('Do ${day.closes.format(context)}'),
+                ),
+              ] else
+                const Text('Zatvoreno'),
+            ],
+          ),
+        ),
+      ),
+      const SizedBox(height: 14),
+      const Text('Oprema', style: TextStyle(fontWeight: FontWeight.w800)),
+      Wrap(
+        spacing: 8,
+        children: _equipment.map((item) {
+          final id = item['id'].toString();
+          return FilterChip(
+            label: Text(item['name'].toString()),
+            selected: _equipmentIds.contains(id),
+            onSelected: (selected) => setState(
+              () => selected ? _equipmentIds.add(id) : _equipmentIds.remove(id),
+            ),
+          );
+        }).toList(),
+      ),
+      const SizedBox(height: 14),
+      const Text(
+        'Tipovi treninga',
+        style: TextStyle(fontWeight: FontWeight.w800),
+      ),
+      Wrap(
+        spacing: 8,
+        children: _trainingTypes.map((item) {
+          final id = item['id'].toString();
+          return FilterChip(
+            label: Text(item['name'].toString()),
+            selected: _trainingTypeIds.contains(id),
+            onSelected: (selected) => setState(
+              () => selected
+                  ? _trainingTypeIds.add(id)
+                  : _trainingTypeIds.remove(id),
+            ),
+          );
+        }).toList(),
+      ),
+      const SizedBox(height: 16),
+      const Text(
+        'Početni plan članstva',
+        style: TextStyle(fontWeight: FontWeight.w800),
+      ),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _planName,
+              decoration: const InputDecoration(labelText: 'Naziv plana'),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: _planDuration,
+              decoration: const InputDecoration(labelText: 'Trajanje (dana)'),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: _planPrice,
+              decoration: const InputDecoration(labelText: 'Cijena (BAM)'),
+            ),
+          ),
+        ],
+      ),
+    ],
+  );
+
+  Widget _adminStep() => ListView(
+    children: [
+      const Text(
+        'Odaberite aktivnog Member korisnika. Promocija opoziva njegove aktivne sesije.',
+      ),
+      const SizedBox(height: 14),
+      TextField(
+        key: const Key('gym-admin-search'),
+        controller: _adminSearch,
+        onChanged: _adminSearchChanged,
+        decoration: InputDecoration(
+          labelText: 'GymAdmin',
+          hintText: 'Ime, korisničko ime ili email...',
+          prefixIcon: const Icon(Icons.person_search_outlined),
+          suffixIcon: _adminLoading
+              ? const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : null,
+        ),
+      ),
+      if (_adminCandidates.isNotEmpty)
+        Container(
+          constraints: const BoxConstraints(maxHeight: 220),
+          margin: const EdgeInsets.only(top: 4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: Colors.black12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: _adminCandidates.length,
+              itemBuilder: (_, index) {
+                final candidate = _adminCandidates[index];
+                return ListTile(
+                  title: Text(candidate['displayName'].toString()),
+                  subtitle: Text(candidate['email'].toString()),
+                  onTap: () => _selectAdmin(candidate),
+                );
+              },
+            ),
+          ),
+        ),
+      const SizedBox(height: 12),
+      TextField(
+        controller: _adminReason,
+        maxLength: 1000,
+        maxLines: 3,
+        decoration: const InputDecoration(
+          labelText: 'Razlog dodjele GymAdmin uloge',
+        ),
+      ),
+    ],
+  );
+
+  Widget _reviewStep() => ListView(
+    children: [
+      Text(
+        _name.text.trim(),
+        style: Theme.of(
+          context,
+        ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+      ),
+      const SizedBox(height: 10),
+      Text('${_address.text.trim()}, ${_city?['name'] ?? ''}'),
+      Text('Otvoreni dani: ${_days.where((day) => !day.isClosed).length} od 7'),
+      Text('Odabrana oprema: ${_equipmentIds.length}'),
+      Text('Tipovi treninga: ${_trainingTypeIds.length}'),
+      Text(
+        'Plan: ${_planName.text.trim()}, ${_planDuration.text} dana, ${_planPrice.text} BAM',
+      ),
+      Text('GymAdmin: ${_gymAdmin?['displayName'] ?? ''}'),
+      const SizedBox(height: 18),
+      const Text(
+        'Teretana će biti privatna i u statusu čekanja. Nakon kreiranja bit će spremna za zasebnu CentralAdmin aktivaciju.',
+      ),
+    ],
+  );
+
+  Future<void> _pickTime(_WorkingDayState day, bool opening) async {
+    final selected = await showTimePicker(
+      context: context,
+      initialTime: opening ? day.opens : day.closes,
+    );
+    if (selected == null) return;
+    setState(() {
+      if (opening) {
+        day.opens = selected;
+      } else {
+        day.closes = selected;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Dodaj teretanu'),
+    content: SizedBox(
+      width: 900,
+      height: 700,
+      child: _loadingSetup
+          ? const Center(child: CircularProgressIndicator())
+          : Form(
+              key: _formKey,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: Stepper(
+                      type: StepperType.horizontal,
+                      currentStep: _step,
+                      onStepTapped: (value) {
+                        if (value < _step) setState(() => _step = value);
+                      },
+                      controlsBuilder: (_, _) => const SizedBox.shrink(),
+                      steps: [
+                        Step(
+                          title: const Text('Podaci i lokacija'),
+                          isActive: _step >= 0,
+                          state: _step > 0
+                              ? StepState.complete
+                              : StepState.indexed,
+                          content: SizedBox(height: 570, child: _detailsStep()),
+                        ),
+                        Step(
+                          title: const Text('Katalog'),
+                          isActive: _step >= 1,
+                          state: _step > 1
+                              ? StepState.complete
+                              : StepState.indexed,
+                          content: SizedBox(height: 570, child: _catalogStep()),
+                        ),
+                        Step(
+                          title: const Text('GymAdmin'),
+                          isActive: _step >= 2,
+                          state: _step > 2
+                              ? StepState.complete
+                              : StepState.indexed,
+                          content: SizedBox(height: 570, child: _adminStep()),
+                        ),
+                        Step(
+                          title: const Text('Pregled'),
+                          isActive: _step >= 3,
+                          content: SizedBox(height: 570, child: _reviewStep()),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: _busy ? null : () => Navigator.pop(context, false),
+        child: const Text('Odustani'),
+      ),
+      if (_step > 0)
+        TextButton(
+          onPressed: _busy ? null : () => setState(() => _step--),
+          child: const Text('Nazad'),
+        ),
+      FilledButton(
+        key: const Key('gym-create-continue'),
+        onPressed: _busy ? null : (_step == 3 ? _submit : _continue),
+        child: Text(
+          _busy ? 'Kreiranje...' : (_step == 3 ? 'Kreiraj' : 'Dalje'),
+        ),
+      ),
+    ],
+  );
+}
+
+class _WorkingDayState {
+  _WorkingDayState({required this.dayOfWeek, required this.isClosed});
+
+  final int dayOfWeek;
+  bool isClosed;
+  TimeOfDay opens = const TimeOfDay(hour: 8, minute: 0);
+  TimeOfDay closes = const TimeOfDay(hour: 22, minute: 0);
+}
+
+String _weekdayLabel(int dayOfWeek) => const [
+  'Nedjelja',
+  'Ponedjeljak',
+  'Utorak',
+  'Srijeda',
+  'Četvrtak',
+  'Petak',
+  'Subota',
+][dayOfWeek.clamp(0, 6)];
+
+String _activationRequirementLabel(String code) => switch (code) {
+  'gym_admin' => 'GymAdmin',
+  'description' => 'opis',
+  'working_hours' => 'radno vrijeme',
+  'equipment' => 'oprema',
+  'training_type' => 'tip treninga',
+  'membership_plan' => 'aktivan plan članstva',
+  _ => code,
+};
+
+class _GymAdminAssignmentDialog extends StatefulWidget {
+  const _GymAdminAssignmentDialog({required this.gym});
+
+  final Map<String, dynamic> gym;
+
+  @override
+  State<_GymAdminAssignmentDialog> createState() =>
+      _GymAdminAssignmentDialogState();
+}
+
+class _GymAdminAssignmentDialogState extends State<_GymAdminAssignmentDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _search = TextEditingController();
+  final _reason = TextEditingController();
+  Timer? _debounce;
+  List<Map<String, dynamic>> _candidates = const [];
+  Map<String, dynamic>? _selected;
+  bool _loading = false;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _search.dispose();
+    _reason.dispose();
+    super.dispose();
+  }
+
+  void _searchChanged(String value) {
+    if (_selected != null &&
+        value.trim() != _selected!['displayName']?.toString()) {
+      _selected = null;
+    }
+    _debounce?.cancel();
+    final query = value.trim();
+    if (query.length < 2) {
+      setState(() => _candidates = const []);
+      return;
+    }
+    _debounce = Timer(
+      const Duration(milliseconds: 300),
+      () => _loadCandidates(query),
+    );
+  }
+
+  Future<void> _loadCandidates(String query) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final result = await context.read<ApiClient>().page(
+        '/api/admin/users',
+        query: {
+          'query': query,
+          'role': 'Member',
+          'isActive': true,
+          'pageSize': 10,
+        },
+      );
+      if (!mounted || _search.text.trim() != query) return;
+      setState(() => _candidates = result.items);
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _candidates = const [];
+          _error = error.message;
+        });
+      }
+    } finally {
+      if (mounted && _search.text.trim() == query) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  void _select(Map<String, dynamic> candidate) {
+    setState(() {
+      _selected = candidate;
+      _search.text = candidate['displayName'].toString();
+      _search.selection = TextSelection.collapsed(offset: _search.text.length);
+      _candidates = const [];
+      _error = null;
+    });
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    final confirmed = await confirmAction(
+      context,
+      title: 'Dodijeli GymAdmina',
+      message:
+          '${_selected!['displayName']} će dobiti administratorski pristup teretani ${widget.gym['name']}. Sve aktivne sesije tog korisnika bit će opozvane.',
+    );
+    if (!confirmed || !mounted) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await context.read<ApiClient>().post(
+        '/api/admin/users/roles/assign',
+        body: {
+          'identifier': _selected!['email'],
+          'role': 'GymAdmin',
+          'tenantId': widget.gym['tenantId'],
+          'reason': _reason.text.trim(),
+        },
+      );
+      if (mounted) Navigator.pop(context, true);
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = switch (error.code) {
+            'tenant_gym_admin_exists' =>
+              'Ova teretana već ima aktivnog GymAdmina.',
+            'gym_admin_already_assigned' =>
+              'Odabrani korisnik je već dodijeljen drugoj teretani. Prvo opozovite postojeću ulogu.',
+            _ => error.message,
+          };
         });
       }
     } finally {
@@ -606,117 +1591,78 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Dodaj teretanu'),
+    title: const Text('Dodijeli GymAdmina'),
     content: SizedBox(
-      width: 720,
-      height: 680,
+      width: 560,
       child: Form(
         key: _formKey,
-        child: ListView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Text(
+              widget.gym['name'].toString(),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 14),
             TextFormField(
-              controller: _name,
+              controller: _search,
+              onChanged: _searchChanged,
               decoration: InputDecoration(
-                labelText: 'Naziv',
-                errorText: _serverError('Name'),
+                labelText: 'Registrovani korisnik',
+                hintText: 'Ime, korisničko ime ili email...',
+                prefixIcon: const Icon(Icons.person_search_outlined),
+                suffixIcon: _loading
+                    ? const Padding(
+                        padding: EdgeInsets.all(14),
+                        child: SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : null,
               ),
-              validator: (value) => (value?.trim().length ?? 0) < 2
-                  ? 'Unesite naziv teretane.'
+              validator: (_) => _selected == null
+                  ? 'Izaberite aktivnog korisnika iz liste.'
                   : null,
             ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _description,
-              minLines: 3,
-              maxLines: 5,
-              decoration: InputDecoration(
-                labelText: 'Opis',
-                errorText: _serverError('Description'),
-              ),
-              validator: (value) => (value?.trim().length ?? 0) < 10
-                  ? 'Opis mora imati najmanje 10 znakova.'
-                  : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _address,
-              decoration: InputDecoration(
-                labelText: 'Adresa',
-                prefixIcon: const Icon(Icons.location_on_outlined),
-                errorText: _serverError('Address'),
-              ),
-              validator: (value) =>
-                  (value?.trim().length ?? 0) < 3 ? 'Unesite adresu.' : null,
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<Map<String, dynamic>>(
-              initialValue: _city,
-              decoration: InputDecoration(
-                labelText: 'Grad',
-                errorText: _serverError('CityId'),
-              ),
-              items: widget.cities
-                  .map(
-                    (city) => DropdownMenuItem(
-                      value: city,
-                      child: Text('${city['name']} · ${city['countryName']}'),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) => setState(() => _city = value),
-              validator: (value) => value == null ? 'Izaberite grad.' : null,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _phone,
-              decoration: InputDecoration(
-                labelText: 'Telefon (opcionalno)',
-                prefixIcon: const Icon(Icons.phone_outlined),
-                errorText: _serverError('PhoneNumber'),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text('Kliknite na mapu da označite tačnu lokaciju.'),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 270,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: FlutterMap(
-                  options: MapOptions(
-                    initialCenter: const LatLng(43.8563, 18.4131),
-                    initialZoom: 12,
-                    onTap: (_, point) => setState(() => _location = point),
+            if (_candidates.isNotEmpty)
+              Container(
+                constraints: const BoxConstraints(maxHeight: 220),
+                margin: const EdgeInsets.only(top: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: Colors.black12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _candidates.length,
+                    itemBuilder: (_, index) {
+                      final candidate = _candidates[index];
+                      return ListTile(
+                        dense: true,
+                        title: Text(candidate['displayName'].toString()),
+                        subtitle: Text(candidate['email'].toString()),
+                        onTap: () => _select(candidate),
+                      );
+                    },
                   ),
-                  children: [
-                    TileLayer(
-                      urlTemplate:
-                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'ba.gymlink.gymlink_desktop',
-                    ),
-                    if (_location != null)
-                      MarkerLayer(
-                        markers: [
-                          Marker(
-                            point: _location!,
-                            width: 52,
-                            height: 52,
-                            child: const Icon(
-                              Icons.location_pin,
-                              color: Colors.red,
-                              size: 48,
-                            ),
-                          ),
-                        ],
-                      ),
-                    const RichAttributionWidget(
-                      attributions: [
-                        TextSourceAttribution('OpenStreetMap contributors'),
-                      ],
-                    ),
-                  ],
                 ),
               ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _reason,
+              minLines: 2,
+              maxLines: 3,
+              decoration: const InputDecoration(labelText: 'Razlog dodjele'),
+              validator: (value) => (value?.trim().length ?? 0) < 2
+                  ? 'Unesite razlog dodjele.'
+                  : null,
             ),
             if (_error != null) ...[
               const SizedBox(height: 12),
@@ -733,7 +1679,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
       ),
       FilledButton(
         onPressed: _busy ? null : _submit,
-        child: Text(_busy ? 'Kreiranje...' : 'Kreiraj'),
+        child: Text(_busy ? 'Dodjela...' : 'Dodijeli'),
       ),
     ],
   );
