@@ -54,6 +54,13 @@ internal sealed class AvailabilityService(
         request.Validate();
         ValidateRange(request.FromUtc, request.ToUtc);
         var now = timeProvider.GetUtcNow().UtcDateTime;
+        if (request.TrainerServiceOfferingId == Guid.Empty)
+        {
+            throw new ApplicationRuleException(
+                "offering_required",
+                "A trainer offering is required.");
+        }
+
         var trainer = await dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
             .SingleOrDefaultAsync(x => x.Id == trainerId && x.IsActive, cancellationToken)
             ?? throw new NotFoundException("trainer_not_found", "The trainer was not found.");
@@ -66,39 +73,223 @@ internal sealed class AvailabilityService(
             throw new NotFoundException("trainer_not_found", "The trainer was not found.");
         }
 
-        int? offeringDuration = null;
-        if (request.TrainerServiceOfferingId.HasValue)
+        var offeringDuration = await dbContext.TrainerServiceOfferings
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(
+                x => x.Id == request.TrainerServiceOfferingId &&
+                     x.TrainerProfileId == trainerId &&
+                     x.IsActive)
+            .Select(x => (int?)x.DurationMinutes)
+            .SingleOrDefaultAsync(cancellationToken)
+            ?? throw new NotFoundException(
+                "offering_not_found",
+                "The trainer offering was not found.");
+        var schedule = await dbContext.TrainerAvailabilitySchedules
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                x => x.TenantId == trainer.TenantId &&
+                     x.TrainerProfileId == trainerId,
+                cancellationToken);
+        if (schedule is null)
         {
-            offeringDuration = await dbContext.TrainerServiceOfferings
-                .IgnoreQueryFilters()
-                .AsNoTracking()
-                .Where(
-                    x => x.Id == request.TrainerServiceOfferingId &&
-                         x.TrainerProfileId == trainerId &&
-                         x.IsActive)
-                .Select(x => (int?)x.DurationMinutes)
-                .SingleOrDefaultAsync(cancellationToken);
-            if (!offeringDuration.HasValue)
+            return new PagedResult<AvailabilityDto>(
+                [],
+                request.Page,
+                request.PageSize,
+                0);
+        }
+
+        var horizonEnd = now.AddDays(schedule.BookingHorizonWeeks * 7);
+        var rangeStart = request.FromUtc.HasValue && request.FromUtc > now
+            ? request.FromUtc.Value
+            : now;
+        var rangeEnd = request.ToUtc.HasValue && request.ToUtc < horizonEnd
+            ? request.ToUtc.Value
+            : horizonEnd;
+        if (rangeEnd <= rangeStart)
+        {
+            return new PagedResult<AvailabilityDto>(
+                [],
+                request.Page,
+                request.PageSize,
+                0);
+        }
+
+        var shifts = await dbContext.TrainerWeeklyShifts
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(x =>
+                x.TrainerAvailabilityScheduleId == schedule.Id &&
+                x.IsActive)
+            .OrderBy(x => x.DayOfWeek)
+            .ThenBy(x => x.StartsAtLocal)
+            .ToListAsync(cancellationToken);
+        var activeStatuses = new[] { ReservationStatus.Pending, ReservationStatus.Confirmed };
+        var reservations = await dbContext.AppointmentReservations
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(x =>
+                x.TrainerProfileId == trainerId &&
+                activeStatuses.Contains(x.Status) &&
+                x.StartsAtUtc < rangeEnd &&
+                x.EndsAtUtc > rangeStart)
+            .Select(x => new { x.StartsAtUtc, x.EndsAtUtc })
+            .ToListAsync(cancellationToken);
+        var timeZone = ResolveScheduleTimeZone(schedule.TimeZoneId);
+        var localFirstDay = DateOnly.FromDateTime(
+            TimeZoneInfo.ConvertTimeFromUtc(rangeStart, timeZone));
+        var localLastDay = DateOnly.FromDateTime(
+            TimeZoneInfo.ConvertTimeFromUtc(rangeEnd, timeZone));
+        var candidates = new List<AvailabilityDto>();
+        for (var day = localFirstDay; day <= localLastDay; day = day.AddDays(1))
+        {
+            foreach (var shift in shifts.Where(x => x.DayOfWeek == day.DayOfWeek))
             {
-                throw new NotFoundException("offering_not_found", "The trainer offering was not found.");
+                var localStart = DateTime.SpecifyKind(
+                    day.ToDateTime(shift.StartsAtLocal),
+                    DateTimeKind.Unspecified);
+                var localEnd = DateTime.SpecifyKind(
+                    day.ToDateTime(shift.EndsAtLocal),
+                    DateTimeKind.Unspecified);
+                for (var localCandidate = localStart;
+                     localCandidate.AddMinutes(offeringDuration) <= localEnd;
+                     localCandidate = localCandidate.AddMinutes(offeringDuration))
+                {
+                    var startsAtUtc = TimeZoneInfo.ConvertTimeToUtc(localCandidate, timeZone);
+                    var endsAtUtc = startsAtUtc.AddMinutes(offeringDuration);
+                    if (startsAtUtc <= now ||
+                        startsAtUtc < rangeStart ||
+                        startsAtUtc >= rangeEnd ||
+                        reservations.Any(x =>
+                            x.StartsAtUtc < endsAtUtc &&
+                            startsAtUtc < x.EndsAtUtc))
+                    {
+                        continue;
+                    }
+
+                    candidates.Add(new AvailabilityDto(
+                        null,
+                        trainerId,
+                        startsAtUtc,
+                        endsAtUtc,
+                        AvailabilitySlotStatus.Available,
+                        string.Empty));
+                }
             }
         }
 
-        var query = dbContext.TrainerAvailabilitySlots.IgnoreQueryFilters().AsNoTracking()
-            .Where(x =>
-                x.TenantId == trainer.TenantId &&
-                x.TrainerProfileId == trainerId &&
-                x.Status == AvailabilitySlotStatus.Available &&
-                x.StartsAtUtc > now);
-        if (offeringDuration.HasValue)
+        var ordered = candidates.OrderBy(x => x.StartsAtUtc).ToList();
+        return new PagedResult<AvailabilityDto>(
+            ordered
+                .Skip((request.Page - 1) * request.PageSize)
+                .Take(request.PageSize)
+                .ToList(),
+            request.Page,
+            request.PageSize,
+            ordered.Count);
+    }
+
+    public async Task<TrainerScheduleDto> GetScheduleAsync(
+        Guid trainerProfileId,
+        CancellationToken cancellationToken)
+    {
+        var trainer = await ResolveWritableTrainerAsync(trainerProfileId, cancellationToken);
+        return await LoadScheduleDtoAsync(trainer, cancellationToken);
+    }
+
+    public async Task<TrainerScheduleDto> ReplaceScheduleAsync(
+        ReplaceTrainerScheduleRequest request,
+        CancellationToken cancellationToken)
+    {
+        var actorId = RequireUser();
+        var trainer = await ResolveWritableTrainerAsync(
+            request.TrainerProfileId,
+            cancellationToken);
+        var selected = request.Shifts
+            .Select(x => (x.DayOfWeek, x.Period))
+            .ToHashSet();
+        if (selected.Count != request.Shifts.Count ||
+            selected.Count > 14 ||
+            selected.Any(x => !Enum.IsDefined(x.DayOfWeek) || !Enum.IsDefined(x.Period)))
         {
-            query = query.Where(
-                x => x.EndsAtUtc >= x.StartsAtUtc.AddMinutes(offeringDuration.Value));
+            throw new ApplicationRuleException(
+                "weekly_schedule_invalid",
+                "The weekly shift selection is invalid.");
         }
-        query = ApplyRange(query, request.FromUtc, request.ToUtc);
-        return await query.OrderBy(x => x.StartsAtUtc).ThenBy(x => x.Id)
-            .Select(x => ToDto(x))
-            .ToPagedResultAsync(request, cancellationToken);
+
+        var schedule = await transaction.ExecuteSerializableAsync(async ct =>
+        {
+            var entity = await dbContext.TrainerAvailabilitySchedules
+                .SingleOrDefaultAsync(
+                    x => x.TrainerProfileId == trainer.Id,
+                    ct);
+            if (entity is null)
+            {
+                if (!string.IsNullOrWhiteSpace(request.ConcurrencyToken))
+                {
+                    throw new ConflictException(
+                        "concurrency_conflict",
+                        "The schedule changed. Reload it and try again.");
+                }
+
+                entity = new TrainerAvailabilitySchedule(trainer.TenantId, trainer.Id);
+                dbContext.TrainerAvailabilitySchedules.Add(entity);
+                await dbContext.SaveChangesAsync(ct);
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(request.ConcurrencyToken))
+                {
+                    throw new ConflictException(
+                        "concurrency_token_required",
+                        "Reload the existing schedule before saving changes.");
+                }
+
+                EnsureToken(entity.RowVersion, request.ConcurrencyToken);
+            }
+
+            var rows = await dbContext.TrainerWeeklyShifts
+                .Where(x => x.TrainerAvailabilityScheduleId == entity.Id)
+                .ToListAsync(ct);
+            foreach (var row in rows)
+            {
+                if (selected.Contains((row.DayOfWeek, row.Period)))
+                {
+                    row.Activate();
+                }
+                else
+                {
+                    row.Deactivate();
+                }
+            }
+
+            foreach (var item in selected.Where(item =>
+                         rows.All(row =>
+                             row.DayOfWeek != item.DayOfWeek ||
+                             row.Period != item.Period)))
+            {
+                dbContext.TrainerWeeklyShifts.Add(new TrainerWeeklyShift(
+                    trainer.TenantId,
+                    entity.Id,
+                    trainer.Id,
+                    item.DayOfWeek,
+                    item.Period));
+            }
+
+            entity.RecordReplacement();
+            AddScheduleOverrideAudit(actorId, trainer, entity.Id);
+            await dbContext.SaveChangesAsync(ct);
+            return entity;
+        }, cancellationToken);
+        eventRecorder.Record(new(
+            "availability.schedule.changed",
+            trainer.TenantId,
+            actorId,
+            schedule.Id,
+            timeProvider.GetUtcNow().UtcDateTime));
+        return await LoadScheduleDtoAsync(trainer, cancellationToken);
     }
 
     public async Task<AvailabilityDto> CreateAsync(
@@ -311,6 +502,91 @@ internal sealed class AvailabilityService(
         });
     }
 
+    private void AddScheduleOverrideAudit(
+        Guid actorId,
+        TrainerProfile trainer,
+        Guid scheduleId)
+    {
+        if (tenantContext.TenantRole != RoleNames.GymAdmin)
+        {
+            return;
+        }
+
+        dbContext.SecurityAuditRecords.Add(new SecurityAuditRecord
+        {
+            ActorUserId = actorId,
+            TargetUserId = trainer.UserId,
+            TargetTenantId = trainer.TenantId,
+            Action = "availability.schedule.replaced",
+            TargetType = nameof(TrainerAvailabilitySchedule),
+            TargetId = scheduleId,
+            Reason = "GymAdmin weekly availability override.",
+            OccurredAtUtc = timeProvider.GetUtcNow().UtcDateTime,
+        });
+    }
+
+    private async Task<TrainerScheduleDto> LoadScheduleDtoAsync(
+        TrainerProfile trainer,
+        CancellationToken cancellationToken)
+    {
+        var schedule = await dbContext.TrainerAvailabilitySchedules
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                x => x.TrainerProfileId == trainer.Id,
+                cancellationToken);
+        if (schedule is null)
+        {
+            return new TrainerScheduleDto(
+                null,
+                trainer.Id,
+                TrainerAvailabilitySchedule.SarajevoTimeZoneId,
+                TrainerAvailabilitySchedule.DefaultBookingHorizonWeeks,
+                [],
+                null);
+        }
+
+        var shifts = await dbContext.TrainerWeeklyShifts
+            .AsNoTracking()
+            .Where(x =>
+                x.TrainerAvailabilityScheduleId == schedule.Id &&
+                x.IsActive)
+            .OrderBy(x => x.DayOfWeek)
+            .ThenBy(x => x.StartsAtLocal)
+            .Select(x => new WeeklyShiftSelectionRequest
+            {
+                DayOfWeek = x.DayOfWeek,
+                Period = x.Period,
+            })
+            .ToListAsync(cancellationToken);
+        return new TrainerScheduleDto(
+            schedule.Id,
+            trainer.Id,
+            schedule.TimeZoneId,
+            schedule.BookingHorizonWeeks,
+            shifts,
+            Convert.ToBase64String(schedule.RowVersion));
+    }
+
+    private static TimeZoneInfo ResolveScheduleTimeZone(string timeZoneId)
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            throw new ApplicationRuleException(
+                "schedule_timezone_invalid",
+                "The configured schedule timezone is unavailable.");
+        }
+        catch (InvalidTimeZoneException)
+        {
+            throw new ApplicationRuleException(
+                "schedule_timezone_invalid",
+                "The configured schedule timezone is invalid.");
+        }
+    }
+
     private async Task SaveAsync(CancellationToken cancellationToken)
     {
         try
@@ -451,6 +727,13 @@ internal sealed class ReservationService(
     {
         var memberId = RequireUser();
         var now = timeProvider.GetUtcNow().UtcDateTime;
+        if (request.StartsAtUtc.Kind != DateTimeKind.Utc)
+        {
+            throw new ApplicationRuleException(
+                "utc_required",
+                "The reservation start must use UTC.");
+        }
+
         AppointmentReservation reservation;
         try
         {
@@ -461,30 +744,54 @@ internal sealed class ReservationService(
                         join trainer in dbContext.TrainerProfiles.IgnoreQueryFilters()
                             on new { offering.TenantId, Id = offering.TrainerProfileId }
                             equals new { trainer.TenantId, trainer.Id }
-                        join slot in dbContext.TrainerAvailabilitySlots.IgnoreQueryFilters()
-                            on new { offering.TenantId, Id = request.AvailabilitySlotId }
-                            equals new { slot.TenantId, slot.Id }
                         join gym in dbContext.Gyms.IgnoreQueryFilters()
                             on offering.TenantId equals gym.TenantId
                         join tenant in dbContext.Tenants on offering.TenantId equals tenant.Id
                         where offering.Id == request.TrainerServiceOfferingId &&
                               offering.IsActive &&
                               trainer.IsActive &&
-                              slot.TrainerProfileId == trainer.Id &&
-                              slot.Status == AvailabilitySlotStatus.Available &&
                               gym.IsPubliclyVisible &&
                               tenant.Status == TenantStatus.Active
-                        select new { Offering = offering, Trainer = trainer, Slot = slot, Gym = gym })
+                        select new { Offering = offering, Trainer = trainer, Gym = gym })
                     .SingleOrDefaultAsync(ct)
                     ?? throw new NotFoundException(
-                        "bookable_slot_not_found",
-                        "The selected offering and availability slot are not bookable.");
-                var endsAtUtc = target.Slot.StartsAtUtc.AddMinutes(target.Offering.DurationMinutes);
-                if (target.Slot.StartsAtUtc <= now || endsAtUtc > target.Slot.EndsAtUtc)
+                        "bookable_time_not_found",
+                        "The selected offering and appointment time are not bookable.");
+                var endsAtUtc = request.StartsAtUtc.AddMinutes(target.Offering.DurationMinutes);
+                var schedule = await dbContext.TrainerAvailabilitySchedules
+                    .IgnoreQueryFilters()
+                    .AsNoTracking()
+                    .SingleOrDefaultAsync(
+                        x => x.TenantId == target.Offering.TenantId &&
+                             x.TrainerProfileId == target.Trainer.Id,
+                        ct)
+                    ?? throw new ConflictException(
+                        "trainer_schedule_required",
+                        "The trainer has no active weekly schedule.");
+                if (request.StartsAtUtc <= now ||
+                    request.StartsAtUtc > now.AddDays(schedule.BookingHorizonWeeks * 7))
                 {
                     throw new ConflictException(
-                        "slot_duration_mismatch",
-                        "The offering does not fit within the selected availability slot.");
+                        "booking_horizon_invalid",
+                        "The selected appointment is outside the eight-week booking horizon.");
+                }
+
+                var shifts = await dbContext.TrainerWeeklyShifts
+                    .IgnoreQueryFilters()
+                    .AsNoTracking()
+                    .Where(x =>
+                        x.TrainerAvailabilityScheduleId == schedule.Id &&
+                        x.IsActive)
+                    .ToListAsync(ct);
+                if (!FitsWeeklyShift(
+                    request.StartsAtUtc,
+                    endsAtUtc,
+                    schedule.TimeZoneId,
+                    shifts))
+                {
+                    throw new ConflictException(
+                        "appointment_outside_shift",
+                        "The appointment must fit completely within an active trainer shift.");
                 }
 
                 var membership = await dbContext.Memberships.IgnoreQueryFilters()
@@ -493,7 +800,7 @@ internal sealed class ReservationService(
                              x.GymId == target.Gym.Id &&
                              x.MemberUserId == memberId &&
                              x.Status == MembershipStatus.Active &&
-                             x.StartsAtUtc <= target.Slot.StartsAtUtc &&
+                             x.StartsAtUtc <= request.StartsAtUtc &&
                              x.EndsAtUtc >= endsAtUtc,
                         ct)
                     ?? throw new ConflictException(
@@ -504,7 +811,7 @@ internal sealed class ReservationService(
                     .AnyAsync(
                         x => activeStatuses.Contains(x.Status) &&
                              x.StartsAtUtc < endsAtUtc &&
-                             target.Slot.StartsAtUtc < x.EndsAtUtc &&
+                             request.StartsAtUtc < x.EndsAtUtc &&
                              (x.TrainerProfileId == target.Trainer.Id ||
                               x.MemberUserId == memberId),
                         ct);
@@ -515,15 +822,14 @@ internal sealed class ReservationService(
                         "The trainer or Member already has an overlapping reservation.");
                 }
 
-                target.Slot.Reserve();
                 var entity = new AppointmentReservation(
                     target.Offering.TenantId,
                     memberId,
                     target.Trainer.Id,
                     target.Offering.Id,
-                    target.Slot.Id,
+                    null,
                     membership.Id,
-                    target.Slot.StartsAtUtc,
+                    request.StartsAtUtc,
                     target.Offering.DurationMinutes,
                     target.Offering.Price,
                     target.Offering.Currency);
@@ -578,10 +884,13 @@ internal sealed class ReservationService(
             .SingleOrDefaultAsync(x => x.Id == id && x.MemberUserId == actor, cancellationToken)
             ?? throw ReservationNotFound();
         EnsureToken(entity.RowVersion, request.ConcurrencyToken);
-        var slot = await dbContext.TrainerAvailabilitySlots.IgnoreQueryFilters()
-            .SingleAsync(x => x.Id == entity.AvailabilitySlotId, cancellationToken);
         entity.CancelByMember(actor, timeProvider.GetUtcNow().UtcDateTime);
-        slot.Release();
+        if (entity.AvailabilitySlotId.HasValue)
+        {
+            var slot = await dbContext.TrainerAvailabilitySlots.IgnoreQueryFilters()
+                .SingleAsync(x => x.Id == entity.AvailabilitySlotId.Value, cancellationToken);
+            slot.Release();
+        }
         using (tenantMutationScope.Begin(entity.TenantId))
         {
             await SaveAsync(cancellationToken);
@@ -653,11 +962,14 @@ internal sealed class ReservationService(
                          x.Status == MembershipStatus.Active &&
                          x.StartsAtUtc <= entity.StartsAtUtc &&
                          x.EndsAtUtc >= entity.EndsAtUtc,
-                    cancellationToken) &&
-                await dbContext.TrainerAvailabilitySlots.AnyAsync(
-                    x => x.Id == entity.AvailabilitySlotId &&
+                    cancellationToken);
+            if (stillEligible && entity.AvailabilitySlotId.HasValue)
+            {
+                stillEligible = await dbContext.TrainerAvailabilitySlots.AnyAsync(
+                    x => x.Id == entity.AvailabilitySlotId.Value &&
                          x.Status == AvailabilitySlotStatus.Reserved,
                     cancellationToken);
+            }
             if (!stillEligible)
             {
                 throw new ConflictException(
@@ -674,10 +986,13 @@ internal sealed class ReservationService(
         else
         {
             entity.CancelByStaff(actor, now, reason ?? string.Empty);
-            var slot = await dbContext.TrainerAvailabilitySlots.SingleAsync(
-                x => x.Id == entity.AvailabilitySlotId,
-                cancellationToken);
-            slot.Release();
+            if (entity.AvailabilitySlotId.HasValue)
+            {
+                var slot = await dbContext.TrainerAvailabilitySlots.SingleAsync(
+                    x => x.Id == entity.AvailabilitySlotId.Value,
+                    cancellationToken);
+                slot.Release();
+            }
         }
 
         await SaveAsync(cancellationToken);
@@ -876,6 +1191,48 @@ internal sealed class ReservationService(
 
     private static NotFoundException ReservationNotFound() =>
         new("reservation_not_found", "The reservation was not found.");
+
+    private static bool FitsWeeklyShift(
+        DateTime startsAtUtc,
+        DateTime endsAtUtc,
+        string timeZoneId,
+        IReadOnlyCollection<TrainerWeeklyShift> shifts)
+    {
+        TimeZoneInfo timeZone;
+        try
+        {
+            timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            throw new ApplicationRuleException(
+                "schedule_timezone_invalid",
+                "The configured schedule timezone is unavailable.");
+        }
+        catch (InvalidTimeZoneException)
+        {
+            throw new ApplicationRuleException(
+                "schedule_timezone_invalid",
+                "The configured schedule timezone is invalid.");
+        }
+
+        var localStart = TimeZoneInfo.ConvertTimeFromUtc(startsAtUtc, timeZone);
+        var localEnd = TimeZoneInfo.ConvertTimeFromUtc(endsAtUtc, timeZone);
+        if (DateOnly.FromDateTime(localStart) != DateOnly.FromDateTime(localEnd))
+        {
+            return false;
+        }
+
+        var startTime = TimeOnly.FromDateTime(localStart);
+        var endTime = TimeOnly.FromDateTime(localEnd);
+        var durationMinutes = (endsAtUtc - startsAtUtc).TotalMinutes;
+        return shifts.Any(x =>
+            x.DayOfWeek == localStart.DayOfWeek &&
+            startTime >= x.StartsAtLocal &&
+            endTime <= x.EndsAtLocal &&
+            (startTime.ToTimeSpan() - x.StartsAtLocal.ToTimeSpan()).TotalMinutes %
+            durationMinutes == 0);
+    }
 
     private static void ValidateRange(DateTime? from, DateTime? to)
     {

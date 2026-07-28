@@ -47,6 +47,18 @@ public sealed class TenantTrainerOfferingsController(
 [Route("api/tenant/trainer-availability")]
 public sealed class TenantAvailabilityController(IAvailabilityService service) : ControllerBase
 {
+    [HttpGet("schedule")]
+    public async Task<IActionResult> GetSchedule(
+        [FromQuery] Guid trainerProfileId,
+        CancellationToken cancellationToken) =>
+        Ok(await service.GetScheduleAsync(trainerProfileId, cancellationToken));
+
+    [HttpPut("schedule")]
+    public async Task<IActionResult> ReplaceSchedule(
+        ReplaceTrainerScheduleRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(await service.ReplaceScheduleAsync(request, cancellationToken));
+
     [HttpGet]
     public async Task<IActionResult> Search(
         [FromQuery] AvailabilitySearchRequest request,

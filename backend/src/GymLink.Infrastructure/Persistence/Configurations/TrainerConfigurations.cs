@@ -93,3 +93,63 @@ internal sealed class TrainerAvailabilitySlotConfiguration : EntityConfiguration
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
+
+internal sealed class TrainerAvailabilityScheduleConfiguration :
+    EntityConfiguration<TrainerAvailabilitySchedule>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<TrainerAvailabilitySchedule> builder)
+    {
+        ConfigureTenant(builder);
+        ConfigureConcurrency(builder);
+        builder.Property(x => x.TimeZoneId).HasMaxLength(64).IsRequired();
+        builder.HasIndex(x => new { x.TenantId, x.TrainerProfileId }).IsUnique();
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint(
+                "CK_TrainerAvailabilitySchedules_BookingHorizonWeeks",
+                "[BookingHorizonWeeks] = 8");
+            table.HasCheckConstraint(
+                "CK_TrainerAvailabilitySchedules_Revision",
+                "[Revision] >= 0");
+        });
+        builder.HasOne<TrainerProfile>().WithMany().HasForeignKey(x => x.TrainerProfileId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+internal sealed class TrainerWeeklyShiftConfiguration : EntityConfiguration<TrainerWeeklyShift>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<TrainerWeeklyShift> builder)
+    {
+        ConfigureTenant(builder);
+        builder.Property(x => x.Period).HasConversion<string>().HasMaxLength(16).IsRequired();
+        builder.Property(x => x.StartsAtLocal).HasColumnType("time(0)");
+        builder.Property(x => x.EndsAtLocal).HasColumnType("time(0)");
+        builder.HasIndex(x => new
+        {
+            x.TenantId,
+            x.TrainerAvailabilityScheduleId,
+            x.TrainerProfileId,
+            x.DayOfWeek,
+            x.Period,
+        }).IsUnique();
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint(
+                "CK_TrainerWeeklyShifts_DayOfWeek",
+                "[DayOfWeek] >= 0 AND [DayOfWeek] <= 6");
+            table.HasCheckConstraint(
+                "CK_TrainerWeeklyShifts_TimeRange",
+                "[EndsAtLocal] > [StartsAtLocal]");
+        });
+        builder.HasOne<TrainerAvailabilitySchedule>().WithMany()
+            .HasForeignKey(x => x.TrainerAvailabilityScheduleId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<TrainerProfile>().WithMany().HasForeignKey(x => x.TrainerProfileId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+}

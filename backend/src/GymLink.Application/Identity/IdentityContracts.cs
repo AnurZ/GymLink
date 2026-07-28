@@ -76,7 +76,8 @@ public sealed record UserProfileDto(
     string? PhoneNumber,
     string Role,
     bool IsActive,
-    TenantSessionDto? Tenant);
+    TenantSessionDto? Tenant,
+    Guid? TrainerProfileId);
 
 public sealed record AuthSessionDto(
     string AccessToken,

@@ -202,3 +202,77 @@ public sealed class TrainerAvailabilitySlot : TenantEntity, IConcurrencyTracked
             "invalid_state_transition",
             "The availability slot cannot perform that transition from its current state.");
 }
+
+public sealed class TrainerAvailabilitySchedule : TenantEntity, IConcurrencyTracked
+{
+    public const string SarajevoTimeZoneId = "Europe/Sarajevo";
+    public const int DefaultBookingHorizonWeeks = 8;
+
+    private TrainerAvailabilitySchedule() { }
+
+    public TrainerAvailabilitySchedule(Guid tenantId, Guid trainerProfileId)
+    {
+        TenantId = tenantId;
+        TrainerProfileId = trainerProfileId;
+    }
+
+    public Guid TrainerProfileId { get; private set; }
+    public string TimeZoneId { get; private set; } = SarajevoTimeZoneId;
+    public int BookingHorizonWeeks { get; private set; } = DefaultBookingHorizonWeeks;
+    public int Revision { get; private set; }
+    public byte[] RowVersion { get; set; } = [];
+
+    public void RecordReplacement() => Revision++;
+}
+
+public sealed class TrainerWeeklyShift : TenantEntity
+{
+    public static readonly TimeOnly MorningStartsAt = new(8, 0);
+    public static readonly TimeOnly MorningEndsAt = new(15, 0);
+    public static readonly TimeOnly EveningStartsAt = new(15, 0);
+    public static readonly TimeOnly EveningEndsAt = new(22, 0);
+
+    private TrainerWeeklyShift() { }
+
+    public TrainerWeeklyShift(
+        Guid tenantId,
+        Guid trainerAvailabilityScheduleId,
+        Guid trainerProfileId,
+        DayOfWeek dayOfWeek,
+        TrainerShiftPeriod period)
+    {
+        if (!Enum.IsDefined(dayOfWeek))
+        {
+            throw new DomainException("invalid_weekday", "The weekday is invalid.");
+        }
+
+        if (!Enum.IsDefined(period))
+        {
+            throw new DomainException("invalid_shift_period", "The shift period is invalid.");
+        }
+
+        TenantId = tenantId;
+        TrainerAvailabilityScheduleId = trainerAvailabilityScheduleId;
+        TrainerProfileId = trainerProfileId;
+        DayOfWeek = dayOfWeek;
+        Period = period;
+        (StartsAtLocal, EndsAtLocal) = period switch
+        {
+            TrainerShiftPeriod.Morning => (MorningStartsAt, MorningEndsAt),
+            TrainerShiftPeriod.Evening => (EveningStartsAt, EveningEndsAt),
+            _ => throw new DomainException("invalid_shift_period", "The shift period is invalid."),
+        };
+    }
+
+    public Guid TrainerAvailabilityScheduleId { get; private set; }
+    public Guid TrainerProfileId { get; private set; }
+    public DayOfWeek DayOfWeek { get; private set; }
+    public TrainerShiftPeriod Period { get; private set; }
+    public TimeOnly StartsAtLocal { get; private set; }
+    public TimeOnly EndsAtLocal { get; private set; }
+    public bool IsActive { get; private set; } = true;
+
+    public void Activate() => IsActive = true;
+
+    public void Deactivate() => IsActive = false;
+}

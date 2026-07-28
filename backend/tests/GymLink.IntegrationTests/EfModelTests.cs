@@ -3,6 +3,7 @@ using GymLink.Domain.Memberships;
 using GymLink.Domain.Payments;
 using GymLink.Domain.Reservations;
 using GymLink.Domain.Tenancy;
+using GymLink.Domain.Trainers;
 using GymLink.Domain.Identity;
 using GymLink.Infrastructure.Identity;
 using GymLink.Infrastructure.Persistence;
@@ -109,8 +110,24 @@ public sealed class EfModelTests
             context.Model.FindEntityType(typeof(AppointmentReservation))!.GetIndexes(),
             index => index.IsUnique &&
                 PropertyNames(index).SequenceEqual(["AvailabilitySlotId"]) &&
+                index.GetFilter()!.Contains("IS NOT NULL", StringComparison.Ordinal) &&
                 index.GetFilter()!.Contains("Pending", StringComparison.Ordinal) &&
                 index.GetFilter()!.Contains("Confirmed", StringComparison.Ordinal));
+        Assert.Contains(
+            context.Model.FindEntityType(typeof(TrainerWeeklyShift))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(
+                    [
+                        "TenantId",
+                        "TrainerAvailabilityScheduleId",
+                        "TrainerProfileId",
+                        "DayOfWeek",
+                        "Period",
+                    ]));
+        Assert.Contains(
+            context.Model.FindEntityType(typeof(TrainerAvailabilitySchedule))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["TenantId", "TrainerProfileId"]));
     }
 
     [Fact]

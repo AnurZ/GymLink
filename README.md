@@ -1,6 +1,7 @@
 # GymLink
 
-GymLink is a .NET 10 API for discovering gyms and managing gym catalog data. The Flutter clients will live in `ui/`; the API, application, domain, infrastructure, worker, and tests live in `backend/`.
+GymLink combines a .NET 10 API with two Flutter clients: an Android app for
+Members and Trainers, and a Windows app for GymAdmins and CentralAdmins.
 
 ## Prerequisites
 
@@ -8,6 +9,9 @@ GymLink is a .NET 10 API for discovering gyms and managing gym catalog data. The
 - SQL Server available as `localhost`
 - Visual Studio 2026/2022 with the ASP.NET and web development workload, or the .NET CLI
 - A trusted local ASP.NET Core HTTPS development certificate
+- Flutter 3.44.8 or a compatible stable release
+- Android SDK/emulator for the mobile client
+- Visual Studio with Desktop development with C++ for the Windows client
 
 The default development connection uses Windows authentication. It does not require a SQL username or password:
 
@@ -62,6 +66,29 @@ In Visual Studio:
 
 Use Swagger's **Authorize** button with `Bearer <access-token>` after calling `POST /api/auth/login`.
 
+## Start the Flutter clients
+
+The clients require an explicit API address at build/run time.
+
+Android emulator:
+
+```powershell
+cd ui/gymlink_mobile
+flutter pub get
+flutter run --dart-define=API_BASE_URL=http://10.0.2.2:62287
+```
+
+Windows:
+
+```powershell
+cd ui/gymlink_desktop
+flutter pub get
+flutter run -d windows --dart-define=API_BASE_URL=http://localhost:62287
+```
+
+Use the HTTPS profile only after configuring the emulator or Windows host to
+trust the ASP.NET development certificate.
+
 ## Evaluation credentials
 
 These credentials are intentionally public development/evaluation fixtures. They must never be enabled or reused in a production deployment.
@@ -92,6 +119,10 @@ Login accepts either the username or email. Staff access tokens automatically co
 dotnet build backend/GymLink.sln --no-restore
 dotnet test backend/GymLink.sln --no-build --no-restore
 dotnet format backend/GymLink.sln --verify-no-changes --no-restore
+flutter analyze ui/gymlink_mobile
+flutter test ui/gymlink_mobile
+flutter analyze ui/gymlink_desktop
+flutter test ui/gymlink_desktop
 git diff --check
 ```
 
@@ -121,4 +152,7 @@ Then start the selected launch profile again.
 
 ## Phase boundary
 
-Phase 3 does not expose password-reset endpoints. Password reset is scheduled for Phase 7, where expiring hashed one-time codes will be delivered through the real email Worker.
+Password reset and notifications are scheduled for Phase 7. Stripe is Phase 8,
+chat is Phase 9, recommendations are Phase 10, and statistics/PDF reports are
+Phase 11; their client navigation is intentionally absent until the matching
+backend contracts exist.

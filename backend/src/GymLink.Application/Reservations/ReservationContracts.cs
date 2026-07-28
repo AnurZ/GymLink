@@ -14,18 +14,39 @@ public sealed record AvailabilitySearchRequest : PagedRequest
 
 public sealed record PublicAvailabilitySearchRequest : PagedRequest
 {
-    public Guid? TrainerServiceOfferingId { get; init; }
+    public Guid TrainerServiceOfferingId { get; init; }
     public DateTime? FromUtc { get; init; }
     public DateTime? ToUtc { get; init; }
 }
 
 public sealed record AvailabilityDto(
-    Guid Id,
+    Guid? Id,
     Guid TrainerProfileId,
     DateTime StartsAtUtc,
     DateTime EndsAtUtc,
     AvailabilitySlotStatus Status,
     string ConcurrencyToken);
+
+public sealed record WeeklyShiftSelectionRequest
+{
+    public DayOfWeek DayOfWeek { get; init; }
+    public TrainerShiftPeriod Period { get; init; }
+}
+
+public sealed record TrainerScheduleDto(
+    Guid? Id,
+    Guid TrainerProfileId,
+    string TimeZoneId,
+    int BookingHorizonWeeks,
+    IReadOnlyList<WeeklyShiftSelectionRequest> Shifts,
+    string? ConcurrencyToken);
+
+public sealed record ReplaceTrainerScheduleRequest
+{
+    public Guid TrainerProfileId { get; init; }
+    public IReadOnlyList<WeeklyShiftSelectionRequest> Shifts { get; init; } = [];
+    public string? ConcurrencyToken { get; init; }
+}
 
 public record CreateAvailabilityRequest
 {
@@ -52,7 +73,7 @@ public sealed record ReservationSearchRequest : PagedRequest
 public sealed record CreateReservationRequest
 {
     public Guid TrainerServiceOfferingId { get; init; }
-    public Guid AvailabilitySlotId { get; init; }
+    public DateTime StartsAtUtc { get; init; }
 }
 
 public record ReservationConcurrencyRequest
@@ -108,6 +129,8 @@ public interface IAvailabilityService
     Task<AvailabilityDto> CreateAsync(CreateAvailabilityRequest request, CancellationToken cancellationToken);
     Task<AvailabilityDto> UpdateAsync(Guid id, UpdateAvailabilityRequest request, CancellationToken cancellationToken);
     Task<AvailabilityDto> CancelAsync(Guid id, ReservationConcurrencyRequest request, CancellationToken cancellationToken);
+    Task<TrainerScheduleDto> GetScheduleAsync(Guid trainerProfileId, CancellationToken cancellationToken);
+    Task<TrainerScheduleDto> ReplaceScheduleAsync(ReplaceTrainerScheduleRequest request, CancellationToken cancellationToken);
 }
 
 public interface IReservationService

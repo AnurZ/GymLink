@@ -42,6 +42,8 @@ public sealed class GymCatalogService(
                 x.Gym.Name,
                 x.Gym.Address,
                 x.City.Name,
+                x.Gym.Latitude,
+                x.Gym.Longitude,
                 dbContext.GymImages.IgnoreQueryFilters()
                     .Where(image => image.GymId == x.Gym.Id && image.IsPrimary)
                     .Select(image => image.PublicUrl)
@@ -171,12 +173,14 @@ public sealed class GymCatalogService(
         var images = dbContext.GymImages.AsNoTracking();
         var gymEquipment = dbContext.GymEquipment.AsNoTracking();
         var gymTrainingTypes = dbContext.GymTrainingTypes.AsNoTracking();
+        var workingHours = dbContext.GymWorkingHours.AsNoTracking();
         if (ignoreTenantFilter)
         {
             gyms = gyms.IgnoreQueryFilters();
             images = images.IgnoreQueryFilters();
             gymEquipment = gymEquipment.IgnoreQueryFilters();
             gymTrainingTypes = gymTrainingTypes.IgnoreQueryFilters();
+            workingHours = workingHours.IgnoreQueryFilters();
         }
 
         var core = await (
@@ -195,15 +199,25 @@ public sealed class GymCatalogService(
                 join item in dbContext.Equipment.AsNoTracking() on link.EquipmentId equals item.Id
                 where link.GymId == id
                 orderby item.Name
-                select item.Name)
+                select new { item.Id, item.Name })
             .ToListAsync(cancellationToken);
         var trainingTypes = await (
                 from link in gymTrainingTypes
                 join type in dbContext.TrainingTypes.AsNoTracking() on link.TrainingTypeId equals type.Id
                 where link.GymId == id
                 orderby type.Name
-                select type.Name)
+                select new { type.Id, type.Name })
             .ToListAsync(cancellationToken);
+        var hourEntities = await workingHours.Where(x => x.GymId == id)
+            .ToListAsync(cancellationToken);
+        var hours = hourEntities
+            .OrderBy(x => (int)x.DayOfWeek)
+            .Select(x => new WorkingHoursDto(
+                (int)x.DayOfWeek,
+                x.OpensAt,
+                x.ClosesAt,
+                x.IsClosed))
+            .ToArray();
         var imageUrls = await images.Where(x => x.GymId == id && x.PublicUrl != null)
             .OrderBy(x => x.SortOrder)
             .Select(x => x.PublicUrl!)
@@ -221,8 +235,11 @@ public sealed class GymCatalogService(
             core.Gym.PhoneNumber,
             core.Gym.AverageRating,
             core.Gym.ReviewCount,
-            equipment,
-            trainingTypes,
+            equipment.Select(x => x.Id).ToArray(),
+            equipment.Select(x => x.Name).ToArray(),
+            trainingTypes.Select(x => x.Id).ToArray(),
+            trainingTypes.Select(x => x.Name).ToArray(),
+            hours,
             imageUrls);
     }
 

@@ -257,7 +257,8 @@ internal sealed class AuthenticationService(
             profile.PhoneNumber,
             account.Role,
             profile.IsActive,
-            tenant);
+            tenant,
+            null);
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

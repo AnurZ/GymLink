@@ -109,7 +109,36 @@ public sealed class DomainInvariantTests
     }
 
     [Fact]
-    public void Reservation_enforces_transition_times_and_staff_reason()
+    public void Weekly_shift_uses_fixed_local_time_presets()
+    {
+        var morning = new TrainerWeeklyShift(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            DayOfWeek.Monday,
+            TrainerShiftPeriod.Morning);
+        var evening = new TrainerWeeklyShift(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            DayOfWeek.Sunday,
+            TrainerShiftPeriod.Evening);
+
+        Assert.Equal(new TimeOnly(8, 0), morning.StartsAtLocal);
+        Assert.Equal(new TimeOnly(15, 0), morning.EndsAtLocal);
+        Assert.Equal(new TimeOnly(15, 0), evening.StartsAtLocal);
+        Assert.Equal(new TimeOnly(22, 0), evening.EndsAtLocal);
+        Assert.Throws<DomainException>(() =>
+            new TrainerWeeklyShift(
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                (DayOfWeek)7,
+                TrainerShiftPeriod.Morning));
+    }
+
+    [Fact]
+    public void Reservation_enforces_transitions_and_staff_reason()
     {
         var ids = Enumerable.Range(0, 8).Select(_ => Guid.NewGuid()).ToArray();
         var start = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
@@ -118,8 +147,7 @@ public sealed class DomainInvariantTests
             start, 60, 25, "BAM");
 
         reservation.Confirm(ids[6], start.AddHours(-1));
-        Assert.Throws<DomainException>(() => reservation.Complete(ids[6], start.AddMinutes(30)));
-        reservation.Complete(ids[6], start.AddHours(1));
+        reservation.Complete(ids[6], start.AddHours(-2));
         Assert.Equal(ReservationStatus.Completed, reservation.Status);
         Assert.Equal(ids[6], reservation.CompletedByUserId);
 

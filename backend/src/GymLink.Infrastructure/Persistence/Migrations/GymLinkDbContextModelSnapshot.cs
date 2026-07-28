@@ -1369,7 +1369,7 @@ namespace GymLink.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<Guid>("AvailabilitySlotId")
+                    b.Property<Guid?>("AvailabilitySlotId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("CancellationReason")
@@ -1458,7 +1458,7 @@ namespace GymLink.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("AvailabilitySlotId")
                         .IsUnique()
-                        .HasFilter("[Status] IN (N'Pending', N'Confirmed')");
+                        .HasFilter("[AvailabilitySlotId] IS NOT NULL AND [Status] IN (N'Pending', N'Confirmed')");
 
                     b.HasIndex("CancelledByUserId");
 
@@ -1808,6 +1808,64 @@ namespace GymLink.Infrastructure.Persistence.Migrations
                     b.ToTable("UserGymAssignments");
                 });
 
+            modelBuilder.Entity("GymLink.Domain.Trainers.TrainerAvailabilitySchedule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("BookingHorizonWeeks")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("int");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid>("TrainerProfileId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TrainerProfileId");
+
+                    b.HasIndex("TenantId", "TrainerProfileId")
+                        .IsUnique();
+
+                    b.ToTable("TrainerAvailabilitySchedules", t =>
+                        {
+                            t.HasCheckConstraint("CK_TrainerAvailabilitySchedules_BookingHorizonWeeks", "[BookingHorizonWeeks] = 8");
+
+                            t.HasCheckConstraint("CK_TrainerAvailabilitySchedules_Revision", "[Revision] >= 0");
+                        });
+                });
+
             modelBuilder.Entity("GymLink.Domain.Trainers.TrainerAvailabilitySlot", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2040,6 +2098,69 @@ namespace GymLink.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("TrainerTrainingTypes");
+                });
+
+            modelBuilder.Entity("GymLink.Domain.Trainers.TrainerWeeklyShift", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("DayOfWeek")
+                        .HasColumnType("int");
+
+                    b.Property<TimeOnly>("EndsAtLocal")
+                        .HasColumnType("time(0)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Period")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<TimeOnly>("StartsAtLocal")
+                        .HasColumnType("time(0)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("TrainerAvailabilityScheduleId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("TrainerProfileId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TrainerAvailabilityScheduleId");
+
+                    b.HasIndex("TrainerProfileId");
+
+                    b.HasIndex("TenantId", "TrainerAvailabilityScheduleId", "TrainerProfileId", "DayOfWeek", "Period")
+                        .IsUnique();
+
+                    b.ToTable("TrainerWeeklyShifts", t =>
+                        {
+                            t.HasCheckConstraint("CK_TrainerWeeklyShifts_DayOfWeek", "[DayOfWeek] >= 0 AND [DayOfWeek] <= 6");
+
+                            t.HasCheckConstraint("CK_TrainerWeeklyShifts_TimeRange", "[EndsAtLocal] > [StartsAtLocal]");
+                        });
                 });
 
             modelBuilder.Entity("GymLink.Infrastructure.Identity.GymLinkIdentityUser", b =>
@@ -2627,8 +2748,7 @@ namespace GymLink.Infrastructure.Persistence.Migrations
                     b.HasOne("GymLink.Domain.Trainers.TrainerAvailabilitySlot", null)
                         .WithMany()
                         .HasForeignKey("AvailabilitySlotId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("GymLink.Domain.Identity.UserProfile", null)
                         .WithMany()
@@ -2782,6 +2902,21 @@ namespace GymLink.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("GymLink.Domain.Trainers.TrainerAvailabilitySchedule", b =>
+                {
+                    b.HasOne("GymLink.Domain.Tenancy.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("GymLink.Domain.Trainers.TrainerProfile", null)
+                        .WithMany()
+                        .HasForeignKey("TrainerProfileId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("GymLink.Domain.Trainers.TrainerAvailabilitySlot", b =>
                 {
                     b.HasOne("GymLink.Domain.Tenancy.Tenant", null)
@@ -2850,6 +2985,27 @@ namespace GymLink.Infrastructure.Persistence.Migrations
                     b.HasOne("GymLink.Domain.ReferenceData.TrainingType", null)
                         .WithMany()
                         .HasForeignKey("TrainingTypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("GymLink.Domain.Trainers.TrainerWeeklyShift", b =>
+                {
+                    b.HasOne("GymLink.Domain.Tenancy.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("GymLink.Domain.Trainers.TrainerAvailabilitySchedule", null)
+                        .WithMany()
+                        .HasForeignKey("TrainerAvailabilityScheduleId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("GymLink.Domain.Trainers.TrainerProfile", null)
+                        .WithMany()
+                        .HasForeignKey("TrainerProfileId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

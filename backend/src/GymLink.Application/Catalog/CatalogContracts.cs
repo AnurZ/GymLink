@@ -16,6 +16,8 @@ public sealed record GymListItemDto(
     string Name,
     string Address,
     string City,
+    decimal Latitude,
+    decimal Longitude,
     string? PrimaryImageUrl,
     decimal? StartingMembershipPrice,
     string? Currency,
@@ -34,9 +36,18 @@ public sealed record GymDetailsDto(
     string? PhoneNumber,
     decimal AverageRating,
     int ReviewCount,
+    IReadOnlyList<Guid> EquipmentIds,
     IReadOnlyList<string> Equipment,
+    IReadOnlyList<Guid> TrainingTypeIds,
     IReadOnlyList<string> TrainingTypes,
+    IReadOnlyList<WorkingHoursDto> WorkingHours,
     IReadOnlyList<string> ImageUrls);
+
+public sealed record WorkingHoursDto(
+    int DayOfWeek,
+    TimeOnly? OpensAt,
+    TimeOnly? ClosesAt,
+    bool IsClosed);
 
 public sealed record WorkingHoursRequest
 {

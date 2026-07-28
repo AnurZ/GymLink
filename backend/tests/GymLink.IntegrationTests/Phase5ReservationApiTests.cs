@@ -8,6 +8,7 @@ using GymLink.Application.Identity;
 using GymLink.Application.Memberships;
 using GymLink.Application.Reservations;
 using GymLink.Domain.Enums;
+using GymLink.Domain.Trainers;
 using GymLink.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -57,53 +58,62 @@ public sealed class Phase5ReservationApiTests
             await ActivateMembershipAsync(setupClient, member, admin, Assert.Single(plans).Id);
             await ActivateMembershipAsync(setupClient, secondMember, admin, Assert.Single(plans).Id);
 
-            var start = DateTime.UtcNow.AddDays(2);
-            start = new DateTime(
-                start.Year,
-                start.Month,
-                start.Day,
-                10,
-                0,
-                0,
-                DateTimeKind.Utc);
-            using var firstAdminClient = factory.CreateClient();
-            using var secondAdminClient = factory.CreateClient();
-            Authorize(firstAdminClient, admin);
-            Authorize(secondAdminClient, admin);
-            var slotRequest = new
-            {
-                trainerProfileId = trainer.Id,
-                startsAtUtc = start,
-                endsAtUtc = start.AddMinutes(offering.DurationMinutes),
-                status = AvailabilitySlotStatus.Available,
-            };
-            var slotResults = await Task.WhenAll(
-                firstAdminClient.PostAsJsonAsync("/api/tenant/trainer-availability", slotRequest),
-                secondAdminClient.PostAsJsonAsync("/api/tenant/trainer-availability", slotRequest));
-            Assert.Single(slotResults, x => x.StatusCode == HttpStatusCode.Created);
-            Assert.Single(slotResults, x => x.StatusCode == HttpStatusCode.Conflict);
-            var slotResponse = slotResults.Single(x => x.StatusCode == HttpStatusCode.Created);
-            var slot = await slotResponse.Content.ReadFromJsonAsync<AvailabilityDto>();
-            Assert.NotNull(slot);
+            var timeZone = TimeZoneInfo.FindSystemTimeZoneById(
+                TrainerAvailabilitySchedule.SarajevoTimeZoneId);
+            var localDay = DateTime.SpecifyKind(
+                TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow.AddDays(2), timeZone).Date
+                    .AddHours(10),
+                DateTimeKind.Unspecified);
+            var start = TimeZoneInfo.ConvertTimeToUtc(localDay, timeZone);
+            Authorize(setupClient, admin);
+            var scheduleResponse = await setupClient.PutAsJsonAsync(
+                "/api/tenant/trainer-availability/schedule",
+                new
+                {
+                    trainerProfileId = trainer.Id,
+                    shifts = new[]
+                    {
+                        new
+                        {
+                            dayOfWeek = (int)localDay.DayOfWeek,
+                            period = (int)TrainerShiftPeriod.Morning,
+                        },
+                    },
+                    concurrencyToken = (string?)null,
+                });
+            scheduleResponse.EnsureSuccessStatusCode();
+            var schedule = await scheduleResponse.Content.ReadFromJsonAsync<TrainerScheduleDto>();
+            Assert.NotNull(schedule);
+            Assert.Single(schedule.Shifts);
+            var publicAvailability = await setupClient
+                .GetFromJsonAsync<PagedResult<AvailabilityDto>>(
+                    $"/api/trainers/{trainer.Id}/availability" +
+                    $"?trainerServiceOfferingId={offering.Id}" +
+                    $"&fromUtc={Uri.EscapeDataString(start.ToString("O"))}" +
+                    $"&toUtc={Uri.EscapeDataString(start.AddDays(1).ToString("O"))}");
+            Assert.NotNull(publicAvailability);
+            Assert.Contains(publicAvailability.Items, x => x.StartsAtUtc == start);
 
             using var memberClient = factory.CreateClient();
             using var secondClient = factory.CreateClient();
             Authorize(memberClient, member);
             Authorize(secondClient, secondMember);
-            var firstBooking = memberClient.PostAsJsonAsync(
+            var unlistedStart = await memberClient.PostAsJsonAsync(
                 "/api/reservations",
                 new
                 {
+                    startsAtUtc = start.AddMinutes(15),
                     trainerServiceOfferingId = offering.Id,
-                    availabilitySlotId = slot.Id,
                 });
-            var secondBooking = secondClient.PostAsJsonAsync(
-                "/api/reservations",
-                new
-                {
-                    trainerServiceOfferingId = offering.Id,
-                    availabilitySlotId = slot.Id,
-                });
+            Assert.Equal(HttpStatusCode.Conflict, unlistedStart.StatusCode);
+            Assert.Equal("appointment_outside_shift", await ProblemCodeAsync(unlistedStart));
+            var bookingRequest = new
+            {
+                startsAtUtc = start,
+                trainerServiceOfferingId = offering.Id,
+            };
+            var firstBooking = memberClient.PostAsJsonAsync("/api/reservations", bookingRequest);
+            var secondBooking = secondClient.PostAsJsonAsync("/api/reservations", bookingRequest);
             var results = await Task.WhenAll(firstBooking, secondBooking);
             Assert.Single(results, x => x.StatusCode == HttpStatusCode.Created);
             Assert.Single(results, x => x.StatusCode == HttpStatusCode.Conflict);
@@ -177,15 +187,11 @@ public sealed class Phase5ReservationApiTests
             Assert.Equal(1, ratedGym.ReviewCount);
 
             await using var verification = CreateContext(connectionString);
-            Assert.Equal(
-                AvailabilitySlotStatus.Reserved,
-                (await verification.TrainerAvailabilitySlots.IgnoreQueryFilters()
-                    .SingleAsync(x => x.Id == slot.Id)).Status);
             Assert.Single(await verification.AppointmentReservations.IgnoreQueryFilters()
-                .Where(x => x.AvailabilitySlotId == slot.Id)
+                .Where(x => x.Id == reservation.Id && x.AvailabilitySlotId == null)
                 .ToListAsync());
             Assert.True(await verification.SecurityAuditRecords.AnyAsync(
-                x => x.Action == "availability.created" &&
+                x => x.Action == "availability.schedule.replaced" &&
                      x.TargetTenantId == admin.User.Tenant!.Id));
             Assert.Single(await verification.GymReviews.IgnoreQueryFilters()
                 .Where(x => x.GymId == gymId)

@@ -30,6 +30,8 @@ public interface IApplicationDbContext
     DbSet<TrainerTrainingType> TrainerTrainingTypes { get; }
     DbSet<TrainerServiceOffering> TrainerServiceOfferings { get; }
     DbSet<TrainerAvailabilitySlot> TrainerAvailabilitySlots { get; }
+    DbSet<TrainerAvailabilitySchedule> TrainerAvailabilitySchedules { get; }
+    DbSet<TrainerWeeklyShift> TrainerWeeklyShifts { get; }
     DbSet<MembershipPlan> MembershipPlans { get; }
     DbSet<MembershipRequest> MembershipRequests { get; }
     DbSet<Membership> Memberships { get; }

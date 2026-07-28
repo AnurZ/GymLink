@@ -1,5 +1,6 @@
 using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
+using GymLink.Domain.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace GymLink.Application.Identity;
@@ -27,6 +28,12 @@ internal sealed class ProfileService(
                 .SingleAsync(cancellationToken);
             tenant = new(tenantContext.TenantId.Value, tenantName, tenantContext.TenantRole);
         }
+        var trainerProfileId = account.Role == RoleNames.Trainer
+            ? await dbContext.TrainerProfiles
+                .Where(x => x.UserId == userId && x.IsActive)
+                .Select(x => (Guid?)x.Id)
+                .SingleOrDefaultAsync(cancellationToken)
+            : null;
 
         return new UserProfileDto(
             userId,
@@ -36,7 +43,8 @@ internal sealed class ProfileService(
             profile.PhoneNumber,
             account.Role,
             profile.IsActive,
-            tenant);
+            tenant,
+            trainerProfileId);
     }
 
     public Task<UserProfileDto> UpdateAsync(

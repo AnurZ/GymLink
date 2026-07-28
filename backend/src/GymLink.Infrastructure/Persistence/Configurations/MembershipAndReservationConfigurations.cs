@@ -97,7 +97,8 @@ internal sealed class AppointmentReservationConfiguration : EntityConfiguration<
         builder.HasIndex(x => new { x.TenantId, x.MemberUserId, x.StartsAtUtc, x.EndsAtUtc });
         builder.HasIndex(x => x.AvailabilitySlotId)
             .IsUnique()
-            .HasFilter("[Status] IN (N'Pending', N'Confirmed')");
+            .HasFilter(
+                "[AvailabilitySlotId] IS NOT NULL AND [Status] IN (N'Pending', N'Confirmed')");
         builder.ToTable(table =>
             table.HasCheckConstraint(
                 "CK_AppointmentReservations_TimeRange",

@@ -46,6 +46,9 @@ public sealed class GymLinkDbContext(
     public DbSet<TrainerTrainingType> TrainerTrainingTypes => Set<TrainerTrainingType>();
     public DbSet<TrainerServiceOffering> TrainerServiceOfferings => Set<TrainerServiceOffering>();
     public DbSet<TrainerAvailabilitySlot> TrainerAvailabilitySlots => Set<TrainerAvailabilitySlot>();
+    public DbSet<TrainerAvailabilitySchedule> TrainerAvailabilitySchedules =>
+        Set<TrainerAvailabilitySchedule>();
+    public DbSet<TrainerWeeklyShift> TrainerWeeklyShifts => Set<TrainerWeeklyShift>();
     public DbSet<MembershipPlan> MembershipPlans => Set<MembershipPlan>();
     public DbSet<MembershipRequest> MembershipRequests => Set<MembershipRequest>();
     public DbSet<Membership> Memberships => Set<Membership>();

@@ -12,7 +12,7 @@ public sealed class AppointmentReservation : TenantEntity, IConcurrencyTracked
         Guid memberUserId,
         Guid trainerProfileId,
         Guid trainerServiceOfferingId,
-        Guid availabilitySlotId,
+        Guid? availabilitySlotId,
         Guid membershipId,
         DateTime startsAtUtc,
         int durationMinutes,
@@ -45,7 +45,7 @@ public sealed class AppointmentReservation : TenantEntity, IConcurrencyTracked
     public Guid MemberUserId { get; set; }
     public Guid TrainerProfileId { get; set; }
     public Guid TrainerServiceOfferingId { get; set; }
-    public Guid AvailabilitySlotId { get; private set; }
+    public Guid? AvailabilitySlotId { get; private set; }
     public Guid MembershipId { get; private set; }
     public DateTime StartsAtUtc { get; private set; }
     public DateTime EndsAtUtc { get; private set; }
@@ -76,13 +76,6 @@ public sealed class AppointmentReservation : TenantEntity, IConcurrencyTracked
     {
         EnsureUtc(occurredAtUtc);
         EnsureState(ReservationStatus.Confirmed);
-        if (occurredAtUtc < EndsAtUtc)
-        {
-            throw new DomainException(
-                "appointment_not_ended",
-                "The reservation cannot be completed before its end time.");
-        }
-
         Status = ReservationStatus.Completed;
         CompletedByUserId = actorUserId;
         CompletedAtUtc = occurredAtUtc;
