@@ -74,15 +74,15 @@ internal sealed class MembershipRequestService(
         using (tenantMutationScope.Begin(target.Plan.TenantId))
         {
             dbContext.MembershipRequests.Add(entity);
+            await eventRecorder.RecordAsync(new MembershipWorkflowEventIntent(
+                "membership.requested",
+                entity.TenantId,
+                entity.MemberUserId,
+                entity.Id,
+                now),
+                cancellationToken);
             await SaveWorkflowAsync(cancellationToken);
         }
-
-        eventRecorder.Record(new MembershipWorkflowEventIntent(
-            "membership.requested",
-            entity.TenantId,
-            entity.MemberUserId,
-            entity.Id,
-            now));
         return await GetMineAsync(entity.Id, cancellationToken);
     }
 
@@ -125,15 +125,15 @@ internal sealed class MembershipRequestService(
 
         using (tenantMutationScope.Begin(entity.TenantId))
         {
+            await eventRecorder.RecordAsync(new MembershipWorkflowEventIntent(
+                "membership.request.cancelled",
+                entity.TenantId,
+                entity.MemberUserId,
+                entity.Id,
+                now),
+                cancellationToken);
             await SaveWorkflowAsync(cancellationToken);
         }
-
-        eventRecorder.Record(new MembershipWorkflowEventIntent(
-            "membership.request.cancelled",
-            entity.TenantId,
-            entity.MemberUserId,
-            entity.Id,
-            now));
         return await GetMineAsync(entity.Id, cancellationToken);
     }
 
@@ -168,7 +168,7 @@ internal sealed class MembershipRequestService(
         var tenantId = RequireTenant();
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
-        var result = await transaction.ExecuteAsync(async ct =>
+        await transaction.ExecuteAsync(async ct =>
         {
             var entity = await dbContext.MembershipRequests
                 .SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId, ct)
@@ -206,16 +206,16 @@ internal sealed class MembershipRequestService(
                 now);
             dbContext.Memberships.Add(membership);
             await ActivateMemberAssignmentAsync(entity.MemberUserId, actorId, now, ct);
+            await eventRecorder.RecordAsync(new MembershipWorkflowEventIntent(
+                "membership.approved",
+                membership.TenantId,
+                membership.MemberUserId,
+                membership.Id,
+                now),
+                ct);
             await SaveWorkflowAsync(ct);
             return membership;
         }, cancellationToken);
-
-        eventRecorder.Record(new MembershipWorkflowEventIntent(
-            "membership.approved",
-            result.TenantId,
-            result.MemberUserId,
-            result.Id,
-            now));
         return await GetTenantAsync(id, cancellationToken);
     }
 
@@ -234,13 +234,14 @@ internal sealed class MembershipRequestService(
         EnsureConcurrency(entity.RowVersion, request.ConcurrencyToken);
         var now = timeProvider.GetUtcNow().UtcDateTime;
         entity.Reject(actorId, now, request.Reason);
-        await SaveWorkflowAsync(cancellationToken);
-        eventRecorder.Record(new MembershipWorkflowEventIntent(
+        await eventRecorder.RecordAsync(new MembershipWorkflowEventIntent(
             "membership.rejected",
             entity.TenantId,
             entity.MemberUserId,
             entity.Id,
-            now));
+            now),
+            cancellationToken);
+        await SaveWorkflowAsync(cancellationToken);
         return await GetTenantAsync(entity.Id, cancellationToken);
     }
 
@@ -302,6 +303,7 @@ internal sealed class MembershipRequestService(
                   (!request.Status.HasValue || entity.Status == request.Status) &&
                   (!request.MembershipPlanId.HasValue ||
                    entity.MembershipPlanId == request.MembershipPlanId) &&
+                  (!request.GymId.HasValue || entity.GymId == request.GymId) &&
                   (!request.RequestedFromUtc.HasValue ||
                    entity.RequestedAtUtc >= request.RequestedFromUtc) &&
                   (!request.RequestedToUtc.HasValue ||
@@ -367,6 +369,7 @@ internal sealed class MembershipRequestService(
         new(
             entity.Id,
             entity.MembershipPlanId,
+            entity.GymId,
             memberName,
             gymName,
             planName,
@@ -511,10 +514,9 @@ internal sealed class MembershipService(
         entity.CancelByMember(userId, now);
         using (tenantMutationScope.Begin(entity.TenantId))
         {
+            await RecordAsync("membership.cancelled", entity, now, cancellationToken);
             await SaveAsync(cancellationToken);
         }
-
-        Record("membership.cancelled", entity, now);
         return await GetMineAsync(id, cancellationToken);
     }
 
@@ -597,8 +599,8 @@ internal sealed class MembershipService(
         EnsureConcurrency(entity.RowVersion, concurrencyToken);
         var now = timeProvider.GetUtcNow().UtcDateTime;
         transition(entity, RequireUser(), now);
+        await RecordAsync(eventName, entity, now, cancellationToken);
         await SaveAsync(cancellationToken);
-        Record(eventName, entity, now);
         return await GetTenantAsync(id, cancellationToken);
     }
 
@@ -611,6 +613,7 @@ internal sealed class MembershipService(
         CancellationToken cancellationToken)
     {
         ValidateRange(request.StartsFromUtc, request.StartsToUtc);
+        ValidateRange(request.CoversFromUtc, request.CoversToUtc);
         var source = ignoreQueryFilters
             ? dbContext.Memberships.IgnoreQueryFilters().AsNoTracking()
             : dbContext.Memberships.AsNoTracking();
@@ -627,6 +630,15 @@ internal sealed class MembershipService(
                   (!request.Status.HasValue || entity.Status == request.Status) &&
                   (!request.MembershipPlanId.HasValue ||
                    entity.MembershipPlanId == request.MembershipPlanId) &&
+                  (!request.GymId.HasValue || entity.GymId == request.GymId) &&
+                  (!request.CurrentOnly ||
+                   entity.Status == MembershipStatus.PendingPayment ||
+                   entity.Status == MembershipStatus.Active ||
+                   entity.Status == MembershipStatus.Suspended) &&
+                  (!request.CoversFromUtc.HasValue ||
+                   entity.StartsAtUtc <= request.CoversFromUtc) &&
+                  (!request.CoversToUtc.HasValue ||
+                   entity.EndsAtUtc >= request.CoversToUtc) &&
                   (!request.StartsFromUtc.HasValue || entity.StartsAtUtc >= request.StartsFromUtc) &&
                   (!request.StartsToUtc.HasValue || entity.StartsAtUtc <= request.StartsToUtc) &&
                   (string.IsNullOrWhiteSpace(request.Member) ||
@@ -683,6 +695,7 @@ internal sealed class MembershipService(
             entity.Id,
             entity.MembershipPlanId,
             entity.MembershipRequestId,
+            entity.GymId,
             memberName,
             gymName,
             entity.PlanName,
@@ -725,13 +738,18 @@ internal sealed class MembershipService(
         }
     }
 
-    private void Record(string name, Membership entity, DateTime now) =>
-        eventRecorder.Record(new MembershipWorkflowEventIntent(
+    private Task RecordAsync(
+        string name,
+        Membership entity,
+        DateTime now,
+        CancellationToken cancellationToken) =>
+        eventRecorder.RecordAsync(new MembershipWorkflowEventIntent(
             name,
             entity.TenantId,
             entity.MemberUserId,
             entity.Id,
-            now));
+            now),
+            cancellationToken);
 
     private Guid RequireUser() =>
         currentUser.UserId

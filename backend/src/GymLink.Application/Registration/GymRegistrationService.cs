@@ -1,6 +1,7 @@
 using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
+using GymLink.Application.Messaging;
 using GymLink.Domain.Catalog;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
@@ -16,6 +17,8 @@ internal sealed class GymRegistrationService(
     IApplicationTransaction transaction,
     ICurrentUser currentUser,
     ITenantMutationScope tenantMutationScope,
+    IOutboxWriter outbox,
+    IRequestMetadata requestMetadata,
     TimeProvider timeProvider) : IGymRegistrationService
 {
     public async Task<GymRegistrationDto> SubmitAsync(
@@ -61,6 +64,25 @@ internal sealed class GymRegistrationService(
             SubmittedAtUtc = timeProvider.GetUtcNow().UtcDateTime,
         };
         dbContext.GymRegistrationRequests.Add(entity);
+        var centralAdmins = await accounts.GetUserIdsInRoleAsync(
+            RoleNames.CentralAdmin,
+            cancellationToken);
+        foreach (var recipient in centralAdmins)
+        {
+            outbox.AddNotification(new(
+                recipient,
+                null,
+                "registration.submitted",
+                "Nova registracija teretane",
+                "Podnesen je novi zahtjev za registraciju teretane.",
+                "gymRegistration",
+                entity.Id,
+                entity.SubmittedAtUtc
+                    ?? throw new InvalidOperationException(
+                        "A submitted registration must have a submission timestamp."),
+                requestMetadata.CorrelationId));
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
         return await GetProjectedAsync(entity.Id, cancellationToken);
     }
@@ -192,6 +214,7 @@ internal sealed class GymRegistrationService(
             entity.DecisionReason = request.Reason.Trim();
             entity.CreatedTenantId = tenant.Id;
             AddAudit(actorId, entity.ApplicantUserId, tenant.Id, "registration.approved", entity.Id, request.Reason);
+            AddDecisionNotification(entity, "registration.approved");
             await dbContext.SaveChangesAsync(token);
             return await GetProjectedAsync(entity.Id, token);
         }, cancellationToken);
@@ -209,6 +232,7 @@ internal sealed class GymRegistrationService(
             entity.DecidedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
             entity.DecisionReason = request.Reason.Trim();
             AddAudit(actorId, entity.ApplicantUserId, null, "registration.rejected", entity.Id, request.Reason);
+            AddDecisionNotification(entity, "registration.rejected");
             await dbContext.SaveChangesAsync(token);
             return await GetProjectedAsync(entity.Id, token);
         }, cancellationToken);
@@ -299,6 +323,22 @@ internal sealed class GymRegistrationService(
             CorrelationId = Guid.NewGuid().ToString("N"),
             OccurredAtUtc = timeProvider.GetUtcNow().UtcDateTime,
         });
+
+    private void AddDecisionNotification(
+        GymRegistrationRequest entity,
+        string category) =>
+        outbox.AddNotification(new(
+            entity.ApplicantUserId,
+            entity.CreatedTenantId,
+            category,
+            "Registracija teretane",
+            category == "registration.approved"
+                ? "Vaš zahtjev za registraciju teretane je odobren."
+                : "Vaš zahtjev za registraciju teretane je odbijen.",
+            "gymRegistration",
+            entity.Id,
+            entity.DecidedAtUtc ?? timeProvider.GetUtcNow().UtcDateTime,
+            requestMetadata.CorrelationId));
 
     private Guid RequireUser() =>
         currentUser.UserId

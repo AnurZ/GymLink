@@ -5,8 +5,10 @@ import 'package:provider/provider.dart';
 import 'core/auth.dart';
 import 'core/theme.dart';
 import 'features/auth/login_screen.dart';
+import 'features/auth/password_reset_screens.dart';
 import 'features/central/central_shell.dart';
 import 'features/gym_admin/gym_admin_shell.dart';
+import 'features/notifications/notification_screen.dart';
 
 class GymLinkDesktopApp extends StatefulWidget {
   const GymLinkDesktopApp({super.key});
@@ -29,7 +31,11 @@ class _GymLinkDesktopAppState extends State<GymLinkDesktopApp> {
           return state.matchedLocation == '/loading' ? null : '/loading';
         }
         if (!auth.isAuthenticated) {
-          return state.matchedLocation == '/login' ? null : '/login';
+          final recovery =
+              state.matchedLocation == '/login' ||
+              state.matchedLocation == '/forgot-password' ||
+              state.matchedLocation == '/reset-password';
+          return recovery ? null : '/login';
         }
         if (state.matchedLocation == '/login' ||
             state.matchedLocation == '/loading') {
@@ -45,6 +51,16 @@ class _GymLinkDesktopAppState extends State<GymLinkDesktopApp> {
         ),
         GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
         GoRoute(
+          path: '/forgot-password',
+          builder: (_, _) => const ForgotPasswordScreen(),
+        ),
+        GoRoute(
+          path: '/reset-password',
+          builder: (_, state) => ResetPasswordScreen(
+            initialEmail: state.uri.queryParameters['email'] ?? '',
+          ),
+        ),
+        GoRoute(
           path: '/',
           builder: (context, _) =>
               switch (context.watch<AuthController>().session?.role) {
@@ -52,6 +68,10 @@ class _GymLinkDesktopAppState extends State<GymLinkDesktopApp> {
                 'CentralAdmin' => const CentralAdminShell(),
                 _ => const _UnsupportedRole(),
               },
+        ),
+        GoRoute(
+          path: '/notifications',
+          builder: (_, _) => const NotificationScreen(),
         ),
       ],
     );

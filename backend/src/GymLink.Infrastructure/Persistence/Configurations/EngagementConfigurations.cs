@@ -58,12 +58,16 @@ internal sealed class NotificationConfiguration : EntityConfiguration<Notificati
     protected override void ConfigureEntity(EntityTypeBuilder<Notification> builder)
     {
         ConfigureAudit(builder);
+        ConfigureConcurrency(builder);
         builder.Property(x => x.Type).HasMaxLength(100).IsRequired();
         builder.Property(x => x.Title).HasMaxLength(200).IsRequired();
         builder.Property(x => x.Text).HasMaxLength(2000).IsRequired();
         builder.Property(x => x.CorrelationId).HasMaxLength(128);
         builder.Property(x => x.TargetType).HasMaxLength(100);
         builder.HasIndex(x => new { x.RecipientUserId, x.ReadAtUtc, x.CreatedAtUtc });
+        builder.HasIndex(x => x.SourceMessageId)
+            .IsUnique()
+            .HasFilter("[SourceMessageId] IS NOT NULL");
         builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.RecipientUserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId)

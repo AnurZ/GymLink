@@ -18,9 +18,9 @@ class CentralAdminShell extends StatelessWidget {
         CentralDashboardScreen(),
       ),
       DesktopDestination(
-        'Registracije teretana',
+        'Teretane',
         Icons.apartment_outlined,
-        RegistrationManagementScreen(),
+        GymManagementScreen(),
       ),
       DesktopDestination(
         'Korisnici i uloge',

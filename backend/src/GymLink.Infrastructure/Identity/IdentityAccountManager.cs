@@ -78,6 +78,20 @@ internal sealed class IdentityAccountManager(
         return Map(await userManager.ChangePasswordAsync(user, currentPassword, newPassword));
     }
 
+    public async Task<IdentityOperationResult> ResetPasswordAsync(
+        Guid userId,
+        string newPassword)
+    {
+        var user = await userManager.FindByIdAsync(userId.ToString());
+        if (user is null)
+        {
+            return new(false, ["Account not found."]);
+        }
+
+        var token = await userManager.GeneratePasswordResetTokenAsync(user);
+        return Map(await userManager.ResetPasswordAsync(user, token, newPassword));
+    }
+
     public async Task<IdentityOperationResult> UpdateEmailAsync(
         Guid userId,
         string email,
@@ -173,6 +187,16 @@ internal sealed class IdentityAccountManager(
         return await dbContext.UserProfiles.CountAsync(
             x => ids.Contains(x.Id) && x.IsActive,
             cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Guid>> GetUserIdsInRoleAsync(
+        string role,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return (await userManager.GetUsersInRoleAsync(role))
+            .Select(x => x.Id)
+            .ToArray();
     }
 
     private async Task<IdentityAccount?> ToAccountAsync(GymLinkIdentityUser user)

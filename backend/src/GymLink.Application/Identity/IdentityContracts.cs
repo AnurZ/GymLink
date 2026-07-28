@@ -42,6 +42,27 @@ public sealed record LogoutRequest
     public required string RefreshToken { get; init; }
 }
 
+public sealed record ForgotPasswordRequest
+{
+    [Required, EmailAddress, MaxLength(320)]
+    public required string Email { get; init; }
+}
+
+public sealed record ResetPasswordRequest
+{
+    [Required, EmailAddress, MaxLength(320)]
+    public required string Email { get; init; }
+
+    [Required, RegularExpression("^[0-9]{6}$")]
+    public required string Code { get; init; }
+
+    [Required, StringLength(100, MinimumLength = 8)]
+    public required string NewPassword { get; init; }
+}
+
+public sealed record PasswordResetAcceptedDto(
+    string Message = "If the account exists, a reset code will be sent.");
+
 public sealed record UpdateProfileRequest
 {
     [Required, StringLength(160, MinimumLength = 2)]

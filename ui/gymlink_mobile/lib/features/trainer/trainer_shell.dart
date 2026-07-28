@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../profile/profile_screen.dart';
+import '../notifications/notification_screen.dart';
 import 'trainer_screens.dart';
 
 class TrainerShell extends StatefulWidget {
@@ -33,6 +34,7 @@ class _TrainerShellState extends State<TrainerShell> {
         ][_index],
         style: const TextStyle(fontWeight: FontWeight.w800),
       ),
+      actions: const [NotificationBell()],
     ),
     body: IndexedStack(index: _index, children: _pages),
     bottomNavigationBar: NavigationBar(

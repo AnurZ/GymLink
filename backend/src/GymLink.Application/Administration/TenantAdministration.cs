@@ -2,6 +2,8 @@ using System.ComponentModel.DataAnnotations;
 using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
+using GymLink.Application.Messaging;
+using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Identity;
 using GymLink.Domain.Tenancy;
@@ -44,6 +46,8 @@ internal sealed class TenantAdministrationService(
     IApplicationTransaction transaction,
     ICurrentUser currentUser,
     ITenantMutationScope tenantMutationScope,
+    IOutboxWriter outbox,
+    IRequestMetadata requestMetadata,
     TimeProvider timeProvider) : ITenantAdministrationService
 {
     public Task<TenantStatusDto> ActivateAsync(Guid id, CancellationToken cancellationToken) =>
@@ -93,6 +97,7 @@ internal sealed class TenantAdministrationService(
                 .SingleAsync(x => x.TenantId == id, token);
             gym.IsPubliclyVisible = true;
             AddAudit(id, "tenant.reactivated", request.Reason);
+            await NotifyGymAdminsAsync(tenant, token);
             await dbContext.SaveChangesAsync(token);
             return ToDto(tenant);
         }, cancellationToken);
@@ -124,12 +129,26 @@ internal sealed class TenantAdministrationService(
                 .SingleAsync(x => x.TenantId == id, token);
             gym.IsPubliclyVisible = target == TenantStatus.Active;
             AddAudit(id, $"tenant.{target.ToString().ToLowerInvariant()}", reason);
+            await NotifyGymAdminsAsync(tenant, token);
             await dbContext.SaveChangesAsync(token);
             return ToDto(tenant);
         }, cancellationToken);
 
     private async Task EnsureCatalogReadyAsync(Guid tenantId, CancellationToken cancellationToken)
     {
+        var hasActiveGymAdmin = await dbContext.UserGymAssignments.IgnoreQueryFilters()
+            .AnyAsync(
+                x => x.TenantId == tenantId &&
+                     x.Role == RoleNames.GymAdmin &&
+                     x.Status == AssignmentStatus.Active,
+                cancellationToken);
+        if (!hasActiveGymAdmin)
+        {
+            throw new ConflictException(
+                "tenant_admin_required",
+                "An active GymAdmin must be assigned before activation.");
+        }
+
         var gym = await dbContext.Gyms.IgnoreQueryFilters()
             .SingleOrDefaultAsync(x => x.TenantId == tenantId, cancellationToken)
             ?? throw new ConflictException(
@@ -178,6 +197,33 @@ internal sealed class TenantAdministrationService(
             CorrelationId = Guid.NewGuid().ToString("N"),
             OccurredAtUtc = timeProvider.GetUtcNow().UtcDateTime,
         });
+
+    private async Task NotifyGymAdminsAsync(
+        Tenant tenant,
+        CancellationToken cancellationToken)
+    {
+        var recipients = await dbContext.UserGymAssignments
+            .IgnoreQueryFilters()
+            .Where(x =>
+                x.TenantId == tenant.Id &&
+                x.Role == RoleNames.GymAdmin &&
+                x.Status == AssignmentStatus.Active)
+            .Select(x => x.UserId)
+            .ToListAsync(cancellationToken);
+        foreach (var recipient in recipients)
+        {
+            outbox.AddNotification(new(
+                recipient,
+                tenant.Id,
+                "tenant.status_changed",
+                "Status teretane",
+                $"Status teretane je promijenjen na {tenant.Status}.",
+                "tenant",
+                tenant.Id,
+                tenant.StatusChangedAtUtc ?? timeProvider.GetUtcNow().UtcDateTime,
+                requestMetadata.CorrelationId));
+        }
+    }
 
     private Guid RequireUser() =>
         currentUser.UserId

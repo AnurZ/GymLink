@@ -40,12 +40,19 @@ class ApiProblem implements Exception {
     }
     return ApiProblem(
       status: response.statusCode,
-      code: data['title']?.toString() ?? 'request_failed',
+      code:
+          data['title']?.toString() ??
+          (response.statusCode == 404
+              ? 'endpoint_not_found'
+              : 'request_failed'),
       message:
           data['detail']?.toString() ??
-          (response.statusCode >= 500
-              ? 'Server trenutno nije dostupan.'
-              : 'Zahtjev nije moguće izvršiti.'),
+          switch (response.statusCode) {
+            404 =>
+              'API endpoint nije pronađen. Ponovo pokrenite najnoviju verziju API-ja.',
+            >= 500 => 'Server trenutno nije dostupan.',
+            _ => 'Zahtjev nije moguće izvršiti.',
+          },
       fieldErrors: errors,
     );
   }

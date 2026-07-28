@@ -219,7 +219,7 @@ internal sealed class AvailabilityService(
                 "The weekly shift selection is invalid.");
         }
 
-        var schedule = await transaction.ExecuteSerializableAsync(async ct =>
+        await transaction.ExecuteSerializableAsync(async ct =>
         {
             var entity = await dbContext.TrainerAvailabilitySchedules
                 .SingleOrDefaultAsync(
@@ -280,15 +280,16 @@ internal sealed class AvailabilityService(
 
             entity.RecordReplacement();
             AddScheduleOverrideAudit(actorId, trainer, entity.Id);
+            await eventRecorder.RecordAsync(new(
+                "availability.schedule.changed",
+                trainer.TenantId,
+                actorId,
+                entity.Id,
+                timeProvider.GetUtcNow().UtcDateTime),
+                ct);
             await dbContext.SaveChangesAsync(ct);
             return entity;
         }, cancellationToken);
-        eventRecorder.Record(new(
-            "availability.schedule.changed",
-            trainer.TenantId,
-            actorId,
-            schedule.Id,
-            timeProvider.GetUtcNow().UtcDateTime));
         return await LoadScheduleDtoAsync(trainer, cancellationToken);
     }
 
@@ -327,6 +328,13 @@ internal sealed class AvailabilityService(
 
                 dbContext.TrainerAvailabilitySlots.Add(entity);
                 AddOverrideAudit(actorId, trainer, entity.Id, "availability.created");
+                await eventRecorder.RecordAsync(new(
+                    "availability.changed",
+                    tenantId,
+                    actorId,
+                    entity.Id,
+                    timeProvider.GetUtcNow().UtcDateTime),
+                    ct);
                 await dbContext.SaveChangesAsync(ct);
                 return entity;
             }, cancellationToken);
@@ -338,12 +346,6 @@ internal sealed class AvailabilityService(
                 "The availability interval overlaps another trainer slot.",
                 exception);
         }
-        eventRecorder.Record(new(
-            "availability.changed",
-            tenantId,
-            actorId,
-            slot.Id,
-            timeProvider.GetUtcNow().UtcDateTime));
         return ToDto(slot);
     }
 
@@ -376,6 +378,13 @@ internal sealed class AvailabilityService(
                     ct);
                 entity.Update(request.StartsAtUtc, request.EndsAtUtc, request.Status);
                 AddOverrideAudit(actorId, writableTrainer, entity.Id, "availability.updated");
+                await eventRecorder.RecordAsync(new(
+                    "availability.changed",
+                    entity.TenantId,
+                    actorId,
+                    entity.Id,
+                    timeProvider.GetUtcNow().UtcDateTime),
+                    ct);
                 await dbContext.SaveChangesAsync(ct);
                 return entity;
             }, cancellationToken);
@@ -387,12 +396,6 @@ internal sealed class AvailabilityService(
                 "The availability interval overlaps another trainer slot.",
                 exception);
         }
-        eventRecorder.Record(new(
-            "availability.changed",
-            slot.TenantId,
-            actorId,
-            slot.Id,
-            timeProvider.GetUtcNow().UtcDateTime));
         return ToDto(slot);
     }
 
@@ -409,13 +412,14 @@ internal sealed class AvailabilityService(
         EnsureToken(slot.RowVersion, request.ConcurrencyToken);
         slot.Cancel();
         AddOverrideAudit(actorId, trainer, slot.Id, "availability.cancelled");
-        await SaveAsync(cancellationToken);
-        eventRecorder.Record(new(
+        await eventRecorder.RecordAsync(new(
             "availability.changed",
             slot.TenantId,
             actorId,
             slot.Id,
-            timeProvider.GetUtcNow().UtcDateTime));
+            timeProvider.GetUtcNow().UtcDateTime),
+            cancellationToken);
+        await SaveAsync(cancellationToken);
         return ToDto(slot);
     }
 
@@ -836,6 +840,13 @@ internal sealed class ReservationService(
                 using (tenantMutationScope.Begin(target.Offering.TenantId))
                 {
                     dbContext.AppointmentReservations.Add(entity);
+                    await eventRecorder.RecordAsync(new(
+                        "reservation.created",
+                        entity.TenantId,
+                        memberId,
+                        entity.Id,
+                        now),
+                        ct);
                     await dbContext.SaveChangesAsync(ct);
                 }
 
@@ -857,12 +868,6 @@ internal sealed class ReservationService(
                 exception);
         }
 
-        eventRecorder.Record(new(
-            "reservation.created",
-            reservation.TenantId,
-            memberId,
-            reservation.Id,
-            now));
         return await GetMineAsync(reservation.Id, cancellationToken);
     }
 
@@ -893,10 +898,9 @@ internal sealed class ReservationService(
         }
         using (tenantMutationScope.Begin(entity.TenantId))
         {
+            await RecordStatusAsync(entity, actor, cancellationToken);
             await SaveAsync(cancellationToken);
         }
-
-        RecordStatus(entity, actor);
         return await GetMineAsync(id, cancellationToken);
     }
 
@@ -995,8 +999,8 @@ internal sealed class ReservationService(
             }
         }
 
+        await RecordStatusAsync(entity, actor, cancellationToken);
         await SaveAsync(cancellationToken);
-        RecordStatus(entity, actor);
         return tenantContext.TenantRole == RoleNames.Trainer
             ? await GetTrainerAsync(id, cancellationToken)
             : await GetTenantAsync(id, cancellationToken);
@@ -1173,13 +1177,17 @@ internal sealed class ReservationService(
         }
     }
 
-    private void RecordStatus(AppointmentReservation entity, Guid actor) =>
-        eventRecorder.Record(new(
+    private Task RecordStatusAsync(
+        AppointmentReservation entity,
+        Guid actor,
+        CancellationToken cancellationToken) =>
+        eventRecorder.RecordAsync(new(
             "reservation.status_changed",
             entity.TenantId,
             actor,
             entity.Id,
-            timeProvider.GetUtcNow().UtcDateTime));
+            timeProvider.GetUtcNow().UtcDateTime),
+            cancellationToken);
 
     private Guid RequireUser() =>
         currentUser.UserId ??
@@ -1333,12 +1341,16 @@ internal sealed class ReviewService(
             using (tenantMutationScope.Begin(reservation.TenantId))
             {
                 dbContext.Reviews.Add(entity);
+                await RecordAsync(
+                    "review.trainer_created",
+                    entity.TenantId,
+                    entity.Id,
+                    ct);
                 await dbContext.SaveChangesAsync(ct);
             }
 
             return entity;
         }, cancellationToken);
-        Record("review.trainer_created", review.TenantId, review.Id);
         return ToDto(review);
     }
 
@@ -1400,12 +1412,16 @@ internal sealed class ReviewService(
             using (tenantMutationScope.Begin(gym.TenantId))
             {
                 dbContext.GymReviews.Add(entity);
+                await RecordAsync(
+                    "review.gym_created",
+                    entity.TenantId,
+                    entity.Id,
+                    ct);
                 await dbContext.SaveChangesAsync(ct);
             }
 
             return entity;
         }, cancellationToken);
-        Record("review.gym_created", review.TenantId, review.Id);
         return ToDto(review);
     }
 
@@ -1445,13 +1461,18 @@ internal sealed class ReviewService(
         }
     }
 
-    private void Record(string name, Guid tenantId, Guid targetId) =>
-        eventRecorder.Record(new(
+    private Task RecordAsync(
+        string name,
+        Guid tenantId,
+        Guid targetId,
+        CancellationToken cancellationToken) =>
+        eventRecorder.RecordAsync(new(
             name,
             tenantId,
             RequireUser(),
             targetId,
-            timeProvider.GetUtcNow().UtcDateTime));
+            timeProvider.GetUtcNow().UtcDateTime),
+            cancellationToken);
 
     private Guid RequireUser() =>
         currentUser.UserId ??

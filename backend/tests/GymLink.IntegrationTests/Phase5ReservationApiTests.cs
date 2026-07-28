@@ -94,6 +94,35 @@ public sealed class Phase5ReservationApiTests
             Assert.NotNull(publicAvailability);
             Assert.Contains(publicAvailability.Items, x => x.StartsAtUtc == start);
 
+            var unique = Guid.NewGuid().ToString("N");
+            var registration = await setupClient.PostAsJsonAsync(
+                "/api/auth/register",
+                new
+                {
+                    username = $"nomembership-{unique}",
+                    email = $"nomembership-{unique}@gymlink.local",
+                    displayName = "No Membership Member",
+                    password = Password,
+                });
+            registration.EnsureSuccessStatusCode();
+            var noMembership = await registration.Content.ReadFromJsonAsync<AuthSessionDto>();
+            Assert.NotNull(noMembership);
+            using (var noMembershipClient = factory.CreateClient())
+            {
+                Authorize(noMembershipClient, noMembership);
+                var missingCoverage = await noMembershipClient.PostAsJsonAsync(
+                    "/api/reservations",
+                    new
+                    {
+                        startsAtUtc = start,
+                        trainerServiceOfferingId = offering.Id,
+                    });
+                Assert.Equal(HttpStatusCode.Conflict, missingCoverage.StatusCode);
+                Assert.Equal(
+                    "covering_membership_required",
+                    await ProblemCodeAsync(missingCoverage));
+            }
+
             using var memberClient = factory.CreateClient();
             using var secondClient = factory.CreateClient();
             Authorize(memberClient, member);
@@ -272,6 +301,9 @@ public sealed class Phase5ReservationApiTests
             builder.UseSetting("Jwt:Issuer", "GymLink.Tests");
             builder.UseSetting("Jwt:Audience", "GymLink.Tests.Client");
             builder.UseSetting("Jwt:SigningKey", SigningKey);
+            builder.UseSetting(
+                "PasswordReset:CodePepper",
+                "integration-test-reset-pepper-at-least-32-bytes");
             builder.UseSetting("Seed:Enabled", "true");
             builder.UseSetting("Seed:DefaultPassword", Password);
             builder.ConfigureAppConfiguration((_, configuration) =>
@@ -283,6 +315,8 @@ public sealed class Phase5ReservationApiTests
                     ["Jwt:SigningKey"] = SigningKey,
                     ["Jwt:AccessTokenMinutes"] = "15",
                     ["Jwt:RefreshTokenDays"] = "30",
+                    ["PasswordReset:CodePepper"] =
+                        "integration-test-reset-pepper-at-least-32-bytes",
                     ["Seed:Enabled"] = "true",
                     ["Seed:DefaultPassword"] = Password,
                 }));

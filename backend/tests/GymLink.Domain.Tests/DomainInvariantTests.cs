@@ -1,6 +1,8 @@
 using GymLink.Domain.Common;
 using GymLink.Domain.Catalog;
+using GymLink.Domain.Engagement;
 using GymLink.Domain.Enums;
+using GymLink.Domain.Identity;
 using GymLink.Domain.Memberships;
 using GymLink.Domain.Payments;
 using GymLink.Domain.Reservations;
@@ -260,5 +262,89 @@ public sealed class DomainInvariantTests
         Assert.Equal(MembershipStatus.Expired, membership.Status);
         Assert.Throws<DomainException>(() =>
             membership.CancelByMember(ids[1], now.AddDays(30)));
+    }
+
+    [Fact]
+    public void Password_reset_challenge_enforces_expiry_attempts_and_single_use()
+    {
+        var now = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var challenge = new PasswordResetChallenge(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "hashed-code",
+            "salt",
+            now,
+            now.AddMinutes(15),
+            "hashed-ip",
+            "correlation-id");
+
+        Assert.True(challenge.CanConfirm(now.AddMinutes(14)));
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            challenge.RegisterFailedAttempt(now.AddMinutes(attempt + 1));
+        }
+
+        Assert.False(challenge.CanConfirm(now.AddMinutes(6)));
+        var exhausted = Assert.Throws<DomainException>(() =>
+            challenge.Consume(now.AddMinutes(6)));
+        Assert.Equal("password_reset_invalid", exhausted.Code);
+
+        var consumed = new PasswordResetChallenge(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "hashed-code",
+            "salt",
+            now,
+            now.AddMinutes(15),
+            null,
+            "correlation-id");
+        consumed.Consume(now.AddMinutes(1));
+
+        Assert.False(consumed.CanConfirm(now.AddMinutes(2)));
+        Assert.Throws<DomainException>(() => consumed.Consume(now.AddMinutes(2)));
+    }
+
+    [Fact]
+    public void Password_reset_challenge_requires_utc_and_can_be_superseded()
+    {
+        var now = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var challenge = new PasswordResetChallenge(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "hashed-code",
+            "salt",
+            now,
+            now.AddMinutes(15),
+            null,
+            "correlation-id");
+
+        challenge.Supersede(now.AddMinutes(1));
+
+        Assert.False(challenge.CanConfirm(now.AddMinutes(2)));
+        Assert.Throws<DomainException>(() =>
+            new PasswordResetChallenge(
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                "hashed-code",
+                "salt",
+                DateTime.SpecifyKind(now, DateTimeKind.Local),
+                now.AddMinutes(15),
+                null,
+                "correlation-id"));
+    }
+
+    [Fact]
+    public void Notification_mark_read_is_utc_and_idempotent()
+    {
+        var firstRead = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var notification = new Notification();
+
+        notification.MarkRead(firstRead);
+        notification.MarkRead(firstRead.AddMinutes(1));
+
+        Assert.Equal(firstRead, notification.ReadAtUtc);
+        Assert.Throws<DomainException>(() =>
+            new Notification().MarkRead(
+                DateTime.SpecifyKind(firstRead, DateTimeKind.Local)));
     }
 }

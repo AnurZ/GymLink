@@ -181,6 +181,9 @@ public sealed class SeededIdentityApiTests
             builder.UseSetting("Jwt:SigningKey", SigningKey);
             builder.UseSetting("Jwt:AccessTokenMinutes", "15");
             builder.UseSetting("Jwt:RefreshTokenDays", "30");
+            builder.UseSetting(
+                "PasswordReset:CodePepper",
+                "integration-test-reset-pepper-at-least-32-bytes");
             builder.UseSetting("Seed:Enabled", "true");
             builder.UseSetting("Seed:DefaultPassword", Password);
             builder.ConfigureAppConfiguration((_, configuration) =>
@@ -192,6 +195,8 @@ public sealed class SeededIdentityApiTests
                     ["Jwt:SigningKey"] = SigningKey,
                     ["Jwt:AccessTokenMinutes"] = "15",
                     ["Jwt:RefreshTokenDays"] = "30",
+                    ["PasswordReset:CodePepper"] =
+                        "integration-test-reset-pepper-at-least-32-bytes",
                     ["Seed:Enabled"] = "true",
                     ["Seed:DefaultPassword"] = Password,
                 }));

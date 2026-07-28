@@ -1,8 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using GymLink.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 
 namespace GymLink.IntegrationTests;
 
@@ -57,35 +59,78 @@ public sealed class ApiStartupTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
-    [Theory]
-    [InlineData("/api/auth/password-reset")]
-    [InlineData("/api/auth/forgot-password")]
-    [InlineData("/api/auth/reset-password")]
-    public async Task Phase_three_exposes_no_password_reset_endpoint(string path)
+    [Fact]
+    public async Task Forgot_password_is_enumeration_safe()
+    {
+        var connectionString = TestSqlServer.ConnectionString(
+            $"GymLink_Phase7_{Guid.NewGuid():N}");
+        try
+        {
+            await using (var context = CreateContext(connectionString))
+            {
+                await context.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            var response = await client.PostAsJsonAsync(
+                "/api/auth/forgot-password",
+                new { email = "unknown@example.test" });
+
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        finally
+        {
+            await using var context = CreateContext(connectionString);
+            await context.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Reset_password_validates_code_and_password()
     {
         await using var factory = CreateFactory();
         using var client = factory.CreateClient();
 
-        var response = await client.PostAsJsonAsync(path, new { email = "member@gymlink.local" });
+        var response = await client.PostAsJsonAsync(
+            "/api/auth/reset-password",
+            new
+            {
+                email = "member@gymlink.local",
+                code = "12",
+                newPassword = "weak",
+            });
 
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
-    private static WebApplicationFactory<Program> CreateFactory()
+    private static WebApplicationFactory<Program> CreateFactory(
+        string? connectionString = null)
     {
         Environment.SetEnvironmentVariable(
             "ConnectionStrings__GymLink",
-            TestSqlServer.ConnectionString("GymLinkApiTests"));
+            connectionString ?? TestSqlServer.ConnectionString("GymLinkApiTests"));
         Environment.SetEnvironmentVariable("Jwt__Issuer", "GymLink.Tests");
         Environment.SetEnvironmentVariable("Jwt__Audience", "GymLink.Tests.Client");
         Environment.SetEnvironmentVariable(
             "Jwt__SigningKey",
             "integration-test-signing-key-at-least-32-bytes");
+        Environment.SetEnvironmentVariable(
+            "PasswordReset__CodePepper",
+            "integration-test-reset-pepper-at-least-32-bytes");
         Environment.SetEnvironmentVariable("Seed__Enabled", "false");
 
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
         });
+    }
+
+    private static GymLinkDbContext CreateContext(string connectionString)
+    {
+        var options = new DbContextOptionsBuilder<GymLinkDbContext>()
+            .UseSqlServer(connectionString)
+            .Options;
+        return new GymLinkDbContext(options, new TestTenantContext(null));
     }
 }

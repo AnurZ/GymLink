@@ -3,6 +3,7 @@ using GymLink.Application.Catalog;
 using GymLink.Application.Administration;
 using GymLink.Application.Identity;
 using GymLink.Application.Memberships;
+using GymLink.Application.Messaging;
 using GymLink.Application.ReferenceData;
 using GymLink.Application.Registration;
 using GymLink.Application.Reservations;
@@ -22,8 +23,10 @@ public static class DependencyInjection
         services.AddScoped<IMembershipPlanService, MembershipPlanService>();
         services.AddScoped<ITrainerOfferingService, TrainerOfferingService>();
         services.AddScoped<IAuthenticationService, AuthenticationService>();
+        services.AddScoped<IPasswordResetService, PasswordResetService>();
         services.AddScoped<IProfileService, ProfileService>();
         services.AddScoped<IGymRegistrationService, GymRegistrationService>();
+        services.AddScoped<IGymAdministrationService, GymAdministrationService>();
         services.AddScoped<ITenantAdministrationService, TenantAdministrationService>();
         services.AddScoped<IUserAdministrationService, UserAdministrationService>();
         services.AddScoped<IMembershipRequestService, MembershipRequestService>();
@@ -31,6 +34,7 @@ public static class DependencyInjection
         services.AddScoped<IAvailabilityService, AvailabilityService>();
         services.AddScoped<IReservationService, ReservationService>();
         services.AddScoped<IReviewService, ReviewService>();
+        services.AddScoped<INotificationService, NotificationService>();
         return services;
     }
 }

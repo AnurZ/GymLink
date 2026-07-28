@@ -6,6 +6,15 @@ import '../../core/api.dart';
 import '../../core/auth.dart';
 import '../../core/theme.dart';
 
+String? _fieldError(Map<String, List<String>> errors, String field) {
+  for (final entry in errors.entries) {
+    if (entry.key.toLowerCase() == field.toLowerCase()) {
+      return entry.value.join('\n');
+    }
+  }
+  return null;
+}
+
 class _AuthLayout extends StatelessWidget {
   const _AuthLayout({
     required this.title,
@@ -168,8 +177,234 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
           const SizedBox(height: 10),
           TextButton(
+            onPressed: _busy ? null : () => context.go('/forgot-password'),
+            child: const Text('Zaboravili ste lozinku?'),
+          ),
+          TextButton(
             onPressed: _busy ? null : () => context.go('/register'),
             child: const Text('Nemate račun? Registrujte se'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class ForgotPasswordScreen extends StatefulWidget {
+  const ForgotPasswordScreen({super.key});
+
+  @override
+  State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
+}
+
+class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _email = TextEditingController();
+  bool _busy = false;
+  String? _error;
+  Map<String, List<String>> _fieldErrors = const {};
+
+  @override
+  void dispose() {
+    _email.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _fieldErrors = const {};
+    });
+    try {
+      await context.read<ApiClient>().post(
+        '/api/auth/forgot-password',
+        authenticated: false,
+        body: {'email': _email.text.trim()},
+      );
+      if (mounted) {
+        context.go(
+          '/reset-password?email=${Uri.encodeQueryComponent(_email.text.trim())}',
+        );
+      }
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error.message;
+          _fieldErrors = error.fieldErrors;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _AuthLayout(
+    title: 'Promjena lozinke',
+    subtitle: 'Poslat ćemo šestocifreni kod ako račun postoji.',
+    child: Form(
+      key: _formKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextFormField(
+            controller: _email,
+            keyboardType: TextInputType.emailAddress,
+            decoration: InputDecoration(
+              labelText: 'Email',
+              prefixIcon: const Icon(Icons.mail_outline),
+              errorText: _fieldError(_fieldErrors, 'Email'),
+            ),
+            validator: (value) =>
+                value == null || !value.contains('@') ? 'Unesite email.' : null,
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: const TextStyle(color: GymLinkColors.danger)),
+          ],
+          const SizedBox(height: 18),
+          FilledButton(
+            onPressed: _busy ? null : _submit,
+            child: Text(_busy ? 'Slanje...' : 'Pošalji kod'),
+          ),
+          TextButton(
+            onPressed: () => context.go('/login'),
+            child: const Text('Nazad na prijavu'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class ResetPasswordScreen extends StatefulWidget {
+  const ResetPasswordScreen({required this.initialEmail, super.key});
+  final String initialEmail;
+
+  @override
+  State<ResetPasswordScreen> createState() => _ResetPasswordScreenState();
+}
+
+class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _email;
+  final _code = TextEditingController();
+  final _password = TextEditingController();
+  final _confirmation = TextEditingController();
+  bool _busy = false;
+  String? _error;
+  Map<String, List<String>> _fieldErrors = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    _email = TextEditingController(text: widget.initialEmail);
+  }
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _code.dispose();
+    _password.dispose();
+    _confirmation.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _fieldErrors = const {};
+    });
+    try {
+      await context.read<ApiClient>().post(
+        '/api/auth/reset-password',
+        authenticated: false,
+        body: {
+          'email': _email.text.trim(),
+          'code': _code.text.trim(),
+          'newPassword': _password.text,
+        },
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Lozinka je uspješno promijenjena.')),
+        );
+        context.go('/login');
+      }
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error.message;
+          _fieldErrors = error.fieldErrors;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => _AuthLayout(
+    title: 'Unesite kod',
+    subtitle: 'Kod vrijedi 15 minuta i može se iskoristiti jednom.',
+    child: Form(
+      key: _formKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextFormField(
+            controller: _email,
+            decoration: InputDecoration(
+              labelText: 'Email',
+              errorText: _fieldError(_fieldErrors, 'Email'),
+            ),
+            validator: (value) =>
+                value == null || !value.contains('@') ? 'Unesite email.' : null,
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _code,
+            keyboardType: TextInputType.number,
+            maxLength: 6,
+            decoration: InputDecoration(
+              labelText: 'Šestocifreni kod',
+              errorText: _fieldError(_fieldErrors, 'Code'),
+            ),
+            validator: (value) => !RegExp(r'^\d{6}$').hasMatch(value ?? '')
+                ? 'Kod mora sadržavati šest cifara.'
+                : null,
+          ),
+          TextFormField(
+            controller: _password,
+            obscureText: true,
+            decoration: InputDecoration(
+              labelText: 'Nova lozinka',
+              errorText: _fieldError(_fieldErrors, 'NewPassword'),
+            ),
+            validator: (value) => value == null || value.length < 8
+                ? 'Lozinka mora imati najmanje 8 znakova.'
+                : null,
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _confirmation,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: 'Potvrdite lozinku'),
+            validator: (value) =>
+                value != _password.text ? 'Lozinke se ne podudaraju.' : null,
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!, style: const TextStyle(color: GymLinkColors.danger)),
+          ],
+          const SizedBox(height: 18),
+          FilledButton(
+            onPressed: _busy ? null : _submit,
+            child: Text(_busy ? 'Spremanje...' : 'Promijeni lozinku'),
           ),
         ],
       ),

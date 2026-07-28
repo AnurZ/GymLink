@@ -1,4 +1,6 @@
 using GymLink.Domain.Catalog;
+using GymLink.Domain.Engagement;
+using GymLink.Domain.Messaging;
 using GymLink.Domain.Memberships;
 using GymLink.Domain.Reservations;
 using GymLink.Domain.ReferenceData;
@@ -13,6 +15,7 @@ public interface IApplicationDbContext
 {
     DbSet<UserProfile> UserProfiles { get; }
     DbSet<RefreshTokenSession> RefreshTokenSessions { get; }
+    DbSet<PasswordResetChallenge> PasswordResetChallenges { get; }
     DbSet<SecurityAuditRecord> SecurityAuditRecords { get; }
     DbSet<Tenant> Tenants { get; }
     DbSet<GymRegistrationRequest> GymRegistrationRequests { get; }
@@ -38,6 +41,9 @@ public interface IApplicationDbContext
     DbSet<AppointmentReservation> AppointmentReservations { get; }
     DbSet<Review> Reviews { get; }
     DbSet<GymReview> GymReviews { get; }
+    DbSet<Notification> Notifications { get; }
+    DbSet<OutboxMessage> OutboxMessages { get; }
+    DbSet<InboxMessage> InboxMessages { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -23,6 +23,13 @@ void main() {
     expect(problem.fieldErrors['Email'], ['Email nije ispravan.']);
   });
 
+  test('missing endpoint explains that the API must be restarted', () {
+    final problem = ApiProblem.fromResponse(http.Response('', 404));
+
+    expect(problem.code, 'endpoint_not_found');
+    expect(problem.message, contains('Ponovo pokrenite'));
+  });
+
   test('paged responses keep bounded query metadata', () {
     final page = PagedData.fromJson({
       'items': [

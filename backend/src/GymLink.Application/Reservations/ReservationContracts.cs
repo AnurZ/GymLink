@@ -165,5 +165,7 @@ public sealed record ReservationWorkflowEventIntent(
 
 public interface IReservationWorkflowEventRecorder
 {
-    void Record(ReservationWorkflowEventIntent intent);
+    Task RecordAsync(
+        ReservationWorkflowEventIntent intent,
+        CancellationToken cancellationToken);
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/theme.dart';
+import 'notifications/notification_screen.dart';
 
 class DesktopDestination {
   const DesktopDestination(this.label, this.icon, this.page);
@@ -98,18 +99,24 @@ class _DesktopFrameState extends State<DesktopFrame> {
                 Container(
                   height: 92,
                   padding: const EdgeInsets.symmetric(horizontal: 34),
-                  alignment: Alignment.centerLeft,
                   color: Colors.white,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Text(
-                        selected.label,
-                        style: Theme.of(context).textTheme.headlineMedium
-                            ?.copyWith(fontWeight: FontWeight.w800),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              selected.label,
+                              style: Theme.of(context).textTheme.headlineMedium
+                                  ?.copyWith(fontWeight: FontWeight.w800),
+                            ),
+                            Text(widget.heading),
+                          ],
+                        ),
                       ),
-                      Text(widget.heading),
+                      const NotificationBell(),
                     ],
                   ),
                 ),

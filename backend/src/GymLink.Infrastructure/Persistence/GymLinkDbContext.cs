@@ -5,6 +5,7 @@ using GymLink.Domain.Common;
 using GymLink.Domain.Engagement;
 using GymLink.Domain.Identity;
 using GymLink.Domain.Memberships;
+using GymLink.Domain.Messaging;
 using GymLink.Domain.Payments;
 using GymLink.Domain.Recommendations;
 using GymLink.Domain.ReferenceData;
@@ -29,6 +30,8 @@ public sealed class GymLinkDbContext(
 
     public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
     public DbSet<RefreshTokenSession> RefreshTokenSessions => Set<RefreshTokenSession>();
+    public DbSet<PasswordResetChallenge> PasswordResetChallenges =>
+        Set<PasswordResetChallenge>();
     public DbSet<SecurityAuditRecord> SecurityAuditRecords => Set<SecurityAuditRecord>();
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<GymRegistrationRequest> GymRegistrationRequests => Set<GymRegistrationRequest>();
@@ -59,6 +62,8 @@ public sealed class GymLinkDbContext(
     public DbSet<ConversationParticipant> ConversationParticipants => Set<ConversationParticipant>();
     public DbSet<Message> Messages => Set<Message>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
+    public DbSet<InboxMessage> InboxMessages => Set<InboxMessage>();
     public DbSet<UserPreference> UserPreferences => Set<UserPreference>();
     public DbSet<ActivityHistory> ActivityHistory => Set<ActivityHistory>();
     public DbSet<Recommendation> Recommendations => Set<Recommendation>();

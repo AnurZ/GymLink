@@ -466,6 +466,15 @@ namespace GymLink.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("RecipientUserId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<Guid?>("SourceMessageId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<Guid?>("TargetId")
                         .HasColumnType("uniqueidentifier");
 
@@ -499,11 +508,87 @@ namespace GymLink.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("SourceMessageId")
+                        .IsUnique()
+                        .HasFilter("[SourceMessageId] IS NOT NULL");
+
                     b.HasIndex("TenantId");
 
                     b.HasIndex("RecipientUserId", "ReadAtUtc", "CreatedAtUtc");
 
                     b.ToTable("Notifications");
+                });
+
+            modelBuilder.Entity("GymLink.Domain.Identity.PasswordResetChallenge", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("CodeSalt")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime?>("ConsumedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("FailedAttempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("LastFailedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("RequestIpHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("RequestedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<DateTime?>("SupersededAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAtUtc");
+
+                    b.HasIndex("UserId")
+                        .IsUnique()
+                        .HasFilter("[ConsumedAtUtc] IS NULL AND [SupersededAtUtc] IS NULL");
+
+                    b.HasIndex("UserId", "RequestedAtUtc");
+
+                    b.ToTable("PasswordResetChallenges", t =>
+                        {
+                            t.HasCheckConstraint("CK_PasswordResetChallenges_FailedAttempts", "[FailedAttempts] >= 0 AND [FailedAttempts] <= 5");
+
+                            t.HasCheckConstraint("CK_PasswordResetChallenges_TerminalState", "[ConsumedAtUtc] IS NULL OR [SupersededAtUtc] IS NULL");
+
+                            t.HasCheckConstraint("CK_PasswordResetChallenges_TimeRange", "[ExpiresAtUtc] > [RequestedAtUtc]");
+                        });
                 });
 
             modelBuilder.Entity("GymLink.Domain.Identity.RefreshTokenSession", b =>
@@ -904,6 +989,138 @@ namespace GymLink.Infrastructure.Persistence.Migrations
                         .HasFilter("[Status] = N'Pending'");
 
                     b.ToTable("MembershipRequests");
+                });
+
+            modelBuilder.Entity("GymLink.Domain.Messaging.InboxMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Consumer")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("MessageType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime?>("NextAttemptAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("ProcessingAttempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("ReceivedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompletedAtUtc", "NextAttemptAtUtc")
+                        .HasFilter("[CompletedAtUtc] IS NULL");
+
+                    b.HasIndex("MessageId", "Consumer")
+                        .IsUnique();
+
+                    b.ToTable("InboxMessages", t =>
+                        {
+                            t.HasCheckConstraint("CK_InboxMessages_ProcessingAttempts", "[ProcessingAttempts] >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("GymLink.Domain.Messaging.OutboxMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ContractVersion")
+                        .HasColumnType("int");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<Guid?>("LeaseId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("LeasedUntilUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("MessageType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime?>("NextAttemptAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasMaxLength(32000)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("PublishAttempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("PublishedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("RoutingKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("CorrelationId", "OccurredAtUtc");
+
+                    b.HasIndex("PublishedAtUtc", "NextAttemptAtUtc", "LeasedUntilUtc")
+                        .HasFilter("[PublishedAtUtc] IS NULL");
+
+                    b.ToTable("OutboxMessages", t =>
+                        {
+                            t.HasCheckConstraint("CK_OutboxMessages_ContractVersion", "[ContractVersion] > 0");
+
+                            t.HasCheckConstraint("CK_OutboxMessages_PublishAttempts", "[PublishAttempts] >= 0");
+                        });
                 });
 
             modelBuilder.Entity("GymLink.Domain.Payments.Payment", b =>
@@ -2519,6 +2736,15 @@ namespace GymLink.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
                 });
 
+            modelBuilder.Entity("GymLink.Domain.Identity.PasswordResetChallenge", b =>
+                {
+                    b.HasOne("GymLink.Domain.Identity.UserProfile", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("GymLink.Domain.Identity.RefreshTokenSession", b =>
                 {
                     b.HasOne("GymLink.Domain.Identity.RefreshTokenSession", null)
@@ -2649,6 +2875,14 @@ namespace GymLink.Infrastructure.Persistence.Migrations
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("GymLink.Domain.Messaging.OutboxMessage", b =>
+                {
+                    b.HasOne("GymLink.Domain.Tenancy.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("GymLink.Domain.Payments.Payment", b =>

@@ -117,3 +117,36 @@ internal sealed class SecurityAuditRecordConfiguration : EntityConfiguration<Sec
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
+
+internal sealed class PasswordResetChallengeConfiguration
+    : EntityConfiguration<PasswordResetChallenge>
+{
+    protected override void ConfigureEntity(
+        EntityTypeBuilder<PasswordResetChallenge> builder)
+    {
+        ConfigureConcurrency(builder);
+        builder.Property(x => x.CodeHash).HasMaxLength(128).IsRequired();
+        builder.Property(x => x.CodeSalt).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.RequestIpHash).HasMaxLength(128);
+        builder.Property(x => x.CorrelationId).HasMaxLength(128).IsRequired();
+        builder.HasIndex(x => x.UserId)
+            .IsUnique()
+            .HasFilter("[ConsumedAtUtc] IS NULL AND [SupersededAtUtc] IS NULL");
+        builder.HasIndex(x => new { x.UserId, x.RequestedAtUtc });
+        builder.HasIndex(x => x.ExpiresAtUtc);
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint(
+                "CK_PasswordResetChallenges_TimeRange",
+                "[ExpiresAtUtc] > [RequestedAtUtc]");
+            table.HasCheckConstraint(
+                "CK_PasswordResetChallenges_FailedAttempts",
+                "[FailedAttempts] >= 0 AND [FailedAttempts] <= 5");
+            table.HasCheckConstraint(
+                "CK_PasswordResetChallenges_TerminalState",
+                "[ConsumedAtUtc] IS NULL OR [SupersededAtUtc] IS NULL");
+        });
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+}

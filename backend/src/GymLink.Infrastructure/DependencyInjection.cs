@@ -3,9 +3,11 @@ using GymLink.Infrastructure.Persistence;
 using GymLink.Infrastructure.Security;
 using GymLink.Infrastructure.Identity;
 using GymLink.Application.Identity;
+using GymLink.Application.Messaging;
 using GymLink.Infrastructure.Seeding;
 using GymLink.Infrastructure.Memberships;
 using GymLink.Infrastructure.Reservations;
+using GymLink.Infrastructure.Messaging;
 using GymLink.Application.Reservations;
 using GymLink.Application.Memberships;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -35,6 +37,8 @@ public static class DependencyInjection
         services.AddScoped<ICurrentUser>(provider =>
             provider.GetRequiredService<ClaimsRequestContext>());
         services.AddScoped<ITenantContext>(provider =>
+            provider.GetRequiredService<ClaimsRequestContext>());
+        services.AddScoped<IRequestMetadata>(provider =>
             provider.GetRequiredService<ClaimsRequestContext>());
         services.AddScoped<ITenantMutationScope, TenantMutationScope>();
         services.AddScoped<TenantAuditSaveChangesInterceptor>();
@@ -107,6 +111,29 @@ public static class DependencyInjection
         services.AddScoped<IAccessTokenIssuer, JwtAccessTokenIssuer>();
         services.AddScoped<IRefreshTokenSettings, RefreshTokenSettings>();
         services.AddScoped<IApplicationTransaction, ApplicationTransaction>();
+        services.AddScoped<IOutboxWriter, OutboxWriter>();
+        services.AddScoped<IPasswordResetCodeService, PasswordResetCodeService>();
+        services.AddOptions<PasswordResetOptions>()
+            .Bind(configuration.GetSection(PasswordResetOptions.SectionName))
+            .Validate(
+                options => Encoding.UTF8.GetByteCount(options.CodePepper) >= 32,
+                "PasswordReset__CodePepper must contain at least 32 UTF-8 bytes.")
+            .ValidateOnStart();
+        services.AddOptions<RabbitMqOptions>()
+            .Bind(configuration.GetSection(RabbitMqOptions.SectionName))
+            .Validate(
+                options => !options.Enabled ||
+                    (!string.IsNullOrWhiteSpace(options.Host) &&
+                     !string.IsNullOrWhiteSpace(options.Username) &&
+                     !string.IsNullOrWhiteSpace(options.Password) &&
+                     options.Port > 0 &&
+                     options.BatchSize is > 0 and <= 100 &&
+                     options.PollIntervalSeconds > 0 &&
+                     options.LeaseSeconds > 0),
+                "Enabled RabbitMQ configuration is incomplete.")
+            .ValidateOnStart();
+        services.AddSingleton<RabbitMqConnectionProvider>();
+        services.AddHostedService<OutboxPublisherService>();
         services.AddScoped<IMembershipWorkflowEventRecorder, LoggingMembershipWorkflowEventRecorder>();
         services.AddScoped<IReservationWorkflowEventRecorder, LoggingReservationWorkflowEventRecorder>();
         services.AddOptions<DevelopmentSeedOptions>()

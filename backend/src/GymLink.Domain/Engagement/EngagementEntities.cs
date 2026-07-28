@@ -27,7 +27,7 @@ public sealed class Message : TenantEntity
     public DateTime? EditedAtUtc { get; set; }
 }
 
-public sealed class Notification : AuditedEntity
+public sealed class Notification : AuditedEntity, IConcurrencyTracked
 {
     public Guid RecipientUserId { get; set; }
     public Guid? TenantId { get; set; }
@@ -38,4 +38,22 @@ public sealed class Notification : AuditedEntity
     public string? CorrelationId { get; set; }
     public string? TargetType { get; set; }
     public Guid? TargetId { get; set; }
+    public Guid? SourceMessageId { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+
+    public void MarkRead(DateTime readAtUtc)
+    {
+        EnsureUtc(readAtUtc, nameof(readAtUtc));
+        ReadAtUtc ??= readAtUtc;
+    }
+
+    private static void EnsureUtc(DateTime value, string parameterName)
+    {
+        if (value.Kind != DateTimeKind.Utc)
+        {
+            throw new DomainException(
+                "timestamp_must_be_utc",
+                $"{parameterName} must be UTC.");
+        }
+    }
 }

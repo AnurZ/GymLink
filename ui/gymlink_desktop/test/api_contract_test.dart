@@ -22,6 +22,13 @@ void main() {
     expect(problem.fieldErrors['ConcurrencyToken'], ['Reload the record.']);
   });
 
+  test('missing endpoint explains that the API must be restarted', () {
+    final problem = ApiProblem.fromResponse(http.Response('', 404));
+
+    expect(problem.code, 'endpoint_not_found');
+    expect(problem.message, contains('Ponovo pokrenite'));
+  });
+
   test('paged response parses list and totals', () {
     final page = PagedData.fromJson({
       'items': [

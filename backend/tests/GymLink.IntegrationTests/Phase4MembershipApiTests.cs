@@ -69,6 +69,7 @@ public sealed class Phase4MembershipApiTests
                 await approval.Content.ReadFromJsonAsync<MembershipRequestDto>();
             Assert.NotNull(approvedRequest);
             Assert.Equal(MembershipRequestStatus.Approved, approvedRequest.Status);
+            Assert.NotEqual(Guid.Empty, approvedRequest.GymId);
 
             var staleApproval = await client.PostAsJsonAsync(
                 $"/api/tenant/membership-requests/{sarajevoRequest.Id}/approve",
@@ -80,10 +81,30 @@ public sealed class Phase4MembershipApiTests
             var memberships = await GetMineAsync(client);
             var sarajevoMembership = Assert.Single(memberships.Items);
             Assert.Equal(MembershipStatus.Active, sarajevoMembership.Status);
+            Assert.Equal(approvedRequest.GymId, sarajevoMembership.GymId);
             Assert.Equal(["cancel"], sarajevoMembership.AllowedActions);
             Assert.Equal(
                 sarajevoMembership.StartsAtUtc.AddDays(30),
                 sarajevoMembership.EndsAtUtc);
+
+            var currentForGym = await client.GetFromJsonAsync<PagedResult<MembershipDto>>(
+                $"/api/me/memberships?gymId={sarajevoMembership.GymId}" +
+                "&currentOnly=true&page=1&pageSize=10");
+            Assert.NotNull(currentForGym);
+            Assert.Single(currentForGym.Items);
+            var covering = await client.GetFromJsonAsync<PagedResult<MembershipDto>>(
+                $"/api/me/memberships?gymId={sarajevoMembership.GymId}&status=Active" +
+                $"&coversFromUtc={Uri.EscapeDataString(sarajevoMembership.StartsAtUtc.ToString("O"))}" +
+                $"&coversToUtc={Uri.EscapeDataString(sarajevoMembership.EndsAtUtc.ToString("O"))}" +
+                "&page=1&pageSize=10");
+            Assert.NotNull(covering);
+            Assert.Single(covering.Items);
+
+            var duplicateCurrent = await client.PostAsJsonAsync(
+                "/api/membership-requests",
+                new { membershipPlanId = sarajevoPlanId });
+            Assert.Equal(HttpStatusCode.Conflict, duplicateCurrent.StatusCode);
+            Assert.Equal("current_membership_exists", await ReadProblemCodeAsync(duplicateCurrent));
 
             var mostarRequest = await CreateRequestAsync(client, mostarPlanId);
             Authorize(client, mostarAdmin);
@@ -277,6 +298,9 @@ public sealed class Phase4MembershipApiTests
             builder.UseSetting("Jwt:SigningKey", SigningKey);
             builder.UseSetting("Jwt:AccessTokenMinutes", "15");
             builder.UseSetting("Jwt:RefreshTokenDays", "30");
+            builder.UseSetting(
+                "PasswordReset:CodePepper",
+                "integration-test-reset-pepper-at-least-32-bytes");
             builder.UseSetting("Seed:Enabled", "true");
             builder.UseSetting("Seed:DefaultPassword", Password);
             builder.ConfigureAppConfiguration((_, configuration) =>
@@ -288,6 +312,8 @@ public sealed class Phase4MembershipApiTests
                     ["Jwt:SigningKey"] = SigningKey,
                     ["Jwt:AccessTokenMinutes"] = "15",
                     ["Jwt:RefreshTokenDays"] = "30",
+                    ["PasswordReset:CodePepper"] =
+                        "integration-test-reset-pepper-at-least-32-bytes",
                     ["Seed:Enabled"] = "true",
                     ["Seed:DefaultPassword"] = Password,
                 }));

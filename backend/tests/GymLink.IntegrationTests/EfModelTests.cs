@@ -1,4 +1,6 @@
 using GymLink.Domain.Common;
+using GymLink.Domain.Engagement;
+using GymLink.Domain.Messaging;
 using GymLink.Domain.Memberships;
 using GymLink.Domain.Payments;
 using GymLink.Domain.Reservations;
@@ -128,6 +130,50 @@ public sealed class EfModelTests
             context.Model.FindEntityType(typeof(TrainerAvailabilitySchedule))!.GetIndexes(),
             index => index.IsUnique &&
                 PropertyNames(index).SequenceEqual(["TenantId", "TrainerProfileId"]));
+        Assert.Contains(
+            context.Model.FindEntityType(typeof(Notification))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["SourceMessageId"]) &&
+                index.GetFilter()!.Contains("IS NOT NULL", StringComparison.Ordinal));
+        Assert.Contains(
+            context.Model.FindEntityType(typeof(PasswordResetChallenge))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["UserId"]) &&
+                index.GetFilter()!.Contains("ConsumedAtUtc", StringComparison.Ordinal) &&
+                index.GetFilter()!.Contains("SupersededAtUtc", StringComparison.Ordinal));
+        Assert.Contains(
+            context.Model.FindEntityType(typeof(InboxMessage))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["MessageId", "Consumer"]));
+    }
+
+    [Fact]
+    public void Durable_delivery_entities_have_bounded_retry_indexes_and_restrictive_user_links()
+    {
+        using var context = CreateContext(Guid.NewGuid());
+
+        var outbox = context.Model.FindEntityType(typeof(OutboxMessage))!;
+        Assert.Equal(32000, outbox.FindProperty(nameof(OutboxMessage.Payload))!.GetMaxLength());
+        Assert.Contains(
+            outbox.GetIndexes(),
+            index =>
+                PropertyNames(index).SequenceEqual(
+                    ["PublishedAtUtc", "NextAttemptAtUtc", "LeasedUntilUtc"]) &&
+                index.GetFilter()!.Contains("PublishedAtUtc", StringComparison.Ordinal));
+
+        var inbox = context.Model.FindEntityType(typeof(InboxMessage))!;
+        Assert.Contains(
+            inbox.GetIndexes(),
+            index =>
+                PropertyNames(index).SequenceEqual(["CompletedAtUtc", "NextAttemptAtUtc"]) &&
+                index.GetFilter()!.Contains("CompletedAtUtc", StringComparison.Ordinal));
+
+        var challenge = context.Model.FindEntityType(typeof(PasswordResetChallenge))!;
+        Assert.Contains(
+            challenge.GetForeignKeys(),
+            foreignKey =>
+                foreignKey.PrincipalEntityType.ClrType == typeof(UserProfile) &&
+                foreignKey.DeleteBehavior == DeleteBehavior.Restrict);
     }
 
     [Fact]

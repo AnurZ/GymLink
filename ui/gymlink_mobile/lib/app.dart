@@ -6,6 +6,7 @@ import 'core/auth.dart';
 import 'core/theme.dart';
 import 'features/auth/auth_screens.dart';
 import 'features/member/member_shell.dart';
+import 'features/notifications/notification_screen.dart';
 import 'features/trainer/trainer_shell.dart';
 
 class GymLinkMobileApp extends StatefulWidget {
@@ -31,7 +32,9 @@ class _GymLinkMobileAppState extends State<GymLinkMobileApp> {
         }
         final signingIn =
             state.matchedLocation == '/login' ||
-            state.matchedLocation == '/register';
+            state.matchedLocation == '/register' ||
+            state.matchedLocation == '/forgot-password' ||
+            state.matchedLocation == '/reset-password';
         if (!auth.isAuthenticated) return signingIn ? null : '/login';
         if (signingIn || state.matchedLocation == '/loading') return '/';
         return null;
@@ -44,6 +47,16 @@ class _GymLinkMobileAppState extends State<GymLinkMobileApp> {
           builder: (_, _) => const RegistrationScreen(),
         ),
         GoRoute(
+          path: '/forgot-password',
+          builder: (_, _) => const ForgotPasswordScreen(),
+        ),
+        GoRoute(
+          path: '/reset-password',
+          builder: (_, state) => ResetPasswordScreen(
+            initialEmail: state.uri.queryParameters['email'] ?? '',
+          ),
+        ),
+        GoRoute(
           path: '/',
           builder: (context, _) {
             final role = context.watch<AuthController>().session?.role;
@@ -53,6 +66,10 @@ class _GymLinkMobileAppState extends State<GymLinkMobileApp> {
               _ => const UnsupportedRoleScreen(),
             };
           },
+        ),
+        GoRoute(
+          path: '/notifications',
+          builder: (_, _) => const NotificationScreen(),
         ),
       ],
     );

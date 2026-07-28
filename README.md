@@ -12,6 +12,7 @@ Members and Trainers, and a Windows app for GymAdmins and CentralAdmins.
 - Flutter 3.44.8 or a compatible stable release
 - Android SDK/emulator for the mobile client
 - Visual Studio with Desktop development with C++ for the Windows client
+- Docker Desktop for the local RabbitMQ and Mailpit services
 
 The default development connection uses Windows authentication. It does not require a SQL username or password:
 
@@ -23,7 +24,8 @@ Server=localhost;Database=230038;Trusted_Connection=True;TrustServerCertificate=
 
 1. Copy `.env.example` to `.env`.
 2. Keep `ConnectionStrings__GymLink` pointed at your local SQL Server, or change only that value for your installed instance.
-3. Replace `Jwt__SigningKey` with a local value containing at least 32 UTF-8 bytes.
+3. Replace `Jwt__SigningKey` and `PasswordReset__CodePepper` with separate
+   local values containing at least 32 UTF-8 bytes each.
 4. Restore tools and packages:
 
 ```powershell
@@ -66,9 +68,40 @@ In Visual Studio:
 
 Use Swagger's **Authorize** button with `Bearer <access-token>` after calling `POST /api/auth/login`.
 
+## Start RabbitMQ, Mailpit, and the Worker
+
+The API safely retains committed workflow events in its outbox while RabbitMQ
+is unavailable. Enable publishing only when the local broker is running:
+
+```powershell
+docker run -d --name gymlink-rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:4-management
+docker run -d --name gymlink-mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit
+```
+
+Set `RabbitMq__Enabled=true` in `.env`, restart the API, and run the separate
+consumer:
+
+```powershell
+dotnet run --project backend/src/GymLink.Worker
+```
+
+RabbitMQ management is available at [http://localhost:15672](http://localhost:15672)
+and Mailpit's captured reset emails at [http://localhost:8025](http://localhost:8025).
+Only password-reset codes generate email; workflow updates remain in-app
+notifications.
+
+If another local project already owns ports `5672`/`15672`, map GymLink to
+unused host ports, for example `-p 5673:5672 -p 15673:15672`, and set
+`RabbitMq__Port=5673` for both the API and Worker.
+
 ## Start the Flutter clients
 
 The clients require an explicit API address at build/run time.
+
+Use Flutter hot reload for ordinary widget/code edits. Changes to route tables,
+providers, native plugins, or startup configuration require a hot restart. An
+already installed APK does not update itself; rebuild/reinstall it or use
+`flutter run` during development.
 
 Android emulator:
 
@@ -113,6 +146,22 @@ These credentials are intentionally public development/evaluation fixtures. They
 
 Login accepts either the username or email. Staff access tokens automatically contain the account's single active gym assignment; Member and CentralAdmin tokens do not contain tenant claims.
 
+### Add a new gym and owner
+
+1. Sign in to the Windows app as `centraladmin`.
+2. Open **Teretane** and select **Dodaj teretanu**.
+3. Enter the basic profile, select an active city, and place the location pin.
+4. Ask the owner to register a normal account.
+5. In **Korisnici i uloge**, assign that account the `GymAdmin` role for the
+   new gym.
+6. The GymAdmin signs in to the Windows app and completes working hours,
+   equipment, training types, and at least one active membership plan.
+7. CentralAdmin returns to **Teretane** and activates the gym.
+
+New gyms remain private and `PendingActivation` until these steps are complete.
+Owner-submitted registration requests are retained only as a legacy API and
+have no client entry.
+
 ## Verification
 
 ```powershell
@@ -150,9 +199,20 @@ Get-Process GymLink.Api -ErrorAction SilentlyContinue | Stop-Process
 
 Then start the selected launch profile again.
 
+### Visual Studio stops on an expected business conflict
+
+Membership and reservation rules use handled application exceptions that the
+API middleware converts to stable `409 ProblemDetails` responses. If Visual
+Studio stops on the `throw` line but the Flutter app continues after pressing
+Continue, this is a first-chance debugger pause rather than an unhandled crash.
+
+Open **Debug → Windows → Exception Settings** and disable **Break on thrown**
+for the relevant handled application exception type. Keep breaking on
+user-unhandled exceptions enabled. The Flutter clients display these conflicts
+inline and the backend remains the authoritative validator.
+
 ## Phase boundary
 
-Password reset and notifications are scheduled for Phase 7. Stripe is Phase 8,
-chat is Phase 9, recommendations are Phase 10, and statistics/PDF reports are
-Phase 11; their client navigation is intentionally absent until the matching
-backend contracts exist.
+Durable notifications and password reset are implemented in Phase 7. Stripe is
+Phase 8, chat is Phase 9, recommendations are Phase 10, and statistics/PDF
+reports are Phase 11.

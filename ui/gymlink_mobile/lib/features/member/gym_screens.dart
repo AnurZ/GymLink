@@ -334,6 +334,8 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
   List<Map<String, dynamic>> _plans = const [];
   List<Map<String, dynamic>> _trainers = const [];
   List<Map<String, dynamic>> _reviews = const [];
+  Map<String, dynamic>? _currentMembership;
+  Map<String, dynamic>? _pendingRequest;
   Object? _error;
   bool _loading = true;
 
@@ -358,11 +360,21 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
         ),
         api.list('/api/gyms/${widget.gymId}/trainers', authenticated: false),
         api.page('/api/gyms/${widget.gymId}/reviews', authenticated: false),
+        api.page(
+          '/api/me/memberships',
+          query: {'gymId': widget.gymId, 'currentOnly': true},
+        ),
+        api.page(
+          '/api/me/membership-requests',
+          query: {'gymId': widget.gymId, 'status': 0},
+        ),
       ]);
       _gym = Map<String, dynamic>.from(results[0]! as Map);
       _plans = results[1] as List<Map<String, dynamic>>;
       _trainers = results[2] as List<Map<String, dynamic>>;
       _reviews = (results[3] as PagedData).items;
+      _currentMembership = (results[4] as PagedData).items.firstOrNull;
+      _pendingRequest = (results[5] as PagedData).items.firstOrNull;
     } catch (error) {
       _error = error;
     } finally {
@@ -385,19 +397,29 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
         '/api/membership-requests',
         body: {'membershipPlanId': plan['id']},
       );
+      await _load();
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('Zahtjev je poslan.')));
       }
     } on ApiProblem catch (error) {
+      if (error.status == 409) await _load();
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_localizedMembershipError(error))),
+        );
       }
     }
   }
+
+  String _localizedMembershipError(ApiProblem error) => switch (error.code) {
+    'current_membership_exists' =>
+      'Već imate trenutno članstvo u ovoj teretani.',
+    'membership_request_already_pending' =>
+      'Za ovu teretanu već imate zahtjev koji čeka obradu.',
+    _ => error.message,
+  };
 
   Future<void> _reviewGym() async {
     final api = context.read<ApiClient>();
@@ -470,13 +492,27 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
                   ),
                 ),
                 _sectionTitle('Članarine'),
+                if (_membershipBlockerText != null)
+                  Card(
+                    color: GymLinkColors.blue.withValues(alpha: 0.08),
+                    child: ListTile(
+                      leading: const Icon(
+                        Icons.info_outline,
+                        color: GymLinkColors.blue,
+                      ),
+                      title: const Text('Status članstva'),
+                      subtitle: Text(_membershipBlockerText!),
+                    ),
+                  ),
                 ..._plans.map(
                   (plan) => Card(
                     child: ListTile(
                       title: Text(plan['name'].toString()),
                       subtitle: Text('${plan['durationDays']} dana'),
                       trailing: FilledButton(
-                        onPressed: () => _requestMembership(plan),
+                        onPressed: _membershipBlocked
+                            ? null
+                            : () => _requestMembership(plan),
                         child: Text('${plan['price']} ${plan['currency']}'),
                       ),
                     ),
@@ -498,7 +534,10 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
                         onTap: () => Navigator.push(
                           context,
                           MaterialPageRoute<void>(
-                            builder: (_) => BookingScreen(trainer: trainer),
+                            builder: (_) => BookingScreen(
+                              trainer: trainer,
+                              gymId: widget.gymId,
+                            ),
                           ),
                         ),
                       ),
@@ -529,6 +568,28 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
     ),
   );
 
+  bool get _membershipBlocked =>
+      _pendingRequest != null || _currentMembership != null;
+
+  String? get _membershipBlockerText {
+    if (_pendingRequest != null) {
+      return 'Za ovu teretanu već imate zahtjev za članstvo koji čeka obradu.';
+    }
+    final membership = _currentMembership;
+    if (membership == null) return null;
+    final status = (membership['status'] as num?)?.toInt();
+    final end = DateTime.tryParse(membership['endsAtUtc']?.toString() ?? '');
+    final until = end == null
+        ? ''
+        : ' do ${DateFormat('dd.MM.yyyy.').format(end.toLocal())}';
+    return switch (status) {
+      0 => 'Članstvo za ovu teretanu čeka evidenciju plaćanja$until.',
+      1 => 'Već imate aktivno članstvo u ovoj teretani$until.',
+      4 => 'Vaše članstvo u ovoj teretani je trenutno suspendovano$until.',
+      _ => 'Već imate važeći zapis članstva za ovu teretanu.',
+    };
+  }
+
   Widget _sectionTitle(String value) => Padding(
     padding: const EdgeInsets.only(top: 22, bottom: 10),
     child: Text(
@@ -541,8 +602,9 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
 }
 
 class BookingScreen extends StatefulWidget {
-  const BookingScreen({required this.trainer, super.key});
+  const BookingScreen({required this.trainer, required this.gymId, super.key});
   final Map<String, dynamic> trainer;
+  final String gymId;
 
   @override
   State<BookingScreen> createState() => _BookingScreenState();
@@ -555,6 +617,9 @@ class _BookingScreenState extends State<BookingScreen> {
   Map<String, dynamic>? _slot;
   DateTime _date = DateTime.now();
   bool _loading = true;
+  bool _checkingMembership = false;
+  bool _hasCoveringMembership = false;
+  String? _membershipMessage;
   Object? _error;
 
   Map<String, dynamic>? get _offering => _offeringId == null
@@ -569,11 +634,13 @@ class _BookingScreenState extends State<BookingScreen> {
     _load();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({String? preserveStartAtUtc}) async {
     setState(() {
       _loading = true;
       _error = null;
       _slot = null;
+      _hasCoveringMembership = false;
+      _membershipMessage = null;
     });
     try {
       final api = context.read<ApiClient>();
@@ -596,11 +663,19 @@ class _BookingScreenState extends State<BookingScreen> {
         },
       );
       _slots = slots.items;
+      if (preserveStartAtUtc != null) {
+        _slot = _slots
+            .where(
+              (item) => item['startsAtUtc']?.toString() == preserveStartAtUtc,
+            )
+            .firstOrNull;
+      }
     } catch (error) {
       _error = error;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+    if (_slot != null) await _checkMembershipCoverage();
   }
 
   Future<void> _pickDate() async {
@@ -617,7 +692,7 @@ class _BookingScreenState extends State<BookingScreen> {
   }
 
   Future<void> _book() async {
-    if (_offering == null || _slot == null) return;
+    if (_offering == null || _slot == null || !_hasCoveringMembership) return;
     final api = context.read<ApiClient>();
     if (!await confirmAction(
       context,
@@ -643,14 +718,74 @@ class _BookingScreenState extends State<BookingScreen> {
         Navigator.pop(context);
       }
     } on ApiProblem catch (error) {
-      if (error.status == 409) await _load();
+      if (error.status == 409) {
+        final selectedStart = _slot?['startsAtUtc']?.toString();
+        await _load(preserveStartAtUtc: selectedStart);
+      }
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+        ).showSnackBar(SnackBar(content: Text(_localizedBookingError(error))));
       }
     }
   }
+
+  Future<void> _selectSlot(Map<String, dynamic> slot) async {
+    setState(() {
+      _slot = slot;
+      _hasCoveringMembership = false;
+      _membershipMessage = null;
+    });
+    await _checkMembershipCoverage();
+  }
+
+  Future<void> _checkMembershipCoverage() async {
+    final offering = _offering;
+    final slot = _slot;
+    if (offering == null || slot == null) return;
+    final startsAt = DateTime.parse(slot['startsAtUtc'].toString()).toUtc();
+    final duration = (offering['durationMinutes'] as num).toInt();
+    final endsAt = startsAt.add(Duration(minutes: duration));
+    setState(() => _checkingMembership = true);
+    try {
+      final result = await context.read<ApiClient>().page(
+        '/api/me/memberships',
+        query: {
+          'gymId': widget.gymId,
+          'status': 1,
+          'coversFromUtc': startsAt.toIso8601String(),
+          'coversToUtc': endsAt.toIso8601String(),
+        },
+      );
+      if (!mounted || _slot != slot) return;
+      setState(() {
+        _hasCoveringMembership = result.items.isNotEmpty;
+        _membershipMessage = _hasCoveringMembership
+            ? null
+            : 'Za ovaj termin je potrebno aktivno članstvo koje pokriva cijeli termin.';
+      });
+    } on ApiProblem catch (error) {
+      if (!mounted || _slot != slot) return;
+      setState(() {
+        _hasCoveringMembership = false;
+        _membershipMessage = error.message;
+      });
+    } finally {
+      if (mounted && _slot == slot) {
+        setState(() => _checkingMembership = false);
+      }
+    }
+  }
+
+  String _localizedBookingError(ApiProblem error) => switch (error.code) {
+    'covering_membership_required' =>
+      'Za ovaj termin je potrebno aktivno članstvo koje pokriva cijeli termin.',
+    'reservation_overlap' =>
+      'Već imate rezervaciju koja se preklapa sa izabranim terminom.',
+    'reservation_conflict' =>
+      'Termin je u međuvremenu zauzet. Odaberite drugi termin.',
+    _ => error.message,
+  };
 
   @override
   Widget build(BuildContext context) => PageFrame(
@@ -725,7 +860,7 @@ class _BookingScreenState extends State<BookingScreen> {
                             color: selected ? Colors.white : null,
                           ),
                           label: Text(DateFormat('HH:mm').format(time)),
-                          onSelected: (_) => setState(() => _slot = slot),
+                          onSelected: (_) => _selectSlot(slot),
                         );
                       }).toList(),
                     ),
@@ -746,8 +881,28 @@ class _BookingScreenState extends State<BookingScreen> {
             ),
           ),
           const SizedBox(height: 16),
+          if (_checkingMembership)
+            const LinearProgressIndicator()
+          else if (_membershipMessage != null)
+            Card(
+              color: GymLinkColors.warning.withValues(alpha: 0.12),
+              child: ListTile(
+                leading: const Icon(Icons.card_membership_outlined),
+                title: const Text('Članstvo je obavezno'),
+                subtitle: Text(_membershipMessage!),
+                trailing: TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Nazad na članarine'),
+                ),
+              ),
+            ),
+          if (_checkingMembership || _membershipMessage != null)
+            const SizedBox(height: 12),
           FilledButton(
-            onPressed: _slot == null ? null : _book,
+            onPressed:
+                _slot == null || _checkingMembership || !_hasCoveringMembership
+                ? null
+                : _book,
             child: const Text('Potvrdi rezervaciju'),
           ),
         ],

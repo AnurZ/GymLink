@@ -42,12 +42,19 @@ final class ApiProblem implements Exception {
     }
     return ApiProblem(
       status: response.statusCode,
-      code: json['title']?.toString() ?? 'request_failed',
+      code:
+          json['title']?.toString() ??
+          (response.statusCode == 404
+              ? 'endpoint_not_found'
+              : 'request_failed'),
       message:
           json['detail']?.toString() ??
-          (response.statusCode >= 500
-              ? 'Server trenutno nije dostupan.'
-              : 'Zahtjev nije moguće izvršiti.'),
+          switch (response.statusCode) {
+            404 =>
+              'API endpoint nije pronađen. Ponovo pokrenite najnoviju verziju API-ja.',
+            >= 500 => 'Server trenutno nije dostupan.',
+            _ => 'Zahtjev nije moguće izvršiti.',
+          },
       fieldErrors: errors,
     );
   }
@@ -97,16 +104,18 @@ List<Map<String, dynamic>> mapListFromJson(Object? json) {
 }
 
 final class ApiClient {
-  ApiClient(this._tokens, {http.Client? httpClient})
-    : _http = httpClient ?? http.Client();
+  ApiClient(this._tokens, {http.Client? httpClient, String? baseUrlOverride})
+    : _http = httpClient ?? http.Client(),
+      _baseUrl = baseUrlOverride ?? baseUrl;
 
   static const baseUrl = String.fromEnvironment('API_BASE_URL');
   final AuthTokenSource _tokens;
   final http.Client _http;
+  final String _baseUrl;
   Future<bool>? _refreshing;
 
   Uri _uri(String path, [Map<String, Object?> query = const {}]) {
-    if (baseUrl.isEmpty) {
+    if (_baseUrl.isEmpty) {
       throw StateError(
         'API_BASE_URL nije postavljen. Pokrenite aplikaciju uz --dart-define.',
       );
@@ -119,7 +128,7 @@ final class ApiClient {
       }
     }
     return Uri.parse(
-      '${baseUrl.replaceFirst(RegExp(r'/$'), '')}$normalized',
+      '${_baseUrl.replaceFirst(RegExp(r'/$'), '')}$normalized',
     ).replace(queryParameters: values.isEmpty ? null : values);
   }
 

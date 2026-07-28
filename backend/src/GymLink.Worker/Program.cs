@@ -1,8 +1,39 @@
-namespace GymLink.Worker;
+using DotNetEnv;
+using GymLink.Application.Abstractions;
+using GymLink.Application.Identity;
+using GymLink.Infrastructure.Identity;
+using GymLink.Infrastructure.Messaging;
+using GymLink.Infrastructure.Persistence;
+using GymLink.Worker;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
-internal static class Program
-{
-    private static void Main()
-    {
-    }
-}
+Env.TraversePath().NoClobber().Load();
+var builder = Host.CreateApplicationBuilder(args);
+var connectionString = builder.Configuration.GetConnectionString("GymLink")
+    ?? throw new InvalidOperationException(
+        "Environment variable ConnectionStrings__GymLink is required.");
+
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<ITenantContext, WorkerTenantContext>();
+builder.Services.AddDbContext<GymLinkDbContext>(
+    options => options.UseSqlServer(connectionString));
+builder.Services.AddOptions<RabbitMqOptions>()
+    .Bind(builder.Configuration.GetSection(RabbitMqOptions.SectionName));
+builder.Services.AddOptions<PasswordResetOptions>()
+    .Bind(builder.Configuration.GetSection(PasswordResetOptions.SectionName))
+    .Validate(
+        options => System.Text.Encoding.UTF8.GetByteCount(options.CodePepper) >= 32,
+        "PasswordReset__CodePepper must contain at least 32 UTF-8 bytes.")
+    .ValidateOnStart();
+builder.Services.AddOptions<SmtpOptions>()
+    .Bind(builder.Configuration.GetSection(SmtpOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddSingleton<IPasswordResetCodeService, PasswordResetCodeService>();
+builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
+builder.Services.AddHostedService<RabbitMqWorkerService>();
+
+await builder.Build().RunAsync();

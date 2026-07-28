@@ -9,6 +9,21 @@ public interface IAuthenticationService
     Task LogoutAllAsync(CancellationToken cancellationToken);
 }
 
+public interface IPasswordResetService
+{
+    Task RequestAsync(ForgotPasswordRequest request, CancellationToken cancellationToken);
+    Task ConfirmAsync(ResetPasswordRequest request, CancellationToken cancellationToken);
+}
+
+public interface IPasswordResetCodeService
+{
+    string DeriveCode(Guid challengeId);
+    string CreateSalt();
+    string HashCode(string code, string salt);
+    bool Verify(string code, string salt, string expectedHash);
+    string? HashSensitive(string? value);
+}
+
 public interface IProfileService
 {
     Task<UserProfileDto> GetAsync(CancellationToken cancellationToken);
@@ -31,6 +46,9 @@ public interface IIdentityAccountManager
         Guid userId,
         string currentPassword,
         string newPassword);
+    Task<IdentityOperationResult> ResetPasswordAsync(
+        Guid userId,
+        string newPassword);
     Task<IdentityOperationResult> UpdateEmailAsync(
         Guid userId,
         string email,
@@ -47,6 +65,9 @@ public interface IIdentityAccountManager
         int take,
         CancellationToken cancellationToken);
     Task<int> CountInRoleAsync(string role, CancellationToken cancellationToken);
+    Task<IReadOnlyList<Guid>> GetUserIdsInRoleAsync(
+        string role,
+        CancellationToken cancellationToken);
 }
 
 public interface IAccessTokenIssuer

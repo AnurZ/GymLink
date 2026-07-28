@@ -13,6 +13,7 @@ public sealed record MembershipRequestSearchRequest : PagedRequest
 {
     public MembershipRequestStatus? Status { get; init; }
     public Guid? MembershipPlanId { get; init; }
+    public Guid? GymId { get; init; }
 
     [MaxLength(160)]
     public string? Member { get; init; }
@@ -25,6 +26,10 @@ public sealed record MembershipSearchRequest : PagedRequest
 {
     public MembershipStatus? Status { get; init; }
     public Guid? MembershipPlanId { get; init; }
+    public Guid? GymId { get; init; }
+    public bool CurrentOnly { get; init; }
+    public DateTime? CoversFromUtc { get; init; }
+    public DateTime? CoversToUtc { get; init; }
 
     [MaxLength(160)]
     public string? Member { get; init; }
@@ -48,6 +53,7 @@ public sealed record ReasonedConcurrencyRequest : ConcurrencyRequest
 public sealed record MembershipRequestDto(
     Guid Id,
     Guid MembershipPlanId,
+    Guid GymId,
     string MemberDisplayName,
     string GymName,
     string PlanName,
@@ -64,6 +70,7 @@ public sealed record MembershipDto(
     Guid Id,
     Guid MembershipPlanId,
     Guid MembershipRequestId,
+    Guid GymId,
     string MemberDisplayName,
     string GymName,
     string PlanName,
@@ -86,7 +93,9 @@ public sealed record MembershipWorkflowEventIntent(
 
 public interface IMembershipWorkflowEventRecorder
 {
-    void Record(MembershipWorkflowEventIntent intent);
+    Task RecordAsync(
+        MembershipWorkflowEventIntent intent,
+        CancellationToken cancellationToken);
 }
 
 public interface IMembershipRequestService

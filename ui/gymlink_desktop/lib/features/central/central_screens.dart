@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:intl/intl.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
@@ -30,13 +32,13 @@ class _CentralDashboardScreenState extends State<CentralDashboardScreen> {
     try {
       final api = context.read<ApiClient>();
       final results = await Future.wait([
-        api.page('/api/admin/gym-registration-requests'),
-        api.page('/api/admin/gym-registration-requests', query: {'status': 1}),
+        api.page('/api/admin/gyms'),
+        api.page('/api/admin/gyms', query: {'status': 0}),
         api.page('/api/admin/users'),
       ]);
       _counts = {
-        'Sve registracije': results[0].totalCount,
-        'Čeka pregled': results[1].totalCount,
+        'Sve teretane': results[0].totalCount,
+        'Čeka aktivaciju': results[1].totalCount,
         'Korisnički računi': results[2].totalCount,
       };
       _recent = results[0].items.take(8).toList();
@@ -85,7 +87,7 @@ class _CentralDashboardScreenState extends State<CentralDashboardScreen> {
         ),
         const SizedBox(height: 26),
         Text(
-          'Nedavne registracije',
+          'Nedavno dodane teretane',
           style: Theme.of(
             context,
           ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
@@ -95,18 +97,23 @@ class _CentralDashboardScreenState extends State<CentralDashboardScreen> {
           child: _recent.isEmpty
               ? const SizedBox(
                   height: 150,
-                  child: EmptyState('Nema registracija teretana.'),
+                  child: EmptyState('Nema dodanih teretana.'),
                 )
               : Column(
                   children: _recent
                       .map(
                         (item) => ListTile(
-                          title: Text(item['gymName'].toString()),
+                          title: Text(item['name'].toString()),
                           subtitle: Text(
-                            '${item['cityName']} · ${_date(item['submittedAtUtc'])}',
+                            '${item['cityName']} · ${_date(item['createdAtUtc'])}',
                           ),
                           trailing: StatusPill(
-                            enumLabel(item['status'], _registrationStatuses),
+                            enumLabel(item['status'], const [
+                              'PendingActivation',
+                              'Active',
+                              'Inactive',
+                              'Suspended',
+                            ]),
                           ),
                         ),
                       )
@@ -310,6 +317,428 @@ class _RegistrationManagementScreenState
   );
 }
 
+class GymManagementScreen extends StatefulWidget {
+  const GymManagementScreen({super.key});
+
+  @override
+  State<GymManagementScreen> createState() => _GymManagementScreenState();
+}
+
+class _GymManagementScreenState extends State<GymManagementScreen> {
+  final _search = TextEditingController();
+  List<Map<String, dynamic>> _items = const [];
+  List<Map<String, dynamic>> _cities = const [];
+  bool _loading = true;
+  Object? _error;
+  int? _status;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final api = context.read<ApiClient>();
+      final results = await Future.wait([
+        api.page(
+          '/api/admin/gyms',
+          query: {'query': _search.text.trim(), 'status': _status},
+        ),
+        api.get('/api/reference-data/lookups', authenticated: false),
+      ]);
+      _items = (results[0] as PagedData).items;
+      final lookups = Map<String, dynamic>.from(results[1]! as Map);
+      _cities = (lookups['cities'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .where((item) => item['isActive'] == true)
+          .toList();
+      _error = null;
+    } catch (error) {
+      _error = error;
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _create() async {
+    final created = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _GymCreateDialog(cities: _cities),
+    );
+    if (created == true) {
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Teretana je kreirana i čeka dodjelu administratora.',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _tenantAction(Map<String, dynamic> item, String action) async {
+    final api = context.read<ApiClient>();
+    final reason = action == 'activate'
+        ? null
+        : await _reasonDialog(context, 'Razlog promjene statusa');
+    if (action != 'activate' && reason == null) return;
+    try {
+      await api.post(
+        '/api/admin/tenants/${item['tenantId']}/$action',
+        body: reason == null ? null : {'reason': reason},
+      );
+      await _load();
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      Row(
+        children: [
+          SizedBox(
+            width: 350,
+            child: TextField(
+              controller: _search,
+              onSubmitted: (_) => _load(),
+              decoration: const InputDecoration(
+                hintText: 'Naziv, adresa ili grad...',
+                prefixIcon: Icon(Icons.search),
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          SizedBox(
+            width: 230,
+            child: DropdownButtonFormField<int?>(
+              initialValue: _status,
+              decoration: const InputDecoration(labelText: 'Status'),
+              items: const [
+                DropdownMenuItem(value: null, child: Text('Svi statusi')),
+                DropdownMenuItem(value: 0, child: Text('Čeka aktivaciju')),
+                DropdownMenuItem(value: 1, child: Text('Aktivna')),
+                DropdownMenuItem(value: 2, child: Text('Neaktivna')),
+                DropdownMenuItem(value: 3, child: Text('Suspendovana')),
+              ],
+              onChanged: (value) {
+                _status = value;
+                _load();
+              },
+            ),
+          ),
+          const Spacer(),
+          FilledButton.icon(
+            onPressed: _cities.isEmpty ? null : _create,
+            icon: const Icon(Icons.add),
+            label: const Text('Dodaj teretanu'),
+          ),
+        ],
+      ),
+      const SizedBox(height: 16),
+      Expanded(
+        child: AsyncPanel(
+          loading: _loading,
+          error: _error,
+          onRetry: _load,
+          child: _items.isEmpty
+              ? const EmptyState('Nema teretana za zadanu pretragu.')
+              : Card(
+                  child: ListView.separated(
+                    itemCount: _items.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (_, index) {
+                      final item = _items[index];
+                      final status = (item['status'] as num?)?.toInt() ?? 0;
+                      const labels = [
+                        'PendingActivation',
+                        'Active',
+                        'Inactive',
+                        'Suspended',
+                      ];
+                      return ListTile(
+                        leading: const CircleAvatar(
+                          child: Icon(Icons.fitness_center),
+                        ),
+                        title: Text(item['name'].toString()),
+                        subtitle: Text(
+                          '${item['address']}, ${item['cityName']}\n'
+                          'Aktivni administratori: ${item['activeGymAdminCount']}',
+                        ),
+                        isThreeLine: true,
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            StatusPill(labels[status.clamp(0, 3)]),
+                            PopupMenuButton<String>(
+                              tooltip: 'Promijeni status',
+                              onSelected: (action) =>
+                                  _tenantAction(item, action),
+                              itemBuilder: (_) => [
+                                if (status == 0)
+                                  const PopupMenuItem(
+                                    value: 'activate',
+                                    child: Text('Aktiviraj'),
+                                  ),
+                                if (status == 1) ...[
+                                  const PopupMenuItem(
+                                    value: 'suspend',
+                                    child: Text('Suspenduj'),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'deactivate',
+                                    child: Text('Deaktiviraj'),
+                                  ),
+                                ],
+                                if (status == 2 || status == 3)
+                                  const PopupMenuItem(
+                                    value: 'reactivate',
+                                    child: Text('Ponovo aktiviraj'),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+        ),
+      ),
+    ],
+  );
+}
+
+class _GymCreateDialog extends StatefulWidget {
+  const _GymCreateDialog({required this.cities});
+
+  final List<Map<String, dynamic>> cities;
+
+  @override
+  State<_GymCreateDialog> createState() => _GymCreateDialogState();
+}
+
+class _GymCreateDialogState extends State<_GymCreateDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _name = TextEditingController();
+  final _description = TextEditingController();
+  final _address = TextEditingController();
+  final _phone = TextEditingController();
+  Map<String, dynamic>? _city;
+  LatLng? _location;
+  bool _busy = false;
+  String? _error;
+  Map<String, List<String>> _fieldErrors = const {};
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _description.dispose();
+    _address.dispose();
+    _phone.dispose();
+    super.dispose();
+  }
+
+  String? _serverError(String field) {
+    for (final entry in _fieldErrors.entries) {
+      if (entry.key.toLowerCase() == field.toLowerCase()) {
+        return entry.value.join('\n');
+      }
+    }
+    return null;
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_location == null) {
+      setState(() => _error = 'Označite lokaciju teretane na mapi.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+      _fieldErrors = const {};
+    });
+    try {
+      await context.read<ApiClient>().post(
+        '/api/admin/gyms',
+        body: {
+          'name': _name.text.trim(),
+          'description': _description.text.trim(),
+          'address': _address.text.trim(),
+          'cityId': _city!['id'],
+          'latitude': _location!.latitude,
+          'longitude': _location!.longitude,
+          'phoneNumber': _phone.text.trim().isEmpty ? null : _phone.text.trim(),
+        },
+      );
+      if (mounted) Navigator.pop(context, true);
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = error.message;
+          _fieldErrors = error.fieldErrors;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Dodaj teretanu'),
+    content: SizedBox(
+      width: 720,
+      height: 680,
+      child: Form(
+        key: _formKey,
+        child: ListView(
+          children: [
+            TextFormField(
+              controller: _name,
+              decoration: InputDecoration(
+                labelText: 'Naziv',
+                errorText: _serverError('Name'),
+              ),
+              validator: (value) => (value?.trim().length ?? 0) < 2
+                  ? 'Unesite naziv teretane.'
+                  : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _description,
+              minLines: 3,
+              maxLines: 5,
+              decoration: InputDecoration(
+                labelText: 'Opis',
+                errorText: _serverError('Description'),
+              ),
+              validator: (value) => (value?.trim().length ?? 0) < 10
+                  ? 'Opis mora imati najmanje 10 znakova.'
+                  : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _address,
+              decoration: InputDecoration(
+                labelText: 'Adresa',
+                prefixIcon: const Icon(Icons.location_on_outlined),
+                errorText: _serverError('Address'),
+              ),
+              validator: (value) =>
+                  (value?.trim().length ?? 0) < 3 ? 'Unesite adresu.' : null,
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<Map<String, dynamic>>(
+              initialValue: _city,
+              decoration: InputDecoration(
+                labelText: 'Grad',
+                errorText: _serverError('CityId'),
+              ),
+              items: widget.cities
+                  .map(
+                    (city) => DropdownMenuItem(
+                      value: city,
+                      child: Text('${city['name']} · ${city['countryName']}'),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) => setState(() => _city = value),
+              validator: (value) => value == null ? 'Izaberite grad.' : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _phone,
+              decoration: InputDecoration(
+                labelText: 'Telefon (opcionalno)',
+                prefixIcon: const Icon(Icons.phone_outlined),
+                errorText: _serverError('PhoneNumber'),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text('Kliknite na mapu da označite tačnu lokaciju.'),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 270,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: FlutterMap(
+                  options: MapOptions(
+                    initialCenter: const LatLng(43.8563, 18.4131),
+                    initialZoom: 12,
+                    onTap: (_, point) => setState(() => _location = point),
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate:
+                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName: 'ba.gymlink.gymlink_desktop',
+                    ),
+                    if (_location != null)
+                      MarkerLayer(
+                        markers: [
+                          Marker(
+                            point: _location!,
+                            width: 52,
+                            height: 52,
+                            child: const Icon(
+                              Icons.location_pin,
+                              color: Colors.red,
+                              size: 48,
+                            ),
+                          ),
+                        ],
+                      ),
+                    const RichAttributionWidget(
+                      attributions: [
+                        TextSourceAttribution('OpenStreetMap contributors'),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(_error!, style: const TextStyle(color: Colors.red)),
+            ],
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: _busy ? null : () => Navigator.pop(context, false),
+        child: const Text('Odustani'),
+      ),
+      FilledButton(
+        onPressed: _busy ? null : _submit,
+        child: Text(_busy ? 'Kreiranje...' : 'Kreiraj'),
+      ),
+    ],
+  );
+}
+
 class UserManagementScreen extends StatefulWidget {
   const UserManagementScreen({super.key});
   @override
@@ -346,18 +775,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   Future<void> _assign() async {
     try {
       final api = context.read<ApiClient>();
-      final registrations = await api.page(
-        '/api/admin/gym-registration-requests',
-        query: {'status': 2},
-      );
+      final gyms = await api.page('/api/admin/gyms', query: {'pageSize': 100});
       if (!mounted) return;
       final result = await showDialog<Map<String, Object?>>(
         context: context,
-        builder: (_) => _RoleDialog(
-          tenants: registrations.items
-              .where((item) => item['createdTenantId'] != null)
-              .toList(),
-        ),
+        builder: (_) => _RoleDialog(tenants: gyms.items),
       );
       if (result == null) return;
       await api.post('/api/admin/users/roles/assign', body: result);
@@ -765,7 +1187,7 @@ class _RoleDialogState extends State<_RoleDialog> {
                     .map(
                       (item) => DropdownMenuItem(
                         value: item,
-                        child: Text(item['gymName'].toString()),
+                        child: Text(item['name'].toString()),
                       ),
                     )
                     .toList(),
@@ -791,7 +1213,7 @@ class _RoleDialogState extends State<_RoleDialog> {
               : () => Navigator.pop(context, {
                   'identifier': _email.text.trim(),
                   'role': _role,
-                  'tenantId': needsTenant ? _tenant!['createdTenantId'] : null,
+                  'tenantId': needsTenant ? _tenant!['tenantId'] : null,
                   'reason': _reason.text.trim(),
                 }),
           child: const Text('Dodijeli'),

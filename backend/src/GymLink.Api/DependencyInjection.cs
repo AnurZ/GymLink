@@ -4,6 +4,7 @@ using GymLink.Domain.Common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.OpenApi;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 
 namespace GymLink.Api;
 
@@ -16,6 +17,44 @@ public static class DependencyInjection
         IConfiguration configuration)
     {
         services.AddProblemDetails();
+        services.AddRateLimiter(options =>
+        {
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            options.OnRejected = async (context, cancellationToken) =>
+            {
+                context.HttpContext.Response.ContentType = "application/problem+json";
+                await context.HttpContext.Response.WriteAsJsonAsync(
+                    new ProblemDetails
+                    {
+                        Status = StatusCodes.Status429TooManyRequests,
+                        Title = "rate_limit_exceeded",
+                        Detail = "Too many requests. Try again later.",
+                    },
+                    cancellationToken);
+            };
+            options.AddPolicy(
+                "PasswordResetRequest",
+                context => RateLimitPartition.GetFixedWindowLimiter(
+                    context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 5,
+                        Window = TimeSpan.FromMinutes(15),
+                        QueueLimit = 0,
+                        AutoReplenishment = true,
+                    }));
+            options.AddPolicy(
+                "PasswordResetConfirm",
+                context => RateLimitPartition.GetFixedWindowLimiter(
+                    context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = 10,
+                        Window = TimeSpan.FromMinutes(15),
+                        QueueLimit = 0,
+                        AutoReplenishment = true,
+                    }));
+        });
         services.AddControllers()
             .AddJsonOptions(options =>
                 options.JsonSerializerOptions.UnmappedMemberHandling =
@@ -109,6 +148,7 @@ public static class DependencyInjection
         }
 
         app.UseCors(CorsPolicy);
+        app.UseRateLimiter();
         app.UseAuthentication();
         app.UseAuthorization();
         return app;

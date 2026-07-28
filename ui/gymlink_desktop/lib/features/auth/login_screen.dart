@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
@@ -146,6 +147,12 @@ class _LoginScreenState extends State<LoginScreen> {
                       FilledButton(
                         onPressed: _busy ? null : _submit,
                         child: Text(_busy ? 'Prijava...' : 'Prijavi se'),
+                      ),
+                      TextButton(
+                        onPressed: _busy
+                            ? null
+                            : () => context.go('/forgot-password'),
+                        child: const Text('Zaboravili ste lozinku?'),
                       ),
                     ],
                   ),

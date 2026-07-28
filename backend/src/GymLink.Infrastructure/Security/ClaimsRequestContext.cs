@@ -5,7 +5,8 @@ using Microsoft.AspNetCore.Http;
 
 namespace GymLink.Infrastructure.Security;
 
-internal sealed class ClaimsRequestContext(IHttpContextAccessor accessor) : ICurrentUser, ITenantContext
+internal sealed class ClaimsRequestContext(IHttpContextAccessor accessor)
+    : ICurrentUser, ITenantContext, IRequestMetadata
 {
     private ClaimsPrincipal? Principal => accessor.HttpContext?.User;
 
@@ -25,4 +26,10 @@ internal sealed class ClaimsRequestContext(IHttpContextAccessor accessor) : ICur
     public string? TenantRole => Principal?.FindFirstValue("tenant_role");
 
     public bool HasTenant => TenantId.HasValue;
+
+    public string CorrelationId =>
+        accessor.HttpContext?.TraceIdentifier ?? Guid.NewGuid().ToString("N");
+
+    public string? RemoteIpAddress =>
+        accessor.HttpContext?.Connection.RemoteIpAddress?.ToString();
 }

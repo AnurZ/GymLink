@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../profile/profile_screen.dart';
+import '../notifications/notification_screen.dart';
 import 'gym_screens.dart';
 import 'membership_screen.dart';
 import 'reservation_screen.dart';
@@ -28,6 +29,7 @@ class _MemberShellState extends State<MemberShell> {
         const ['Teretane', 'Članstva', 'Rezervacije', 'Profil'][_index],
         style: const TextStyle(fontWeight: FontWeight.w800),
       ),
+      actions: const [NotificationBell()],
     ),
     body: IndexedStack(index: _index, children: _pages),
     bottomNavigationBar: NavigationBar(

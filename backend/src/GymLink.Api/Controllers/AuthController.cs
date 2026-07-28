@@ -1,12 +1,15 @@
 using GymLink.Application.Identity;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace GymLink.Api.Controllers;
 
 [ApiController]
 [Route("api/auth")]
-public sealed class AuthController(IAuthenticationService authenticationService) : ControllerBase
+public sealed class AuthController(
+    IAuthenticationService authenticationService,
+    IPasswordResetService passwordResetService) : ControllerBase
 {
     [AllowAnonymous]
     [HttpPost("register")]
@@ -46,6 +49,28 @@ public sealed class AuthController(IAuthenticationService authenticationService)
     public async Task<IActionResult> LogoutAll(CancellationToken cancellationToken)
     {
         await authenticationService.LogoutAllAsync(cancellationToken);
+        return NoContent();
+    }
+
+    [AllowAnonymous]
+    [EnableRateLimiting("PasswordResetRequest")]
+    [HttpPost("forgot-password")]
+    public async Task<ActionResult<PasswordResetAcceptedDto>> ForgotPassword(
+        ForgotPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        await passwordResetService.RequestAsync(request, cancellationToken);
+        return Accepted(new PasswordResetAcceptedDto());
+    }
+
+    [AllowAnonymous]
+    [EnableRateLimiting("PasswordResetConfirm")]
+    [HttpPost("reset-password")]
+    public async Task<IActionResult> ResetPassword(
+        ResetPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        await passwordResetService.ConfirmAsync(request, cancellationToken);
         return NoContent();
     }
 }
