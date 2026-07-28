@@ -69,9 +69,27 @@ internal sealed class GymRegistrationService(
         CancellationToken cancellationToken)
     {
         var userId = RequireUser();
-        return await Project()
-            .Where(x => x.ApplicantUserId == userId)
-            .OrderByDescending(x => x.SubmittedAtUtc)
+        return await (
+                from request in dbContext.GymRegistrationRequests.AsNoTracking()
+                join city in dbContext.Cities.AsNoTracking() on request.CityId equals city.Id
+                where request.ApplicantUserId == userId
+                orderby request.SubmittedAtUtc descending, request.Id
+                select new GymRegistrationDto(
+                    request.Id,
+                    request.ApplicantUserId,
+                    request.ProposedGymName,
+                    request.ProposedDescription,
+                    request.ProposedAddress,
+                    request.CityId,
+                    city.Name,
+                    request.Latitude,
+                    request.Longitude,
+                    request.PhoneNumber,
+                    request.Status,
+                    request.SubmittedAtUtc,
+                    request.DecidedAtUtc,
+                    request.DecisionReason,
+                    request.CreatedTenantId))
             .ToListAsync(cancellationToken);
     }
 
@@ -79,14 +97,33 @@ internal sealed class GymRegistrationService(
         RegistrationSearchRequest request,
         CancellationToken cancellationToken)
     {
-        var query = Project();
+        var query =
+            from registration in dbContext.GymRegistrationRequests.AsNoTracking()
+            join city in dbContext.Cities.AsNoTracking() on registration.CityId equals city.Id
+            select new { Registration = registration, CityName = city.Name };
         if (request.Status.HasValue)
         {
-            query = query.Where(x => x.Status == request.Status.Value);
+            query = query.Where(x => x.Registration.Status == request.Status.Value);
         }
 
-        return query.OrderByDescending(x => x.SubmittedAtUtc)
-            .ThenBy(x => x.Id)
+        return query.OrderByDescending(x => x.Registration.SubmittedAtUtc)
+            .ThenBy(x => x.Registration.Id)
+            .Select(x => new GymRegistrationDto(
+                x.Registration.Id,
+                x.Registration.ApplicantUserId,
+                x.Registration.ProposedGymName,
+                x.Registration.ProposedDescription,
+                x.Registration.ProposedAddress,
+                x.Registration.CityId,
+                x.CityName,
+                x.Registration.Latitude,
+                x.Registration.Longitude,
+                x.Registration.PhoneNumber,
+                x.Registration.Status,
+                x.Registration.SubmittedAtUtc,
+                x.Registration.DecidedAtUtc,
+                x.Registration.DecisionReason,
+                x.Registration.CreatedTenantId))
             .ToPagedResultAsync(request, cancellationToken);
     }
 
@@ -176,31 +213,36 @@ internal sealed class GymRegistrationService(
             return await GetProjectedAsync(entity.Id, token);
         }, cancellationToken);
 
-    private IQueryable<GymRegistrationDto> Project() =>
-        from request in dbContext.GymRegistrationRequests.AsNoTracking()
-        join city in dbContext.Cities.AsNoTracking() on request.CityId equals city.Id
-        select new GymRegistrationDto(
-            request.Id,
-            request.ApplicantUserId,
-            request.ProposedGymName,
-            request.ProposedDescription,
-            request.ProposedAddress,
-            request.CityId,
-            city.Name,
-            request.Latitude,
-            request.Longitude,
-            request.PhoneNumber,
-            request.Status,
-            request.SubmittedAtUtc,
-            request.DecidedAtUtc,
-            request.DecisionReason,
-            request.CreatedTenantId);
-
     private async Task<GymRegistrationDto> GetProjectedAsync(
         Guid id,
-        CancellationToken cancellationToken) =>
-        await Project().SingleOrDefaultAsync(x => x.Id == id, cancellationToken)
-        ?? throw new NotFoundException("registration_not_found", "The registration request was not found.");
+        CancellationToken cancellationToken)
+    {
+        var result = await (
+                from request in dbContext.GymRegistrationRequests.AsNoTracking()
+                join city in dbContext.Cities.AsNoTracking() on request.CityId equals city.Id
+                where request.Id == id
+                select new GymRegistrationDto(
+                    request.Id,
+                    request.ApplicantUserId,
+                    request.ProposedGymName,
+                    request.ProposedDescription,
+                    request.ProposedAddress,
+                    request.CityId,
+                    city.Name,
+                    request.Latitude,
+                    request.Longitude,
+                    request.PhoneNumber,
+                    request.Status,
+                    request.SubmittedAtUtc,
+                    request.DecidedAtUtc,
+                    request.DecisionReason,
+                    request.CreatedTenantId))
+            .SingleOrDefaultAsync(cancellationToken);
+        return result
+            ?? throw new NotFoundException(
+                "registration_not_found",
+                "The registration request was not found.");
+    }
 
     private async Task<GymRegistrationRequest> GetSubmittedEntityAsync(
         Guid id,

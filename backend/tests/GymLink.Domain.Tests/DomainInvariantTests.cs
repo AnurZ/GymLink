@@ -1,4 +1,5 @@
 using GymLink.Domain.Common;
+using GymLink.Domain.Catalog;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Memberships;
 using GymLink.Domain.Payments;
@@ -51,11 +52,12 @@ public sealed class DomainInvariantTests
     [Fact]
     public void Reservation_copies_authoritative_duration_and_price()
     {
-        var ids = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
+        var ids = Enumerable.Range(0, 6).Select(_ => Guid.NewGuid()).ToArray();
         var start = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
 
         var reservation = new AppointmentReservation(
-            ids[0], ids[1], ids[2], ids[3], start, 90, 42.50m, "BAM");
+            ids[0], ids[1], ids[2], ids[3], ids[4], ids[5],
+            start, 90, 42.50m, "BAM");
 
         Assert.Equal(start.AddMinutes(90), reservation.EndsAtUtc);
         Assert.Equal(90, reservation.DurationMinutes);
@@ -67,9 +69,84 @@ public sealed class DomainInvariantTests
     [InlineData(6)]
     public void Review_rating_is_bounded(int rating)
     {
-        var review = new Review();
+        Assert.Throws<DomainException>(() =>
+            new Review(
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                rating,
+                null));
+        Assert.Throws<DomainException>(() =>
+            new GymReview(
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                rating,
+                null));
+    }
 
-        Assert.Throws<DomainException>(() => review.SetRating(rating));
+    [Fact]
+    public void Availability_slot_enforces_one_to_one_state_transitions()
+    {
+        var start = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var slot = new TrainerAvailabilitySlot(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            start,
+            start.AddHours(1));
+
+        slot.Reserve();
+        Assert.Equal(AvailabilitySlotStatus.Reserved, slot.Status);
+        Assert.Equal(1, slot.Capacity);
+        Assert.Throws<DomainException>(() =>
+            slot.Update(start.AddHours(1), start.AddHours(2), AvailabilitySlotStatus.Available));
+        Assert.Throws<DomainException>(slot.Cancel);
+
+        slot.Release();
+        slot.Cancel();
+        Assert.Equal(AvailabilitySlotStatus.Cancelled, slot.Status);
+    }
+
+    [Fact]
+    public void Reservation_enforces_transition_times_and_staff_reason()
+    {
+        var ids = Enumerable.Range(0, 8).Select(_ => Guid.NewGuid()).ToArray();
+        var start = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var reservation = new AppointmentReservation(
+            ids[0], ids[1], ids[2], ids[3], ids[4], ids[5],
+            start, 60, 25, "BAM");
+
+        reservation.Confirm(ids[6], start.AddHours(-1));
+        Assert.Throws<DomainException>(() => reservation.Complete(ids[6], start.AddMinutes(30)));
+        reservation.Complete(ids[6], start.AddHours(1));
+        Assert.Equal(ReservationStatus.Completed, reservation.Status);
+        Assert.Equal(ids[6], reservation.CompletedByUserId);
+
+        var cancellation = new AppointmentReservation(
+            ids[0], ids[1], ids[2], ids[3], ids[4], ids[5],
+            start, 60, 25, "BAM");
+        Assert.Throws<DomainException>(() =>
+            cancellation.CancelByStaff(ids[7], start, " "));
+        cancellation.CancelByMember(ids[1], start.AddMinutes(-1));
+        Assert.Equal(ReservationStatus.Cancelled, cancellation.Status);
+    }
+
+    [Fact]
+    public void Rating_aggregates_use_all_reviews()
+    {
+        var gym = new Gym();
+        var trainer = new TrainerProfile();
+
+        gym.AddReview(4);
+        gym.AddReview(5);
+        trainer.AddReview(2);
+        trainer.AddReview(5);
+
+        Assert.Equal(4.50m, gym.AverageRating);
+        Assert.Equal(2, gym.ReviewCount);
+        Assert.Equal(3.50m, trainer.AverageRating);
+        Assert.Equal(2, trainer.ReviewCount);
     }
 
     [Fact]

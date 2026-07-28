@@ -18,7 +18,9 @@ public sealed record GymListItemDto(
     string City,
     string? PrimaryImageUrl,
     decimal? StartingMembershipPrice,
-    string? Currency);
+    string? Currency,
+    decimal AverageRating,
+    int ReviewCount);
 
 public sealed record GymDetailsDto(
     Guid Id,
@@ -30,6 +32,8 @@ public sealed record GymDetailsDto(
     decimal Latitude,
     decimal Longitude,
     string? PhoneNumber,
+    decimal AverageRating,
+    int ReviewCount,
     IReadOnlyList<string> Equipment,
     IReadOnlyList<string> TrainingTypes,
     IReadOnlyList<string> ImageUrls);

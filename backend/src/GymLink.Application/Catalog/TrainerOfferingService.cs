@@ -1,5 +1,6 @@
 using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
+using GymLink.Domain.Common;
 using GymLink.Domain.Trainers;
 using Microsoft.EntityFrameworkCore;
 
@@ -7,9 +8,10 @@ namespace GymLink.Application.Catalog;
 
 public sealed class TrainerOfferingService(
     IApplicationDbContext dbContext,
-    ITenantContext tenantContext) : ITrainerOfferingService
+    ITenantContext tenantContext,
+    ICurrentUser currentUser) : ITrainerOfferingService
 {
-    public Task<PagedResult<TrainerOfferingDto>> SearchAsync(
+    public async Task<PagedResult<TrainerOfferingDto>> SearchAsync(
         CatalogSearchRequest request,
         CancellationToken cancellationToken)
     {
@@ -20,6 +22,11 @@ public sealed class TrainerOfferingService(
             join trainingType in dbContext.TrainingTypes.AsNoTracking()
                 on offering.TrainingTypeId equals trainingType.Id
             select new { Offering = offering, TrainingType = trainingType.Name };
+        if (tenantContext.TenantRole == RoleNames.Trainer)
+        {
+            var ownTrainerId = await OwnTrainerIdAsync(cancellationToken);
+            query = query.Where(x => x.Offering.TrainerProfileId == ownTrainerId);
+        }
         if (!string.IsNullOrWhiteSpace(request.Query))
         {
             var pattern = $"%{request.Query.Trim()}%";
@@ -33,7 +40,7 @@ public sealed class TrainerOfferingService(
             query = query.Where(x => x.Offering.IsActive == request.IsActive.Value);
         }
 
-        return query.OrderBy(x => x.Offering.Name).ThenBy(x => x.Offering.Id)
+        return await query.OrderBy(x => x.Offering.Name).ThenBy(x => x.Offering.Id)
             .Select(x => new TrainerOfferingDto(
                 x.Offering.Id,
                 x.Offering.TrainerProfileId,
@@ -87,15 +94,18 @@ public sealed class TrainerOfferingService(
         CancellationToken cancellationToken)
     {
         var tenantId = RequireTenant();
-        await ValidateParentsAsync(
+        var trainerId = await ResolveWritableTrainerIdAsync(
             request.TrainerProfileId,
+            cancellationToken);
+        await ValidateParentsAsync(
+            trainerId,
             request.TrainingTypeId,
             cancellationToken);
         var name = request.Name.Trim();
-        await EnsureUniqueAsync(request.TrainerProfileId, name, null, cancellationToken);
+        await EnsureUniqueAsync(trainerId, name, null, cancellationToken);
         var entity = new TrainerServiceOffering(
             tenantId,
-            request.TrainerProfileId,
+            trainerId,
             request.TrainingTypeId,
             name,
             request.DurationMinutes,
@@ -117,6 +127,7 @@ public sealed class TrainerOfferingService(
                 x => x.Id == id,
                 cancellationToken)
             ?? throw new NotFoundException("trainer_offering_not_found", "The trainer offering was not found.");
+        await EnsureOfferingOwnershipAsync(entity, cancellationToken);
         if (entity.TrainerProfileId != request.TrainerProfileId)
         {
             throw new ConflictException(
@@ -148,6 +159,7 @@ public sealed class TrainerOfferingService(
                 x => x.Id == id,
                 cancellationToken)
             ?? throw new NotFoundException("trainer_offering_not_found", "The trainer offering was not found.");
+        await EnsureOfferingOwnershipAsync(entity, cancellationToken);
         entity.IsActive = false;
         await dbContext.SaveChangesAsync(cancellationToken);
     }
@@ -198,6 +210,56 @@ public sealed class TrainerOfferingService(
     private Guid RequireTenant() =>
         tenantContext.TenantId
         ?? throw new InvalidOperationException("A selected tenant is required.");
+
+    private async Task<Guid> ResolveWritableTrainerIdAsync(
+        Guid requestedTrainerId,
+        CancellationToken cancellationToken)
+    {
+        if (tenantContext.TenantRole != RoleNames.Trainer)
+        {
+            return requestedTrainerId;
+        }
+
+        var ownTrainerId = await OwnTrainerIdAsync(cancellationToken);
+        if (requestedTrainerId != Guid.Empty && requestedTrainerId != ownTrainerId)
+        {
+            throw new AuthorizationDeniedException(
+                "trainer_ownership_required",
+                "Trainers may manage only their own offerings.");
+        }
+
+        return ownTrainerId;
+    }
+
+    private async Task EnsureOfferingOwnershipAsync(
+        TrainerServiceOffering offering,
+        CancellationToken cancellationToken)
+    {
+        if (tenantContext.TenantRole == RoleNames.Trainer &&
+            offering.TrainerProfileId != await OwnTrainerIdAsync(cancellationToken))
+        {
+            throw new NotFoundException(
+                "trainer_offering_not_found",
+                "The trainer offering was not found.");
+        }
+    }
+
+    private async Task<Guid> OwnTrainerIdAsync(CancellationToken cancellationToken)
+    {
+        var userId = currentUser.UserId ??
+            throw new AuthorizationDeniedException(
+                "current_user_required",
+                "A current user is required.");
+        return await dbContext.TrainerProfiles.AsNoTracking()
+                .Where(x => x.UserId == userId && x.IsActive)
+                .Select(x => x.Id)
+                .SingleOrDefaultAsync(cancellationToken) is var trainerId &&
+            trainerId != Guid.Empty
+                ? trainerId
+                : throw new AuthorizationDeniedException(
+                    "trainer_profile_required",
+                    "An active trainer profile is required.");
+    }
 
     private static TrainerOfferingDto ToDto(
         TrainerServiceOffering offering,

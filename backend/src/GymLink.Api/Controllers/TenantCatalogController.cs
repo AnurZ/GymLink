@@ -11,8 +11,7 @@ namespace GymLink.Api.Controllers;
 public sealed class TenantCatalogController(
     IGymCatalogService gyms,
     ITrainerCatalogService trainers,
-    IMembershipPlanService plans,
-    ITrainerOfferingService offerings) : ControllerBase
+    IMembershipPlanService plans) : ControllerBase
 {
     [HttpGet("gym")]
     public async Task<IActionResult> GetGym(CancellationToken cancellationToken) =>
@@ -82,32 +81,4 @@ public sealed class TenantCatalogController(
         return NoContent();
     }
 
-    [HttpGet("trainer-offerings")]
-    public async Task<IActionResult> SearchOfferings(
-        [FromQuery] CatalogSearchRequest request,
-        CancellationToken cancellationToken) =>
-        Ok(await offerings.SearchAsync(request, cancellationToken));
-
-    [HttpPost("trainer-offerings")]
-    public async Task<IActionResult> CreateOffering(
-        CreateTrainerOfferingRequest request,
-        CancellationToken cancellationToken)
-    {
-        var result = await offerings.CreateAsync(request, cancellationToken);
-        return Created($"/api/tenant/trainer-offerings/{result.Id}", result);
-    }
-
-    [HttpPut("trainer-offerings/{id:guid}")]
-    public async Task<IActionResult> UpdateOffering(
-        Guid id,
-        UpdateTrainerOfferingRequest request,
-        CancellationToken cancellationToken) =>
-        Ok(await offerings.UpdateAsync(id, request, cancellationToken));
-
-    [HttpDelete("trainer-offerings/{id:guid}")]
-    public async Task<IActionResult> DeactivateOffering(Guid id, CancellationToken cancellationToken)
-    {
-        await offerings.DeactivateAsync(id, cancellationToken);
-        return NoContent();
-    }
 }

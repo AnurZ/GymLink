@@ -100,6 +100,17 @@ public sealed class EfModelTests
             context.Model.FindEntityType(typeof(Review))!.GetIndexes(),
             index => index.IsUnique &&
                 PropertyNames(index).SequenceEqual(["ReservationId"]));
+        Assert.Contains(
+            context.Model.FindEntityType(typeof(GymReview))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(
+                    ["TenantId", "GymId", "ReviewerUserId"]));
+        Assert.Contains(
+            context.Model.FindEntityType(typeof(AppointmentReservation))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["AvailabilitySlotId"]) &&
+                index.GetFilter()!.Contains("Pending", StringComparison.Ordinal) &&
+                index.GetFilter()!.Contains("Confirmed", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -95,9 +95,20 @@ internal sealed class AppointmentReservationConfiguration : EntityConfiguration<
         builder.Property(x => x.CancellationReason).HasMaxLength(1000);
         builder.HasIndex(x => new { x.TenantId, x.TrainerProfileId, x.StartsAtUtc, x.EndsAtUtc });
         builder.HasIndex(x => new { x.TenantId, x.MemberUserId, x.StartsAtUtc, x.EndsAtUtc });
+        builder.HasIndex(x => x.AvailabilitySlotId)
+            .IsUnique()
+            .HasFilter("[Status] IN (N'Pending', N'Confirmed')");
+        builder.ToTable(table =>
+            table.HasCheckConstraint(
+                "CK_AppointmentReservations_TimeRange",
+                "[EndsAtUtc] > [StartsAtUtc]"));
         builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.MemberUserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.CancelledByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.ConfirmedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.CompletedByUserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<TrainerProfile>().WithMany().HasForeignKey(x => x.TrainerProfileId)
             .OnDelete(DeleteBehavior.Restrict);
@@ -120,12 +131,32 @@ internal sealed class ReviewConfiguration : EntityConfiguration<Review>
     {
         ConfigureTenant(builder);
         builder.Property(x => x.Comment).HasMaxLength(2000);
+        builder.ToTable(table =>
+            table.HasCheckConstraint("CK_Reviews_Rating", "[Rating] >= 1 AND [Rating] <= 5"));
         builder.HasIndex(x => x.ReservationId).IsUnique();
         builder.HasOne<AppointmentReservation>().WithOne().HasForeignKey<Review>(x => x.ReservationId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.ReviewerUserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<TrainerProfile>().WithMany().HasForeignKey(x => x.TrainerProfileId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+internal sealed class GymReviewConfiguration : EntityConfiguration<GymReview>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<GymReview> builder)
+    {
+        ConfigureTenant(builder);
+        builder.Property(x => x.Comment).HasMaxLength(2000);
+        builder.HasIndex(x => new { x.TenantId, x.GymId, x.ReviewerUserId }).IsUnique();
+        builder.ToTable(table =>
+            table.HasCheckConstraint("CK_GymReviews_Rating", "[Rating] >= 1 AND [Rating] <= 5"));
+        builder.HasOne<Gym>().WithMany().HasForeignKey(x => x.GymId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.ReviewerUserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId)
             .OnDelete(DeleteBehavior.Restrict);

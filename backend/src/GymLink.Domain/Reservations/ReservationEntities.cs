@@ -12,6 +12,8 @@ public sealed class AppointmentReservation : TenantEntity, IConcurrencyTracked
         Guid memberUserId,
         Guid trainerProfileId,
         Guid trainerServiceOfferingId,
+        Guid availabilitySlotId,
+        Guid membershipId,
         DateTime startsAtUtc,
         int durationMinutes,
         decimal price,
@@ -31,6 +33,8 @@ public sealed class AppointmentReservation : TenantEntity, IConcurrencyTracked
         MemberUserId = memberUserId;
         TrainerProfileId = trainerProfileId;
         TrainerServiceOfferingId = trainerServiceOfferingId;
+        AvailabilitySlotId = availabilitySlotId;
+        MembershipId = membershipId;
         StartsAtUtc = startsAtUtc;
         EndsAtUtc = startsAtUtc.AddMinutes(durationMinutes);
         DurationMinutes = durationMinutes;
@@ -41,30 +45,149 @@ public sealed class AppointmentReservation : TenantEntity, IConcurrencyTracked
     public Guid MemberUserId { get; set; }
     public Guid TrainerProfileId { get; set; }
     public Guid TrainerServiceOfferingId { get; set; }
-    public Guid? AvailabilitySlotId { get; set; }
-    public Guid? MembershipId { get; set; }
+    public Guid AvailabilitySlotId { get; private set; }
+    public Guid MembershipId { get; private set; }
     public DateTime StartsAtUtc { get; private set; }
     public DateTime EndsAtUtc { get; private set; }
     public int DurationMinutes { get; private set; }
     public decimal Price { get; private set; }
     public string Currency { get; private set; } = string.Empty;
-    public ReservationStatus Status { get; set; } = ReservationStatus.Pending;
+    public ReservationStatus Status { get; private set; } = ReservationStatus.Pending;
     public Guid? PaymentId { get; set; }
-    public Guid? CancelledByUserId { get; set; }
-    public DateTime? CancelledAtUtc { get; set; }
-    public string? CancellationReason { get; set; }
+    public Guid? ConfirmedByUserId { get; private set; }
+    public DateTime? ConfirmedAtUtc { get; private set; }
+    public Guid? CompletedByUserId { get; private set; }
+    public DateTime? CompletedAtUtc { get; private set; }
+    public Guid? CancelledByUserId { get; private set; }
+    public DateTime? CancelledAtUtc { get; private set; }
+    public string? CancellationReason { get; private set; }
     public byte[] RowVersion { get; set; } = [];
+
+    public void Confirm(Guid actorUserId, DateTime occurredAtUtc)
+    {
+        EnsureUtc(occurredAtUtc);
+        EnsureState(ReservationStatus.Pending);
+        Status = ReservationStatus.Confirmed;
+        ConfirmedByUserId = actorUserId;
+        ConfirmedAtUtc = occurredAtUtc;
+    }
+
+    public void Complete(Guid actorUserId, DateTime occurredAtUtc)
+    {
+        EnsureUtc(occurredAtUtc);
+        EnsureState(ReservationStatus.Confirmed);
+        if (occurredAtUtc < EndsAtUtc)
+        {
+            throw new DomainException(
+                "appointment_not_ended",
+                "The reservation cannot be completed before its end time.");
+        }
+
+        Status = ReservationStatus.Completed;
+        CompletedByUserId = actorUserId;
+        CompletedAtUtc = occurredAtUtc;
+    }
+
+    public void CancelByMember(Guid memberUserId, DateTime occurredAtUtc)
+    {
+        EnsureUtc(occurredAtUtc);
+        EnsureCancellable();
+        if (memberUserId != MemberUserId)
+        {
+            throw new DomainException(
+                "reservation_owner_required",
+                "Only the owning Member can cancel this reservation.");
+        }
+
+        if (occurredAtUtc >= StartsAtUtc)
+        {
+            throw new DomainException(
+                "cancellation_window_closed",
+                "Member cancellation is allowed only before the appointment starts.");
+        }
+
+        Cancel(memberUserId, occurredAtUtc, null);
+    }
+
+    public void CancelByStaff(Guid actorUserId, DateTime occurredAtUtc, string reason)
+    {
+        EnsureUtc(occurredAtUtc);
+        EnsureCancellable();
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            throw new DomainException(
+                "cancellation_reason_required",
+                "A cancellation reason is required.");
+        }
+
+        Cancel(actorUserId, occurredAtUtc, reason.Trim());
+    }
+
+    private void Cancel(Guid actorUserId, DateTime occurredAtUtc, string? reason)
+    {
+        Status = ReservationStatus.Cancelled;
+        CancelledByUserId = actorUserId;
+        CancelledAtUtc = occurredAtUtc;
+        CancellationReason = reason;
+    }
+
+    private void EnsureCancellable()
+    {
+        if (Status is not ReservationStatus.Pending and not ReservationStatus.Confirmed)
+        {
+            throw InvalidTransition();
+        }
+    }
+
+    private void EnsureState(ReservationStatus expected)
+    {
+        if (Status != expected)
+        {
+            throw InvalidTransition();
+        }
+    }
+
+    private static void EnsureUtc(DateTime value)
+    {
+        if (value.Kind != DateTimeKind.Utc)
+        {
+            throw new DomainException("utc_required", "Reservation times must use UTC.");
+        }
+    }
+
+    private static DomainException InvalidTransition() =>
+        new(
+            "invalid_state_transition",
+            "The reservation cannot perform that transition from its current state.");
 }
 
 public sealed class Review : TenantEntity
 {
-    public Guid ReservationId { get; set; }
-    public Guid ReviewerUserId { get; set; }
-    public Guid TrainerProfileId { get; set; }
-    public int Rating { get; private set; }
-    public string? Comment { get; set; }
+    private Review() { }
 
-    public void SetRating(int rating)
+    public Review(
+        Guid tenantId,
+        Guid reservationId,
+        Guid reviewerUserId,
+        Guid trainerProfileId,
+        int rating,
+        string? comment)
+    {
+        TenantId = tenantId;
+        ReservationId = reservationId;
+        ReviewerUserId = reviewerUserId;
+        TrainerProfileId = trainerProfileId;
+        SetRating(rating);
+        Comment = NormalizeComment(comment);
+    }
+
+    public Guid ReservationId { get; private set; }
+    public Guid ReviewerUserId { get; private set; }
+    public Guid TrainerProfileId { get; private set; }
+    public int Rating { get; private set; }
+    public string? Comment { get; private set; }
+
+    private void SetRating(int rating)
     {
         if (rating is < 1 or > 5)
         {
@@ -73,4 +196,36 @@ public sealed class Review : TenantEntity
 
         Rating = rating;
     }
+
+    private static string? NormalizeComment(string? comment) =>
+        string.IsNullOrWhiteSpace(comment) ? null : comment.Trim();
+}
+
+public sealed class GymReview : TenantEntity
+{
+    private GymReview() { }
+
+    public GymReview(
+        Guid tenantId,
+        Guid gymId,
+        Guid reviewerUserId,
+        int rating,
+        string? comment)
+    {
+        if (rating is < 1 or > 5)
+        {
+            throw new DomainException("invalid_rating", "Rating must be between 1 and 5.");
+        }
+
+        TenantId = tenantId;
+        GymId = gymId;
+        ReviewerUserId = reviewerUserId;
+        Rating = rating;
+        Comment = string.IsNullOrWhiteSpace(comment) ? null : comment.Trim();
+    }
+
+    public Guid GymId { get; private set; }
+    public Guid ReviewerUserId { get; private set; }
+    public int Rating { get; private set; }
+    public string? Comment { get; private set; }
 }

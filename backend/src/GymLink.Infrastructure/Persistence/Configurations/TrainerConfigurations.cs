@@ -16,6 +16,13 @@ internal sealed class TrainerProfileConfiguration : EntityConfiguration<TrainerP
         builder.Property(x => x.Biography).HasMaxLength(4000).IsRequired();
         builder.Property(x => x.Credentials).HasMaxLength(2000);
         builder.Property(x => x.AverageRating).HasPrecision(3, 2);
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint(
+                "CK_TrainerProfiles_AverageRating",
+                "[AverageRating] >= 0 AND [AverageRating] <= 5");
+            table.HasCheckConstraint("CK_TrainerProfiles_ReviewCount", "[ReviewCount] >= 0");
+        });
         builder.HasIndex(x => new { x.TenantId, x.UserId }).IsUnique();
         builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.UserId)
             .OnDelete(DeleteBehavior.Restrict);
@@ -73,6 +80,13 @@ internal sealed class TrainerAvailabilitySlotConfiguration : EntityConfiguration
         ConfigureConcurrency(builder);
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
         builder.HasIndex(x => new { x.TenantId, x.TrainerProfileId, x.StartsAtUtc, x.EndsAtUtc });
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint("CK_TrainerAvailabilitySlots_Capacity", "[Capacity] = 1");
+            table.HasCheckConstraint(
+                "CK_TrainerAvailabilitySlots_TimeRange",
+                "[EndsAtUtc] > [StartsAtUtc]");
+        });
         builder.HasOne<TrainerProfile>().WithMany().HasForeignKey(x => x.TrainerProfileId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId)

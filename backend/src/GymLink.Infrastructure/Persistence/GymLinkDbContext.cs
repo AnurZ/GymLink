@@ -51,6 +51,7 @@ public sealed class GymLinkDbContext(
     public DbSet<Membership> Memberships => Set<Membership>();
     public DbSet<AppointmentReservation> AppointmentReservations => Set<AppointmentReservation>();
     public DbSet<Review> Reviews => Set<Review>();
+    public DbSet<GymReview> GymReviews => Set<GymReview>();
     public DbSet<Conversation> Conversations => Set<Conversation>();
     public DbSet<ConversationParticipant> ConversationParticipants => Set<ConversationParticipant>();
     public DbSet<Message> Messages => Set<Message>();

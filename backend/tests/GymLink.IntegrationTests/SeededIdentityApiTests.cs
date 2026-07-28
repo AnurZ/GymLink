@@ -81,6 +81,10 @@ public sealed class SeededIdentityApiTests
             Assert.Equal(
                 HttpStatusCode.OK,
                 (await client.GetAsync("/api/admin/users")).StatusCode);
+            Assert.Equal(
+                HttpStatusCode.OK,
+                (await client.GetAsync(
+                    "/api/admin/gym-registration-requests?page=1&pageSize=10")).StatusCode);
 
             client.DefaultRequestHeaders.Authorization = null;
             using var catalog = JsonDocument.Parse(

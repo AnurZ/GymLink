@@ -3,6 +3,7 @@ using AutoMapper;
 using GymLink.Application;
 using GymLink.Application.Catalog;
 using GymLink.Application.ReferenceData;
+using GymLink.Application.Reservations;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace GymLink.Application.Tests;
@@ -46,6 +47,21 @@ public sealed class MappingAndValidationTests
 
         Assert.Contains(errors, x => x.MemberNames.Contains(nameof(request.DurationDays)));
         Assert.Contains(errors, x => x.MemberNames.Contains(nameof(request.Currency)));
+    }
+
+    [Fact]
+    public void Review_contract_rejects_out_of_range_rating_and_oversized_comment()
+    {
+        var request = new CreateReviewRequest
+        {
+            Rating = 6,
+            Comment = new string('x', 2001),
+        };
+
+        var errors = Validate(request);
+
+        Assert.Contains(errors, x => x.MemberNames.Contains(nameof(request.Rating)));
+        Assert.Contains(errors, x => x.MemberNames.Contains(nameof(request.Comment)));
     }
 
     private static List<ValidationResult> Validate(object value)

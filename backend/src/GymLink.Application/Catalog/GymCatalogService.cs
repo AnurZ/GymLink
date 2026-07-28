@@ -54,7 +54,9 @@ public sealed class GymCatalogService(
                     .Where(plan => plan.GymId == x.Gym.Id && plan.IsActive)
                     .OrderBy(plan => plan.Price)
                     .Select(plan => plan.Currency)
-                    .FirstOrDefault()))
+                    .FirstOrDefault(),
+                x.Gym.AverageRating,
+                x.Gym.ReviewCount))
             .ToPagedResultAsync(request, cancellationToken);
     }
 
@@ -217,6 +219,8 @@ public sealed class GymCatalogService(
             core.Gym.Latitude,
             core.Gym.Longitude,
             core.Gym.PhoneNumber,
+            core.Gym.AverageRating,
+            core.Gym.ReviewCount,
             equipment,
             trainingTypes,
             imageUrls);

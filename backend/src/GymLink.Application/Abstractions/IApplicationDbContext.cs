@@ -1,5 +1,6 @@
 using GymLink.Domain.Catalog;
 using GymLink.Domain.Memberships;
+using GymLink.Domain.Reservations;
 using GymLink.Domain.ReferenceData;
 using GymLink.Domain.Identity;
 using GymLink.Domain.Tenancy;
@@ -28,9 +29,13 @@ public interface IApplicationDbContext
     DbSet<TrainerProfile> TrainerProfiles { get; }
     DbSet<TrainerTrainingType> TrainerTrainingTypes { get; }
     DbSet<TrainerServiceOffering> TrainerServiceOfferings { get; }
+    DbSet<TrainerAvailabilitySlot> TrainerAvailabilitySlots { get; }
     DbSet<MembershipPlan> MembershipPlans { get; }
     DbSet<MembershipRequest> MembershipRequests { get; }
     DbSet<Membership> Memberships { get; }
+    DbSet<AppointmentReservation> AppointmentReservations { get; }
+    DbSet<Review> Reviews { get; }
+    DbSet<GymReview> GymReviews { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -9,9 +9,23 @@ public sealed class TrainerProfile : TenantEntity, IConcurrencyTracked
     public string Biography { get; set; } = string.Empty;
     public string? Credentials { get; set; }
     public bool IsActive { get; set; } = true;
-    public decimal AverageRating { get; set; }
-    public int ReviewCount { get; set; }
+    public decimal AverageRating { get; private set; }
+    public int ReviewCount { get; private set; }
     public byte[] RowVersion { get; set; } = [];
+
+    public void AddReview(int rating)
+    {
+        if (rating is < 1 or > 5)
+        {
+            throw new DomainException("invalid_rating", "Rating must be between 1 and 5.");
+        }
+
+        AverageRating = decimal.Round(
+            ((AverageRating * ReviewCount) + rating) / (ReviewCount + 1),
+            2,
+            MidpointRounding.AwayFromZero);
+        ReviewCount++;
+    }
 }
 
 public sealed class TrainerTrainingType : TenantEntity
@@ -113,7 +127,78 @@ public sealed class TrainerAvailabilitySlot : TenantEntity, IConcurrencyTracked
     public Guid TrainerProfileId { get; set; }
     public DateTime StartsAtUtc { get; private set; }
     public DateTime EndsAtUtc { get; private set; }
-    public int Capacity { get; set; } = 1;
-    public AvailabilitySlotStatus Status { get; set; } = AvailabilitySlotStatus.Available;
+    public int Capacity { get; private set; } = 1;
+    public AvailabilitySlotStatus Status { get; private set; } = AvailabilitySlotStatus.Available;
     public byte[] RowVersion { get; set; } = [];
+
+    public void Update(
+        DateTime startsAtUtc,
+        DateTime endsAtUtc,
+        AvailabilitySlotStatus status)
+    {
+        EnsureMutable();
+        EnsureTimeRange(startsAtUtc, endsAtUtc);
+        if (status is not AvailabilitySlotStatus.Available and
+            not AvailabilitySlotStatus.Unavailable)
+        {
+            throw InvalidTransition();
+        }
+
+        StartsAtUtc = startsAtUtc;
+        EndsAtUtc = endsAtUtc;
+        Status = status;
+    }
+
+    public void Reserve()
+    {
+        if (Status != AvailabilitySlotStatus.Available)
+        {
+            throw InvalidTransition();
+        }
+
+        Status = AvailabilitySlotStatus.Reserved;
+    }
+
+    public void Release()
+    {
+        if (Status != AvailabilitySlotStatus.Reserved)
+        {
+            throw InvalidTransition();
+        }
+
+        Status = AvailabilitySlotStatus.Available;
+    }
+
+    public void Cancel()
+    {
+        EnsureMutable();
+        Status = AvailabilitySlotStatus.Cancelled;
+    }
+
+    private void EnsureMutable()
+    {
+        if (Status is not AvailabilitySlotStatus.Available and
+            not AvailabilitySlotStatus.Unavailable)
+        {
+            throw InvalidTransition();
+        }
+    }
+
+    private static void EnsureTimeRange(DateTime startsAtUtc, DateTime endsAtUtc)
+    {
+        if (startsAtUtc.Kind != DateTimeKind.Utc || endsAtUtc.Kind != DateTimeKind.Utc)
+        {
+            throw new DomainException("utc_required", "Availability times must use UTC.");
+        }
+
+        if (endsAtUtc <= startsAtUtc)
+        {
+            throw new DomainException("invalid_time_range", "End time must be after start time.");
+        }
+    }
+
+    private static DomainException InvalidTransition() =>
+        new(
+            "invalid_state_transition",
+            "The availability slot cannot perform that transition from its current state.");
 }

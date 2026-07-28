@@ -5,6 +5,8 @@ using GymLink.Infrastructure.Identity;
 using GymLink.Application.Identity;
 using GymLink.Infrastructure.Seeding;
 using GymLink.Infrastructure.Memberships;
+using GymLink.Infrastructure.Reservations;
+using GymLink.Application.Reservations;
 using GymLink.Application.Memberships;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
@@ -106,6 +108,7 @@ public static class DependencyInjection
         services.AddScoped<IRefreshTokenSettings, RefreshTokenSettings>();
         services.AddScoped<IApplicationTransaction, ApplicationTransaction>();
         services.AddScoped<IMembershipWorkflowEventRecorder, LoggingMembershipWorkflowEventRecorder>();
+        services.AddScoped<IReservationWorkflowEventRecorder, LoggingReservationWorkflowEventRecorder>();
         services.AddOptions<DevelopmentSeedOptions>()
             .Bind(configuration.GetSection(DevelopmentSeedOptions.SectionName));
         services.AddScoped<DevelopmentDataSeeder>();

@@ -18,6 +18,12 @@ internal sealed class GymConfiguration : EntityConfiguration<Gym>
         builder.Property(x => x.PhoneNumber).HasMaxLength(32);
         builder.Property(x => x.Latitude).HasPrecision(9, 6);
         builder.Property(x => x.Longitude).HasPrecision(9, 6);
+        builder.Property(x => x.AverageRating).HasPrecision(3, 2);
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint("CK_Gyms_AverageRating", "[AverageRating] >= 0 AND [AverageRating] <= 5");
+            table.HasCheckConstraint("CK_Gyms_ReviewCount", "[ReviewCount] >= 0");
+        });
         builder.HasIndex(x => x.TenantId).IsUnique();
         builder.HasIndex(x => new { x.CityId, x.Name });
         builder.HasOne<Tenant>().WithOne().HasForeignKey<Gym>(x => x.TenantId)
