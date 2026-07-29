@@ -6,6 +6,7 @@ using GymLink.Application.Catalog;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.Memberships;
+using GymLink.Application.Payments;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Infrastructure.Persistence;
@@ -13,6 +14,8 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace GymLink.IntegrationTests;
 
@@ -20,6 +23,60 @@ public sealed class Phase4MembershipApiTests
 {
     private const string Password = "Test123!";
     private const string SigningKey = "integration-test-signing-key-at-least-32-bytes";
+
+    [Fact]
+    public async Task Selecting_membership_plan_immediately_opens_checkout_and_payment_activates()
+    {
+        var databaseName = $"GymLink_ImmediateMembership_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+        try
+        {
+            await using (var migration = CreateContext(connectionString))
+            {
+                await migration.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            var member = await LoginAsync(client, "member");
+            var planId = await FindPlanAsync(client, "GymLink Sarajevo");
+            Authorize(client, member);
+
+            var checkout = await client.PostAsJsonAsync(
+                "/api/payments/memberships/checkout",
+                new { membershipPlanId = planId });
+            checkout.EnsureSuccessStatusCode();
+            var checkoutResult =
+                await checkout.Content.ReadFromJsonAsync<CheckoutSessionDto>();
+            Assert.NotNull(checkoutResult);
+            Assert.StartsWith("https://checkout.test/", checkoutResult.CheckoutUrl);
+            var gateway = Assert.IsType<TestPaymentGateway>(
+                factory.Services.GetRequiredService<IPaymentGateway>());
+            Assert.Equal(member.User.Email, gateway.LastCheckoutRequest?.CustomerEmail);
+
+            var pending = Assert.Single((await GetMineAsync(client)).Items);
+            Assert.Equal(MembershipStatus.PendingPayment, pending.Status);
+            var providerSessionId = $"cs_test_{checkoutResult.PaymentId:N}";
+            (await client.PostAsync(
+                "/api/webhooks/stripe",
+                new StringContent(providerSessionId))).EnsureSuccessStatusCode();
+            var returnPage = await client.GetAsync(
+                $"/payments/stripe/success?session_id={providerSessionId}");
+            returnPage.EnsureSuccessStatusCode();
+            Assert.Contains(
+                "Vrati se u GymLink",
+                await returnPage.Content.ReadAsStringAsync());
+
+            var active = Assert.Single((await GetMineAsync(client)).Items);
+            Assert.Equal(MembershipStatus.Active, active.Status);
+            Assert.True(active.IsPaid);
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
 
     [Fact]
     public async Task Gym_admin_promotes_only_an_active_tenant_member_to_trainer()
@@ -48,6 +105,7 @@ public sealed class Phase4MembershipApiTests
                 $"/api/tenant/membership-requests/{request.Id}/approve",
                 new { concurrencyToken = request.ConcurrencyToken });
             approval.EnsureSuccessStatusCode();
+            await PayPendingMembershipAsync(client, member);
 
             Authorize(client, mostarAdmin);
             var isolatedCandidates =
@@ -179,14 +237,17 @@ public sealed class Phase4MembershipApiTests
             Assert.Equal(HttpStatusCode.Conflict, staleApproval.StatusCode);
             Assert.Equal("concurrency_conflict", await ReadProblemCodeAsync(staleApproval));
 
-            Authorize(client, member);
+            await PayPendingMembershipAsync(client, member);
             var memberships = await GetMineAsync(client);
             var sarajevoMembership = Assert.Single(memberships.Items);
             Assert.Equal(MembershipStatus.Active, sarajevoMembership.Status);
             Assert.Equal(approvedRequest.GymId, sarajevoMembership.GymId);
-            Assert.Equal(["cancel"], sarajevoMembership.AllowedActions);
+            Assert.Empty(sarajevoMembership.AllowedActions);
+            Assert.True(sarajevoMembership.IsPaid);
+            Assert.NotNull(sarajevoMembership.StartsAtUtc);
+            Assert.NotNull(sarajevoMembership.EndsAtUtc);
             Assert.Equal(
-                sarajevoMembership.StartsAtUtc.AddDays(30),
+                sarajevoMembership.StartsAtUtc.Value.AddDays(30),
                 sarajevoMembership.EndsAtUtc);
 
             var currentForGym = await client.GetFromJsonAsync<PagedResult<MembershipDto>>(
@@ -196,8 +257,8 @@ public sealed class Phase4MembershipApiTests
             Assert.Single(currentForGym.Items);
             var covering = await client.GetFromJsonAsync<PagedResult<MembershipDto>>(
                 $"/api/me/memberships?gymId={sarajevoMembership.GymId}&status=Active" +
-                $"&coversFromUtc={Uri.EscapeDataString(sarajevoMembership.StartsAtUtc.ToString("O"))}" +
-                $"&coversToUtc={Uri.EscapeDataString(sarajevoMembership.EndsAtUtc.ToString("O"))}" +
+                $"&coversFromUtc={Uri.EscapeDataString(sarajevoMembership.StartsAtUtc.Value.ToString("O"))}" +
+                $"&coversToUtc={Uri.EscapeDataString(sarajevoMembership.EndsAtUtc.Value.ToString("O"))}" +
                 "&page=1&pageSize=10");
             Assert.NotNull(covering);
             Assert.Single(covering.Items);
@@ -215,7 +276,7 @@ public sealed class Phase4MembershipApiTests
                 new { concurrencyToken = mostarRequest.ConcurrencyToken });
             mostarApproval.EnsureSuccessStatusCode();
 
-            Authorize(client, member);
+            await PayPendingMembershipAsync(client, member);
             memberships = await GetMineAsync(client);
             Assert.Equal(2, memberships.TotalCount);
             Assert.All(memberships.Items, item => Assert.Equal(MembershipStatus.Active, item.Status));
@@ -250,17 +311,14 @@ public sealed class Phase4MembershipApiTests
             var cancel = await client.PostAsJsonAsync(
                 $"/api/me/memberships/{active.Id}/cancel",
                 new { concurrencyToken = active.ConcurrencyToken });
-            cancel.EnsureSuccessStatusCode();
-            var cancelled = await cancel.Content.ReadFromJsonAsync<MembershipDto>();
-            Assert.NotNull(cancelled);
-            Assert.Equal(MembershipStatus.Cancelled, cancelled.Status);
-            Assert.Empty(cancelled.AllowedActions);
+            Assert.Equal(HttpStatusCode.BadRequest, cancel.StatusCode);
+            Assert.Equal("paid_cancellation_not_supported", await ReadProblemCodeAsync(cancel));
 
             Authorize(client, mostarAdmin);
             var tenantSearch = await client.GetFromJsonAsync<PagedResult<MembershipDto>>(
                 "/api/tenant/memberships?status=Active&page=1&pageSize=10");
             Assert.NotNull(tenantSearch);
-            Assert.Single(tenantSearch.Items);
+            Assert.Equal(1, tenantSearch.TotalCount);
             Assert.Equal("GymLink Mostar", tenantSearch.Items[0].GymName);
 
             await using var verification = CreateContext(connectionString);
@@ -270,8 +328,7 @@ public sealed class Phase4MembershipApiTests
                 .OrderBy(x => x.GymId)
                 .ToListAsync();
             Assert.Equal(2, persisted.Count);
-            Assert.Contains(persisted, x => x.Status == MembershipStatus.Cancelled);
-            Assert.Contains(persisted, x => x.Status == MembershipStatus.Active);
+            Assert.All(persisted, x => Assert.Equal(MembershipStatus.Active, x.Status));
             Assert.Equal(
                 2,
                 await verification.UserGymAssignments.IgnoreQueryFilters().CountAsync(
@@ -383,6 +440,42 @@ public sealed class Phase4MembershipApiTests
         client.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", session.AccessToken);
 
+    private static async Task PayPendingMembershipAsync(
+        HttpClient client,
+        AuthSessionDto member)
+    {
+        Authorize(client, member);
+        var memberships = await GetMineAsync(client);
+        var pending = memberships.Items.Single(x => x.Status == MembershipStatus.PendingPayment);
+        var checkouts = await Task.WhenAll(
+            client.PostAsync($"/api/payments/memberships/{pending.Id}/checkout", null),
+            client.PostAsync($"/api/payments/memberships/{pending.Id}/checkout", null));
+        Assert.All(checkouts, response => response.EnsureSuccessStatusCode());
+        var first = await checkouts[0].Content.ReadFromJsonAsync<CheckoutSessionDto>();
+        var second = await checkouts[1].Content.ReadFromJsonAsync<CheckoutSessionDto>();
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.Equal(first.PaymentId, second.PaymentId);
+        var providerSessionId = $"cs_test_{first.PaymentId:N}";
+        var webhook = await client.PostAsync(
+            "/api/webhooks/stripe",
+            new StringContent(providerSessionId));
+        webhook.EnsureSuccessStatusCode();
+        var webhookReplay = await client.PostAsync(
+            "/api/webhooks/stripe",
+            new StringContent(providerSessionId));
+        webhookReplay.EnsureSuccessStatusCode();
+        var returnResponse = await client.GetAsync(
+            $"/payments/stripe/success?session_id={providerSessionId}");
+        returnResponse.EnsureSuccessStatusCode();
+        Assert.Contains(
+            "Vrati se u GymLink",
+            await returnResponse.Content.ReadAsStringAsync());
+        var replay = await client.GetAsync(
+            $"/payments/stripe/success?session_id={providerSessionId}");
+        replay.EnsureSuccessStatusCode();
+    }
+
     private static async Task<string> ReadProblemCodeAsync(HttpResponseMessage response)
     {
         using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
@@ -419,6 +512,10 @@ public sealed class Phase4MembershipApiTests
                     ["Seed:Enabled"] = "true",
                     ["Seed:DefaultPassword"] = Password,
                 }));
+            builder.ConfigureServices(services =>
+                services.Replace(ServiceDescriptor.Singleton<
+                    IPaymentGateway,
+                    TestPaymentGateway>()));
         });
 
     private static GymLinkDbContext CreateContext(string connectionString)

@@ -101,8 +101,13 @@ public sealed record ReservationDto(
     decimal Price,
     string Currency,
     ReservationStatus Status,
+    Guid? PaymentId,
+    PaymentStatus? PaymentStatus,
+    DateTime? PaymentDueAtUtc,
+    bool IsPaid,
     string? CancellationReason,
     bool CanReview,
+    IReadOnlyList<string> AllowedActions,
     string ConcurrencyToken);
 
 public sealed record CreateReviewRequest

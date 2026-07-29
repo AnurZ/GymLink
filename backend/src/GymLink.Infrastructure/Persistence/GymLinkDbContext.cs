@@ -27,6 +27,7 @@ public sealed class GymLinkDbContext(
         IApplicationDbContext
 {
     public Guid? CurrentTenantId => tenantContext.TenantId;
+    public void ClearTrackedChanges() => ChangeTracker.Clear();
 
     public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
     public DbSet<RefreshTokenSession> RefreshTokenSessions => Set<RefreshTokenSession>();
@@ -68,6 +69,7 @@ public sealed class GymLinkDbContext(
     public DbSet<ActivityHistory> ActivityHistory => Set<ActivityHistory>();
     public DbSet<Recommendation> Recommendations => Set<Recommendation>();
     public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<StripeEventReceipt> StripeEventReceipts => Set<StripeEventReceipt>();
     public DbSet<Refund> Refunds => Set<Refund>();
 
     protected override void OnModelCreating(ModelBuilder builder)

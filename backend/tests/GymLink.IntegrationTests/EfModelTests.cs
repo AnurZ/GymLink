@@ -151,6 +151,47 @@ public sealed class EfModelTests
             context.Model.FindEntityType(typeof(InboxMessage))!.GetIndexes(),
             index => index.IsUnique &&
                 PropertyNames(index).SequenceEqual(["MessageId", "Consumer"]));
+        Assert.Contains(
+            context.Model.FindEntityType(typeof(Payment))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["TenantId", "Purpose", "TargetId"]) &&
+                index.GetFilter()!.Contains("Created", StringComparison.Ordinal) &&
+                index.GetFilter()!.Contains("Processing", StringComparison.Ordinal) &&
+                index.GetFilter()!.Contains("Succeeded", StringComparison.Ordinal));
+        Assert.Contains(
+            context.Model.FindEntityType(typeof(StripeEventReceipt))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["ProviderEventId"]));
+        Assert.Contains(
+            context.Model.FindEntityType(typeof(StripeEventReceipt))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["ProviderObjectId", "EventType"]));
+    }
+
+    [Fact]
+    public void Phase8_payment_model_has_reviewable_deadlines_and_restrictive_links()
+    {
+        using var context = CreateContext(Guid.NewGuid());
+
+        Assert.True(
+            context.Model.FindEntityType(typeof(Membership))!
+                .FindProperty(nameof(Membership.StartsAtUtc))!
+                .IsNullable);
+        Assert.True(
+            context.Model.FindEntityType(typeof(Membership))!
+                .FindProperty(nameof(Membership.EndsAtUtc))!
+                .IsNullable);
+        Assert.True(
+            context.Model.FindEntityType(typeof(AppointmentReservation))!
+                .FindProperty(nameof(AppointmentReservation.PaymentDueAtUtc))!
+                .IsNullable);
+
+        var receipt = context.Model.FindEntityType(typeof(StripeEventReceipt))!;
+        Assert.Contains(
+            receipt.GetForeignKeys(),
+            foreignKey =>
+                foreignKey.PrincipalEntityType.ClrType == typeof(Payment) &&
+                foreignKey.DeleteBehavior == DeleteBehavior.Restrict);
     }
 
     [Fact]

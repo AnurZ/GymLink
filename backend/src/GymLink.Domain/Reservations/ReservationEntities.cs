@@ -53,7 +53,8 @@ public sealed class AppointmentReservation : TenantEntity, IConcurrencyTracked
     public decimal Price { get; private set; }
     public string Currency { get; private set; } = string.Empty;
     public ReservationStatus Status { get; private set; } = ReservationStatus.Pending;
-    public Guid? PaymentId { get; set; }
+    public Guid? PaymentId { get; private set; }
+    public DateTime? PaymentDueAtUtc { get; private set; }
     public Guid? ConfirmedByUserId { get; private set; }
     public DateTime? ConfirmedAtUtc { get; private set; }
     public Guid? CompletedByUserId { get; private set; }
@@ -67,9 +68,69 @@ public sealed class AppointmentReservation : TenantEntity, IConcurrencyTracked
     {
         EnsureUtc(occurredAtUtc);
         EnsureState(ReservationStatus.Pending);
+        if (PaymentDueAtUtc.HasValue)
+        {
+            throw new DomainException(
+                "payment_confirmation_required",
+                "A prepaid reservation can only be confirmed by the payment provider.");
+        }
+
         Status = ReservationStatus.Confirmed;
         ConfirmedByUserId = actorUserId;
         ConfirmedAtUtc = occurredAtUtc;
+    }
+
+    public void RequirePayment(DateTime paymentDueAtUtc)
+    {
+        EnsureUtc(paymentDueAtUtc);
+        EnsureState(ReservationStatus.Pending);
+        if (paymentDueAtUtc >= StartsAtUtc)
+        {
+            throw new DomainException(
+                "invalid_payment_deadline",
+                "The payment deadline must be before the appointment starts.");
+        }
+
+        PaymentDueAtUtc = paymentDueAtUtc;
+    }
+
+    public void ConfirmFromPayment(Guid paymentId, DateTime occurredAtUtc)
+    {
+        EnsureUtc(occurredAtUtc);
+        EnsureState(ReservationStatus.Pending);
+        if (paymentId == Guid.Empty)
+        {
+            throw new DomainException("payment_required", "A verified payment is required.");
+        }
+
+        if (!PaymentDueAtUtc.HasValue)
+        {
+            throw new DomainException(
+                "payment_not_required",
+                "This reservation does not require online payment.");
+        }
+
+        PaymentId = paymentId;
+        Status = ReservationStatus.Confirmed;
+        ConfirmedByUserId = null;
+        ConfirmedAtUtc = occurredAtUtc;
+    }
+
+    public void ExpireUnpaid(DateTime occurredAtUtc)
+    {
+        EnsureUtc(occurredAtUtc);
+        EnsureState(ReservationStatus.Pending);
+        if (!PaymentDueAtUtc.HasValue || occurredAtUtc < PaymentDueAtUtc)
+        {
+            throw new DomainException(
+                "payment_window_open",
+                "The reservation payment window has not expired.");
+        }
+
+        Status = ReservationStatus.Cancelled;
+        CancelledByUserId = null;
+        CancelledAtUtc = occurredAtUtc;
+        CancellationReason = "Payment window expired.";
     }
 
     public void Complete(Guid actorUserId, DateTime occurredAtUtc)
@@ -126,6 +187,13 @@ public sealed class AppointmentReservation : TenantEntity, IConcurrencyTracked
 
     private void EnsureCancellable()
     {
+        if (PaymentId.HasValue)
+        {
+            throw new DomainException(
+                "paid_cancellation_not_supported",
+                "Paid reservations cannot be cancelled because refunds are not supported.");
+        }
+
         if (Status is not ReservationStatus.Pending and not ReservationStatus.Confirmed)
         {
             throw InvalidTransition();

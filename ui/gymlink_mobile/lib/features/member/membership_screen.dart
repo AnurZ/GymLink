@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
+import '../../core/payments.dart';
 import '../../shared/widgets.dart';
 
 const _requestStatuses = ['Pending', 'Approved', 'Rejected', 'Cancelled'];
@@ -70,9 +71,8 @@ class _MembershipScreenState extends State<MembershipScreen> {
   Future<void> _openMembership(Map<String, dynamic> item) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => MembershipDetailsScreen(
-          membershipId: item['id'].toString(),
-        ),
+        builder: (_) =>
+            MembershipDetailsScreen(membershipId: item['id'].toString()),
       ),
     );
     if (mounted) await _load();
@@ -178,9 +178,11 @@ class _MembershipScreenState extends State<MembershipScreen> {
     ),
   );
 
-  String _date(Object? value) => DateFormat(
-    'dd.MM.yyyy.',
-  ).format(DateTime.parse(value.toString()).toLocal());
+  String _date(Object? value) => value == null
+      ? 'Nakon plaćanja'
+      : DateFormat(
+          'dd.MM.yyyy.',
+        ).format(DateTime.parse(value.toString()).toLocal());
 }
 
 class MembershipDetailsScreen extends StatefulWidget {
@@ -197,6 +199,7 @@ class _MembershipDetailsScreenState extends State<MembershipDetailsScreen> {
   Map<String, dynamic>? _membership;
   bool _loading = true;
   bool _cancelling = false;
+  bool _paying = false;
   Object? _error;
 
   @override
@@ -246,9 +249,9 @@ class _MembershipDetailsScreenState extends State<MembershipDetailsScreen> {
             as Map,
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Članstvo je otkazano.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Članstvo je otkazano.')));
       }
     } on ApiProblem catch (error) {
       if (mounted) {
@@ -259,6 +262,30 @@ class _MembershipDetailsScreenState extends State<MembershipDetailsScreen> {
       if (error.status == 409) await _load();
     } finally {
       if (mounted) setState(() => _cancelling = false);
+    }
+  }
+
+  Future<void> _pay() async {
+    setState(() => _paying = true);
+    try {
+      await openHostedCheckout(
+        context.read<ApiClient>(),
+        '/api/payments/memberships/${widget.membershipId}/checkout',
+      );
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } on StateError catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _paying = false);
     }
   }
 
@@ -327,6 +354,20 @@ class _MembershipDetailsScreenState extends State<MembershipDetailsScreen> {
                     ),
                   ),
                   if ((membership['allowedActions'] as List? ?? const [])
+                      .contains('pay')) ...[
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: _paying ? null : _pay,
+                      icon: _paying
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.payment),
+                      label: const Text('Plati članarinu'),
+                    ),
+                  ],
+                  if ((membership['allowedActions'] as List? ?? const [])
                       .contains('cancel')) ...[
                     const SizedBox(height: 16),
                     FilledButton.icon(
@@ -349,9 +390,11 @@ class _MembershipDetailsScreenState extends State<MembershipDetailsScreen> {
     );
   }
 
-  String _date(Object? value) => DateFormat(
-    'dd.MM.yyyy.',
-  ).format(DateTime.parse(value.toString()).toLocal());
+  String _date(Object? value) => value == null
+      ? 'Nakon plaćanja'
+      : DateFormat(
+          'dd.MM.yyyy.',
+        ).format(DateTime.parse(value.toString()).toLocal());
 }
 
 class _DetailRow extends StatelessWidget {
@@ -371,7 +414,10 @@ class _DetailRow extends StatelessWidget {
           child: Text(label, style: const TextStyle(color: Colors.blueGrey)),
         ),
         Expanded(
-          child: Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+          child: Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
         ),
       ],
     ),

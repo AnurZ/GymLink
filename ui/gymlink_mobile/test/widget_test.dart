@@ -11,6 +11,7 @@ import 'package:gymlink_mobile/features/auth/auth_screens.dart';
 import 'package:gymlink_mobile/features/member/gym_screens.dart';
 import 'package:gymlink_mobile/features/member/membership_screen.dart';
 import 'package:gymlink_mobile/features/member/reservation_screen.dart';
+import 'package:gymlink_mobile/features/payments/payment_result_screen.dart';
 import 'package:gymlink_mobile/features/trainer/trainer_screens.dart';
 import 'package:gymlink_mobile/shared/widgets.dart';
 import 'package:provider/provider.dart';
@@ -293,6 +294,43 @@ void main() {
 
     expect(cancelled, isTrue);
     expect(find.text('Otkaži članstvo'), findsNothing);
+  });
+
+  testWidgets('payment result refreshes authoritative server state', (
+    tester,
+  ) async {
+    final client = MockClient(
+      (_) async => http.Response(
+        jsonEncode({
+          'id': 'payment-1',
+          'status': 2,
+          'isPaid': true,
+        }),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      ),
+    );
+    final api = ApiClient(
+      _TestTokenSource(),
+      httpClient: client,
+      baseUrlOverride: 'http://test.local',
+    );
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: const MaterialApp(
+          home: PaymentResultScreen(
+            outcome: 'success',
+            paymentId: 'payment-1',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Plaćeno'), findsOneWidget);
+    expect(find.text('Osvježi status'), findsNothing);
   });
 }
 

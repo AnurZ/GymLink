@@ -189,6 +189,71 @@ public sealed class DomainInvariantTests
     }
 
     [Fact]
+    public void Payment_requires_server_amount_and_verified_provider_confirmation()
+    {
+        var ids = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
+        var now = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var payment = new Payment(
+            ids[0],
+            PaymentPurpose.Membership,
+            ids[1],
+            ids[2],
+            55,
+            "bam",
+            "membership-attempt-1");
+
+        payment.StartCheckout("cs_test_1", now.AddMinutes(30));
+
+        var mismatch = Assert.Throws<DomainException>(() =>
+            payment.Succeed(
+                "pi_test_1",
+                "evt_test_1",
+                54,
+                "BAM",
+                now.AddMinutes(1)));
+        Assert.Equal("payment_confirmation_mismatch", mismatch.Code);
+
+        payment.Succeed(
+            "pi_test_1",
+            "evt_test_1",
+            55,
+            "bam",
+            now.AddMinutes(1));
+
+        Assert.Equal(PaymentStatus.Succeeded, payment.Status);
+        Assert.Equal(55, payment.ChargedAmount);
+        Assert.Equal("BAM", payment.Currency);
+        Assert.Throws<DomainException>(() =>
+            payment.Fail("evt_test_2", "late_failure", now.AddMinutes(2)));
+    }
+
+    [Fact]
+    public void Stripe_event_receipt_is_complete_utc_and_idempotently_processed()
+    {
+        var now = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var receipt = new StripeEventReceipt(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "evt_test_1",
+            "cs_test_1",
+            "checkout.session.completed",
+            now);
+
+        receipt.MarkProcessed(now.AddSeconds(1));
+        receipt.MarkProcessed(now.AddSeconds(2));
+
+        Assert.Equal(now.AddSeconds(1), receipt.ProcessedAtUtc);
+        Assert.Throws<DomainException>(() =>
+            new StripeEventReceipt(
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                "",
+                "cs_test_1",
+                "checkout.session.completed",
+                now));
+    }
+
+    [Fact]
     public void Membership_request_transitions_are_terminal_and_rejection_requires_reason()
     {
         var actor = Guid.NewGuid();
@@ -236,6 +301,78 @@ public sealed class DomainInvariantTests
         Assert.Equal(now.AddDays(30), membership.EndsAtUtc);
         Assert.Equal(ids[5], membership.StatusChangedByUserId);
         Assert.Equal(now, membership.StatusChangedAtUtc);
+    }
+
+    [Fact]
+    public void Pending_membership_activates_only_from_verified_payment()
+    {
+        var ids = Enumerable.Range(0, 7).Select(_ => Guid.NewGuid()).ToArray();
+        var approvedAt = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var membership = Membership.CreatePendingPayment(
+            ids[0], ids[1], ids[2], ids[3], ids[4],
+            "Monthly", 30, 55, "bam", ids[5], approvedAt);
+
+        Assert.Equal(MembershipStatus.PendingPayment, membership.Status);
+        Assert.Null(membership.StartsAtUtc);
+        Assert.Null(membership.EndsAtUtc);
+        Assert.Equal(30, membership.DurationDays);
+
+        membership.ActivateFromPayment(ids[6], approvedAt.AddMinutes(2));
+
+        Assert.Equal(MembershipStatus.Active, membership.Status);
+        Assert.Equal(ids[6], membership.PaymentId);
+        Assert.Equal(approvedAt.AddMinutes(2), membership.StartsAtUtc);
+        Assert.Equal(approvedAt.AddDays(30).AddMinutes(2), membership.EndsAtUtc);
+        var cancellation = Assert.Throws<DomainException>(() =>
+            membership.CancelByMember(ids[1], approvedAt.AddDays(1)));
+        Assert.Equal("paid_cancellation_not_supported", cancellation.Code);
+    }
+
+    [Fact]
+    public void Unpaid_pending_membership_can_be_cancelled()
+    {
+        var ids = Enumerable.Range(0, 6).Select(_ => Guid.NewGuid()).ToArray();
+        var now = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var membership = Membership.CreatePendingPayment(
+            ids[0], ids[1], ids[2], ids[3], ids[4],
+            "Monthly", 30, 55, "BAM", ids[5], now);
+
+        membership.CancelPendingPayment(ids[1], now.AddMinutes(1));
+
+        Assert.Equal(MembershipStatus.Cancelled, membership.Status);
+        Assert.Null(membership.StartsAtUtc);
+        Assert.Null(membership.EndsAtUtc);
+    }
+
+    [Fact]
+    public void Prepaid_reservation_holds_then_confirms_or_expires()
+    {
+        var ids = Enumerable.Range(0, 8).Select(_ => Guid.NewGuid()).ToArray();
+        var now = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var start = now.AddDays(1);
+        var reservation = new AppointmentReservation(
+            ids[0], ids[1], ids[2], ids[3], null, ids[4],
+            start, 60, 25, "BAM");
+        reservation.RequirePayment(now.AddMinutes(15));
+        reservation.ConfirmFromPayment(ids[5], now.AddMinutes(2));
+
+        Assert.Equal(ReservationStatus.Confirmed, reservation.Status);
+        Assert.Equal(ids[5], reservation.PaymentId);
+        var cancellation = Assert.Throws<DomainException>(() =>
+            reservation.CancelByMember(ids[1], now.AddMinutes(3)));
+        Assert.Equal("paid_cancellation_not_supported", cancellation.Code);
+
+        var abandoned = new AppointmentReservation(
+            ids[0], ids[1], ids[2], ids[3], null, ids[4],
+            start, 60, 25, "BAM");
+        abandoned.RequirePayment(now.AddMinutes(15));
+        Assert.Throws<DomainException>(() =>
+            abandoned.ExpireUnpaid(now.AddMinutes(14)));
+        abandoned.ExpireUnpaid(now.AddMinutes(15));
+
+        Assert.Equal(ReservationStatus.Cancelled, abandoned.Status);
+        Assert.Null(abandoned.CancelledByUserId);
+        Assert.Equal("Payment window expired.", abandoned.CancellationReason);
     }
 
     [Fact]

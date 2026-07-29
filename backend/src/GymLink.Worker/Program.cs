@@ -1,25 +1,28 @@
 using DotNetEnv;
+using GymLink.Application;
 using GymLink.Application.Abstractions;
 using GymLink.Application.Identity;
 using GymLink.Infrastructure.Identity;
+using GymLink.Infrastructure;
 using GymLink.Infrastructure.Messaging;
 using GymLink.Infrastructure.Persistence;
 using GymLink.Worker;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 Env.TraversePath().NoClobber().Load();
 var builder = Host.CreateApplicationBuilder(args);
-var connectionString = builder.Configuration.GetConnectionString("GymLink")
-    ?? throw new InvalidOperationException(
-        "Environment variable ConnectionStrings__GymLink is required.");
-
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddSingleton<ITenantContext, WorkerTenantContext>();
-builder.Services.AddDbContext<GymLinkDbContext>(
-    options => options.UseSqlServer(connectionString));
+builder.Services.AddSingleton<WorkerTenantContext>();
+builder.Services.AddSingleton<ITenantContext>(provider =>
+    provider.GetRequiredService<WorkerTenantContext>());
+builder.Services.AddSingleton<ICurrentUser>(provider =>
+    provider.GetRequiredService<WorkerTenantContext>());
+builder.Services.AddSingleton<IRequestMetadata>(provider =>
+    provider.GetRequiredService<WorkerTenantContext>());
+builder.Services.AddGymLinkApplication();
+builder.Services.AddGymLinkPaymentWorkerInfrastructure(builder.Configuration);
 builder.Services.AddOptions<RabbitMqOptions>()
     .Bind(builder.Configuration.GetSection(RabbitMqOptions.SectionName));
 builder.Services.AddOptions<PasswordResetOptions>()
@@ -35,5 +38,6 @@ builder.Services.AddOptions<SmtpOptions>()
 builder.Services.AddSingleton<IPasswordResetCodeService, PasswordResetCodeService>();
 builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
 builder.Services.AddHostedService<RabbitMqWorkerService>();
+builder.Services.AddHostedService<PaymentReconciliationWorker>();
 
 await builder.Build().RunAsync();

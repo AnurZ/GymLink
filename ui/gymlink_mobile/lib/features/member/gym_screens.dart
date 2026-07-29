@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
+import '../../core/payments.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 
@@ -338,6 +339,7 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
   Map<String, dynamic>? _pendingRequest;
   Object? _error;
   bool _loading = true;
+  String? _purchasingPlanId;
 
   @override
   void initState() {
@@ -386,23 +388,21 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
     final api = context.read<ApiClient>();
     if (!await confirmAction(
       context,
-      title: 'Zahtjev za članstvo',
-      message: 'Pošalji zahtjev za plan ${plan['name']}?',
-      action: 'Pošalji',
+      title: 'Plaćanje članarine',
+      message:
+          'Otvori Stripe plaćanje za ${plan['name']} (${plan['price']} ${plan['currency']})?',
+      action: 'Nastavi na plaćanje',
     )) {
       return;
     }
+    setState(() => _purchasingPlanId = plan['id'].toString());
     try {
-      await api.post(
-        '/api/membership-requests',
+      await openHostedCheckout(
+        api,
+        '/api/payments/memberships/checkout',
         body: {'membershipPlanId': plan['id']},
       );
       await _load();
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Zahtjev je poslan.')));
-      }
     } on ApiProblem catch (error) {
       if (error.status == 409) await _load();
       if (mounted) {
@@ -410,6 +410,14 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
           SnackBar(content: Text(_localizedMembershipError(error))),
         );
       }
+    } on StateError catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _purchasingPlanId = null);
     }
   }
 
@@ -510,10 +518,18 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
                       title: Text(plan['name'].toString()),
                       subtitle: Text('${plan['durationDays']} dana'),
                       trailing: FilledButton(
-                        onPressed: _membershipBlocked
+                        onPressed:
+                            _membershipBlocked || _purchasingPlanId != null
                             ? null
                             : () => _requestMembership(plan),
-                        child: Text('${plan['price']} ${plan['currency']}'),
+                        child: _purchasingPlanId == plan['id'].toString()
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Text('${plan['price']} ${plan['currency']}'),
                       ),
                     ),
                   ),
@@ -619,6 +635,7 @@ class _BookingScreenState extends State<BookingScreen> {
   bool _loading = true;
   bool _checkingMembership = false;
   bool _hasCoveringMembership = false;
+  bool _booking = false;
   String? _membershipMessage;
   Object? _error;
 
@@ -704,19 +721,22 @@ class _BookingScreenState extends State<BookingScreen> {
       return;
     }
     try {
-      await api.post(
-        '/api/reservations',
-        body: {
-          'trainerServiceOfferingId': _offering!['id'],
-          'startsAtUtc': _slot!['startsAtUtc'],
-        },
+      setState(() => _booking = true);
+      final reservation = Map<String, dynamic>.from(
+        (await api.post(
+              '/api/reservations',
+              body: {
+                'trainerServiceOfferingId': _offering!['id'],
+                'startsAtUtc': _slot!['startsAtUtc'],
+              },
+            ))!
+            as Map,
       );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Rezervacija je kreirana.')),
-        );
-        Navigator.pop(context);
-      }
+      await openHostedCheckout(
+        api,
+        '/api/payments/reservations/${reservation['id']}/checkout',
+      );
+      if (mounted) Navigator.pop(context);
     } on ApiProblem catch (error) {
       if (error.status == 409) {
         final selectedStart = _slot?['startsAtUtc']?.toString();
@@ -727,6 +747,14 @@ class _BookingScreenState extends State<BookingScreen> {
           context,
         ).showSnackBar(SnackBar(content: Text(_localizedBookingError(error))));
       }
+    } on StateError catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _booking = false);
     }
   }
 
@@ -900,10 +928,18 @@ class _BookingScreenState extends State<BookingScreen> {
             const SizedBox(height: 12),
           FilledButton(
             onPressed:
-                _slot == null || _checkingMembership || !_hasCoveringMembership
+                _slot == null ||
+                    _checkingMembership ||
+                    !_hasCoveringMembership ||
+                    _booking
                 ? null
                 : _book,
-            child: const Text('Potvrdi rezervaciju'),
+            child: _booking
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Plati i rezerviši'),
           ),
         ],
       ),

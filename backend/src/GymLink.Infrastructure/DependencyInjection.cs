@@ -10,6 +10,8 @@ using GymLink.Infrastructure.Memberships;
 using GymLink.Infrastructure.Reservations;
 using GymLink.Infrastructure.Messaging;
 using GymLink.Infrastructure.Geocoding;
+using GymLink.Infrastructure.Payments;
+using GymLink.Application.Payments;
 using GymLink.Application.Reservations;
 using GymLink.Application.Memberships;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -25,6 +27,26 @@ namespace GymLink.Infrastructure;
 
 public static class DependencyInjection
 {
+    public static IServiceCollection AddGymLinkPaymentWorkerInfrastructure(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var connectionString = configuration.GetConnectionString("GymLink")
+            ?? throw new InvalidOperationException(
+                "Environment variable ConnectionStrings__GymLink is required.");
+        AddStripePayments(services, configuration);
+        services.AddScoped<ITenantMutationScope, TenantMutationScope>();
+        services.AddScoped<TenantAuditSaveChangesInterceptor>();
+        services.AddScoped<IApplicationDbContext>(provider =>
+            provider.GetRequiredService<GymLinkDbContext>());
+        services.AddDbContext<GymLinkDbContext>((provider, options) =>
+            options.UseSqlServer(connectionString)
+                .AddInterceptors(provider.GetRequiredService<TenantAuditSaveChangesInterceptor>()));
+        services.AddScoped<IApplicationTransaction, ApplicationTransaction>();
+        services.AddScoped<IOutboxWriter, OutboxWriter>();
+        return services;
+    }
+
     public static IServiceCollection AddGymLinkInfrastructure(
         this IServiceCollection services,
         IConfiguration configuration)
@@ -54,6 +76,7 @@ public static class DependencyInjection
                 "Enabled geocoding configuration is incomplete or invalid.")
             .ValidateOnStart();
         services.AddScoped<ILocationSearchService, NominatimLocationSearchService>();
+        AddStripePayments(services, configuration);
         services.AddHttpContextAccessor();
         services.AddScoped<ClaimsRequestContext>();
         services.AddScoped<ICurrentUser>(provider =>
@@ -163,5 +186,22 @@ public static class DependencyInjection
         services.AddScoped<DevelopmentDataSeeder>();
 
         return services;
+    }
+
+    private static void AddStripePayments(
+        IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.AddOptions<StripeOptions>()
+            .Bind(configuration.GetSection(StripeOptions.SectionName))
+            .Validate(
+                options => !options.Enabled ||
+                    (options.SecretKey.StartsWith("sk_test_", StringComparison.Ordinal) &&
+                     options.WebhookSecret.StartsWith("whsec_", StringComparison.Ordinal) &&
+                     Uri.TryCreate(options.SuccessUrl, UriKind.Absolute, out _) &&
+                     Uri.TryCreate(options.CancelUrl, UriKind.Absolute, out _)),
+                "Enabled Stripe test-mode configuration is incomplete or invalid.")
+            .ValidateOnStart();
+        services.AddScoped<IPaymentGateway, StripePaymentGateway>();
     }
 }

@@ -62,6 +62,20 @@ internal sealed class MembershipConfiguration : EntityConfiguration<Membership>
         builder.Property(x => x.Currency).HasMaxLength(3).IsFixedLength().IsRequired();
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
         builder.Property(x => x.StatusReason).HasMaxLength(1000);
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint(
+                "CK_Memberships_DurationDays",
+                "[DurationDays] > 0");
+            table.HasCheckConstraint(
+                "CK_Memberships_ActivationDates",
+                "([StartsAtUtc] IS NULL AND [EndsAtUtc] IS NULL) OR " +
+                "([StartsAtUtc] IS NOT NULL AND [EndsAtUtc] > [StartsAtUtc])");
+            table.HasCheckConstraint(
+                "CK_Memberships_ActiveDatesRequired",
+                "[Status] NOT IN (N'Active', N'Suspended', N'Expired') OR " +
+                "([StartsAtUtc] IS NOT NULL AND [EndsAtUtc] IS NOT NULL)");
+        });
         builder.HasIndex(x => new { x.TenantId, x.MemberUserId, x.GymId })
             .IsUnique()
             .HasFilter("[Status] IN (N'PendingPayment', N'Active', N'Suspended')");
@@ -100,9 +114,14 @@ internal sealed class AppointmentReservationConfiguration : EntityConfiguration<
             .HasFilter(
                 "[AvailabilitySlotId] IS NOT NULL AND [Status] IN (N'Pending', N'Confirmed')");
         builder.ToTable(table =>
+        {
             table.HasCheckConstraint(
                 "CK_AppointmentReservations_TimeRange",
-                "[EndsAtUtc] > [StartsAtUtc]"));
+                "[EndsAtUtc] > [StartsAtUtc]");
+            table.HasCheckConstraint(
+                "CK_AppointmentReservations_PaymentDeadline",
+                "[PaymentDueAtUtc] IS NULL OR [PaymentDueAtUtc] < [StartsAtUtc]");
+        });
         builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.MemberUserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.CancelledByUserId)

@@ -4,6 +4,7 @@ using GymLink.Application.Administration;
 using GymLink.Application.Identity;
 using GymLink.Application.Memberships;
 using GymLink.Application.Messaging;
+using GymLink.Application.Payments;
 using GymLink.Application.ReferenceData;
 using GymLink.Application.Registration;
 using GymLink.Application.Reservations;
@@ -37,6 +38,8 @@ public static class DependencyInjection
         services.AddScoped<IReservationService, ReservationService>();
         services.AddScoped<IReviewService, ReviewService>();
         services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<IPaymentService, PaymentService>();
+        services.AddScoped<IPaymentReconciliationService, PaymentReconciliationService>();
         return services;
     }
 }

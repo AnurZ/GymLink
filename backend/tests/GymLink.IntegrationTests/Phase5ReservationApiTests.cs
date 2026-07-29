@@ -6,6 +6,7 @@ using GymLink.Application.Catalog;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.Memberships;
+using GymLink.Application.Payments;
 using GymLink.Application.Reservations;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Trainers;
@@ -14,6 +15,8 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace GymLink.IntegrationTests;
 
@@ -162,10 +165,31 @@ public sealed class Phase5ReservationApiTests
             var confirm = await setupClient.PostAsJsonAsync(
                 $"/api/tenant/reservations/{reservation.Id}/confirm",
                 new { concurrencyToken = reservation.ConcurrencyToken });
-            confirm.EnsureSuccessStatusCode();
-            var confirmed = await confirm.Content.ReadFromJsonAsync<ReservationDto>();
+            Assert.Equal(HttpStatusCode.BadRequest, confirm.StatusCode);
+            Assert.Equal("payment_confirmation_required", await ProblemCodeAsync(confirm));
+
+            Authorize(setupClient, winningSession);
+            var checkout = await setupClient.PostAsync(
+                $"/api/payments/reservations/{reservation.Id}/checkout",
+                null);
+            checkout.EnsureSuccessStatusCode();
+            var checkoutResult = await checkout.Content.ReadFromJsonAsync<CheckoutSessionDto>();
+            Assert.NotNull(checkoutResult);
+            var providerSessionId = $"cs_test_{checkoutResult.PaymentId:N}";
+            var webhook = await setupClient.PostAsync(
+                "/api/webhooks/stripe",
+                new StringContent(providerSessionId));
+            webhook.EnsureSuccessStatusCode();
+            var paymentReturn = await setupClient.GetAsync(
+                $"/payments/stripe/success?session_id={providerSessionId}");
+            paymentReturn.EnsureSuccessStatusCode();
+
+            Authorize(setupClient, admin);
+            var confirmed = await setupClient.GetFromJsonAsync<ReservationDto>(
+                $"/api/tenant/reservations/{reservation.Id}");
             Assert.NotNull(confirmed);
             Assert.Equal(ReservationStatus.Confirmed, confirmed.Status);
+            Assert.True(confirmed.IsPaid);
 
             await using (var elapsed = CreateContext(connectionString))
             {
@@ -174,7 +198,8 @@ public sealed class Phase5ReservationApiTests
                     $"""
                     UPDATE [AppointmentReservations]
                     SET [StartsAtUtc] = {completedAt.AddMinutes(-offering.DurationMinutes)},
-                        [EndsAtUtc] = {completedAt}
+                        [EndsAtUtc] = {completedAt},
+                        [PaymentDueAtUtc] = {completedAt.AddMinutes(-offering.DurationMinutes - 1)}
                     WHERE [Id] = {reservation.Id}
                     """);
             }
@@ -258,6 +283,26 @@ public sealed class Phase5ReservationApiTests
             $"/api/tenant/membership-requests/{request.Id}/approve",
             new { concurrencyToken = request.ConcurrencyToken });
         approve.EnsureSuccessStatusCode();
+        Authorize(client, member);
+        var memberships = await client.GetFromJsonAsync<PagedResult<MembershipDto>>(
+            "/api/me/memberships?page=1&pageSize=100");
+        Assert.NotNull(memberships);
+        var pending = memberships.Items.Single(
+            x => x.Status == MembershipStatus.PendingPayment);
+        var checkout = await client.PostAsync(
+            $"/api/payments/memberships/{pending.Id}/checkout",
+            null);
+        checkout.EnsureSuccessStatusCode();
+        var checkoutResult = await checkout.Content.ReadFromJsonAsync<CheckoutSessionDto>();
+        Assert.NotNull(checkoutResult);
+        var providerSessionId = $"cs_test_{checkoutResult.PaymentId:N}";
+        var webhook = await client.PostAsync(
+            "/api/webhooks/stripe",
+            new StringContent(providerSessionId));
+        webhook.EnsureSuccessStatusCode();
+        var paymentReturn = await client.GetAsync(
+            $"/payments/stripe/success?session_id={providerSessionId}");
+        paymentReturn.EnsureSuccessStatusCode();
     }
 
     private static async Task<Guid> FindGymAsync(
@@ -320,6 +365,10 @@ public sealed class Phase5ReservationApiTests
                     ["Seed:Enabled"] = "true",
                     ["Seed:DefaultPassword"] = Password,
                 }));
+            builder.ConfigureServices(services =>
+                services.Replace(ServiceDescriptor.Singleton<
+                    IPaymentGateway,
+                    TestPaymentGateway>()));
         });
 
     private static GymLinkDbContext CreateContext(string connectionString)

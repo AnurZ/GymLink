@@ -251,6 +251,7 @@ inline and the backend remains the authoritative validator.
 
 ## Phase boundary
 
-Durable notifications and password reset are implemented in Phase 7. Stripe is
-Phase 8, chat is Phase 9, recommendations are Phase 10, and statistics/PDF
+Durable notifications and password reset are implemented in Phase 7. Stripe
+hosted Checkout with an Android deep-link return is implemented in Phase 8;
+chat is Phase 9, recommendations are Phase 10, and statistics/PDF
 reports are Phase 11.

@@ -192,7 +192,7 @@ internal sealed class MembershipRequestService(
             }
 
             entity.Approve(actorId, now);
-            var membership = new Membership(
+            var membership = Membership.CreatePendingPayment(
                 tenantId,
                 entity.MemberUserId,
                 entity.GymId,
@@ -205,7 +205,6 @@ internal sealed class MembershipRequestService(
                 actorId,
                 now);
             dbContext.Memberships.Add(membership);
-            await ActivateMemberAssignmentAsync(entity.MemberUserId, actorId, now, ct);
             await eventRecorder.RecordAsync(new MembershipWorkflowEventIntent(
                 "membership.approved",
                 membership.TenantId,
@@ -243,37 +242,6 @@ internal sealed class MembershipRequestService(
             cancellationToken);
         await SaveWorkflowAsync(cancellationToken);
         return await GetTenantAsync(entity.Id, cancellationToken);
-    }
-
-    private async Task ActivateMemberAssignmentAsync(
-        Guid memberUserId,
-        Guid actorId,
-        DateTime now,
-        CancellationToken cancellationToken)
-    {
-        var assignment = await dbContext.UserGymAssignments.SingleOrDefaultAsync(
-            x => x.UserId == memberUserId && x.Role == RoleNames.Member,
-            cancellationToken);
-        if (assignment is null)
-        {
-            dbContext.UserGymAssignments.Add(new UserGymAssignment
-            {
-                TenantId = RequireTenant(),
-                UserId = memberUserId,
-                Role = RoleNames.Member,
-                Status = AssignmentStatus.Active,
-                StartsAtUtc = now,
-                ApprovedByUserId = actorId,
-                Reason = "Membership approved.",
-            });
-            return;
-        }
-
-        assignment.Status = AssignmentStatus.Active;
-        assignment.StartsAtUtc = now;
-        assignment.EndsAtUtc = null;
-        assignment.ApprovedByUserId = actorId;
-        assignment.Reason = "Membership approved.";
     }
 
     private Task<PagedResult<MembershipRequestDto>> SearchAsync(
@@ -511,7 +479,20 @@ internal sealed class MembershipService(
             ?? throw MembershipNotFound();
         EnsureConcurrency(entity.RowVersion, request.ConcurrencyToken);
         var now = timeProvider.GetUtcNow().UtcDateTime;
-        entity.CancelByMember(userId, now);
+        if (await HasOpenCheckoutAsync(entity.Id, cancellationToken))
+        {
+            throw new ConflictException(
+                "checkout_in_progress",
+                "The open Checkout must expire before this membership can be cancelled.");
+        }
+        if (entity.Status == MembershipStatus.PendingPayment)
+        {
+            entity.CancelPendingPayment(userId, now);
+        }
+        else
+        {
+            entity.CancelByMember(userId, now);
+        }
         using (tenantMutationScope.Begin(entity.TenantId))
         {
             await RecordAsync("membership.cancelled", entity, now, cancellationToken);
@@ -548,7 +529,25 @@ internal sealed class MembershipService(
             id,
             request.ConcurrencyToken,
             "membership.cancelled",
-            (entity, actor, now) => entity.CancelByStaff(actor, now, request.Reason),
+            (entity, actor, now) =>
+            {
+                if (entity.Status == MembershipStatus.PendingPayment)
+                {
+                    entity.CancelPendingPayment(actor, now);
+                }
+                else
+                {
+                    entity.CancelByStaff(actor, now, request.Reason);
+                }
+            },
+            cancellationToken);
+
+    private Task<bool> HasOpenCheckoutAsync(Guid membershipId, CancellationToken cancellationToken) =>
+        dbContext.Payments.IgnoreQueryFilters().AnyAsync(
+            x => x.Purpose == PaymentPurpose.Membership &&
+                 x.TargetId == membershipId &&
+                 (x.Status == PaymentStatus.Created ||
+                  x.Status == PaymentStatus.Processing),
             cancellationToken);
 
     public Task<MembershipDto> SuspendAsync(
@@ -597,6 +596,13 @@ internal sealed class MembershipService(
                 cancellationToken)
             ?? throw MembershipNotFound();
         EnsureConcurrency(entity.RowVersion, concurrencyToken);
+        if (eventName == "membership.cancelled" &&
+            await HasOpenCheckoutAsync(entity.Id, cancellationToken))
+        {
+            throw new ConflictException(
+                "checkout_in_progress",
+                "The open Checkout must expire before this membership can be cancelled.");
+        }
         var now = timeProvider.GetUtcNow().UtcDateTime;
         transition(entity, RequireUser(), now);
         await RecordAsync(eventName, entity, now, cancellationToken);
@@ -636,9 +642,11 @@ internal sealed class MembershipService(
                    entity.Status == MembershipStatus.Active ||
                    entity.Status == MembershipStatus.Suspended) &&
                   (!request.CoversFromUtc.HasValue ||
-                   entity.StartsAtUtc <= request.CoversFromUtc) &&
+                   (entity.StartsAtUtc.HasValue &&
+                    entity.StartsAtUtc <= request.CoversFromUtc)) &&
                   (!request.CoversToUtc.HasValue ||
-                   entity.EndsAtUtc >= request.CoversToUtc) &&
+                   (entity.EndsAtUtc.HasValue &&
+                    entity.EndsAtUtc >= request.CoversToUtc)) &&
                   (!request.StartsFromUtc.HasValue || entity.StartsAtUtc >= request.StartsFromUtc) &&
                   (!request.StartsToUtc.HasValue || entity.StartsAtUtc <= request.StartsToUtc) &&
                   (string.IsNullOrWhiteSpace(request.Member) ||
@@ -649,7 +657,13 @@ internal sealed class MembershipService(
                 member.DisplayName,
                 gym.Name,
                 tenantAdmin,
-                entity.EndsAtUtc <= now);
+                entity.EndsAtUtc.HasValue && entity.EndsAtUtc <= now,
+                dbContext.Payments.IgnoreQueryFilters()
+                    .Where(x => x.Purpose == PaymentPurpose.Membership &&
+                                x.TargetId == entity.Id)
+                    .OrderByDescending(x => x.CreatedAtUtc)
+                    .Select(x => (PaymentStatus?)x.Status)
+                    .FirstOrDefault());
         return query.ToPagedResultAsync(request, cancellationToken);
     }
 
@@ -680,7 +694,13 @@ internal sealed class MembershipService(
                     member.DisplayName,
                     gym.Name,
                     tenantAdmin,
-                    entity.EndsAtUtc <= now))
+                    entity.EndsAtUtc.HasValue && entity.EndsAtUtc <= now,
+                    dbContext.Payments.IgnoreQueryFilters()
+                        .Where(x => x.Purpose == PaymentPurpose.Membership &&
+                                    x.TargetId == entity.Id)
+                        .OrderByDescending(x => x.CreatedAtUtc)
+                        .Select(x => (PaymentStatus?)x.Status)
+                        .FirstOrDefault()))
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw MembershipNotFound();
     }
@@ -690,7 +710,8 @@ internal sealed class MembershipService(
         string memberName,
         string gymName,
         bool tenantAdmin,
-        bool canExpire) =>
+        bool canExpire,
+        PaymentStatus? paymentStatus) =>
         new(
             entity.Id,
             entity.MembershipPlanId,
@@ -704,20 +725,36 @@ internal sealed class MembershipService(
             entity.StartsAtUtc,
             entity.EndsAtUtc,
             entity.Status,
+            entity.PaymentId,
+            paymentStatus,
+            entity.PaymentId.HasValue,
             entity.StatusChangedAtUtc,
             entity.StatusReason,
-            AllowedActions(entity.Status, tenantAdmin, canExpire),
+            AllowedActions(
+                entity.Status,
+                entity.PaymentId.HasValue,
+                paymentStatus,
+                tenantAdmin,
+                canExpire),
             Convert.ToBase64String(entity.RowVersion));
 
     private static IReadOnlyList<string> AllowedActions(
         MembershipStatus status,
+        bool isPaid,
+        PaymentStatus? paymentStatus,
         bool tenantAdmin,
         bool canExpire) =>
         status switch
         {
+            MembershipStatus.PendingPayment
+                when paymentStatus is PaymentStatus.Created or PaymentStatus.Processing =>
+                ["pay"],
+            MembershipStatus.PendingPayment => ["pay", "cancel"],
             MembershipStatus.Active when tenantAdmin && canExpire =>
-                ["cancel", "suspend", "expire"],
-            MembershipStatus.Active when tenantAdmin => ["cancel", "suspend"],
+                isPaid ? ["suspend", "expire"] : ["cancel", "suspend", "expire"],
+            MembershipStatus.Active when tenantAdmin =>
+                isPaid ? ["suspend"] : ["cancel", "suspend"],
+            MembershipStatus.Active when isPaid => [],
             MembershipStatus.Active => ["cancel"],
             MembershipStatus.Suspended when tenantAdmin => ["reactivate"],
             _ => [],

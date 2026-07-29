@@ -837,6 +837,7 @@ internal sealed class ReservationService(
                     target.Offering.DurationMinutes,
                     target.Offering.Price,
                     target.Offering.Currency);
+                entity.RequirePayment(now.AddMinutes(15));
                 using (tenantMutationScope.Begin(target.Offering.TenantId))
                 {
                     dbContext.AppointmentReservations.Add(entity);
@@ -889,6 +890,12 @@ internal sealed class ReservationService(
             .SingleOrDefaultAsync(x => x.Id == id && x.MemberUserId == actor, cancellationToken)
             ?? throw ReservationNotFound();
         EnsureToken(entity.RowVersion, request.ConcurrencyToken);
+        if (await HasOpenCheckoutAsync(entity.Id, cancellationToken))
+        {
+            throw new ConflictException(
+                "checkout_in_progress",
+                "The open Checkout must expire before this reservation can be cancelled.");
+        }
         entity.CancelByMember(actor, timeProvider.GetUtcNow().UtcDateTime);
         if (entity.AvailabilitySlotId.HasValue)
         {
@@ -958,6 +965,13 @@ internal sealed class ReservationService(
             ?? throw ReservationNotFound();
         await EnsureStaffOwnershipAsync(entity, action, cancellationToken);
         EnsureToken(entity.RowVersion, concurrencyToken);
+        if (action == ReservationAction.Cancel &&
+            await HasOpenCheckoutAsync(entity.Id, cancellationToken))
+        {
+            throw new ConflictException(
+                "checkout_in_progress",
+                "The open Checkout must expire before this reservation can be cancelled.");
+        }
         var now = timeProvider.GetUtcNow().UtcDateTime;
         if (action == ReservationAction.Confirm)
         {
@@ -1136,11 +1150,77 @@ internal sealed class ReservationService(
                 x.Reservation.Price,
                 x.Reservation.Currency,
                 x.Reservation.Status,
+                x.Reservation.PaymentId,
+                dbContext.Payments.IgnoreQueryFilters()
+                    .Where(payment =>
+                        payment.Purpose == PaymentPurpose.TrainerReservation &&
+                        payment.TargetId == x.Reservation.Id)
+                    .OrderByDescending(payment => payment.CreatedAtUtc)
+                    .Select(payment => (PaymentStatus?)payment.Status)
+                    .FirstOrDefault(),
+                x.Reservation.PaymentDueAtUtc,
+                x.Reservation.PaymentId.HasValue,
                 x.Reservation.CancellationReason,
                 x.Reservation.Status == ReservationStatus.Completed && !x.HasReview,
+                ReservationAllowedActions(
+                    x.Reservation.Status,
+                    x.Reservation.PaymentDueAtUtc.HasValue,
+                    x.Reservation.PaymentId.HasValue,
+                    memberId.HasValue,
+                    trainerId.HasValue || tenantId.HasValue,
+                    dbContext.Payments.IgnoreQueryFilters().Any(payment =>
+                        payment.Purpose == PaymentPurpose.TrainerReservation &&
+                        payment.TargetId == x.Reservation.Id &&
+                        (payment.Status == PaymentStatus.Created ||
+                         payment.Status == PaymentStatus.Processing))),
                 Convert.ToBase64String(x.Reservation.RowVersion)))
             .ToPagedResultAsync(request, cancellationToken);
     }
+
+    private static IReadOnlyList<string> ReservationAllowedActions(
+        ReservationStatus status,
+        bool requiresPayment,
+        bool isPaid,
+        bool memberView,
+        bool staffView,
+        bool hasOpenCheckout)
+    {
+        if (status == ReservationStatus.Pending && memberView)
+        {
+            return hasOpenCheckout
+                ? ["pay"]
+                : requiresPayment ? ["pay", "cancel"] : ["cancel"];
+        }
+
+        if (status == ReservationStatus.Pending && staffView)
+        {
+            return hasOpenCheckout
+                ? []
+                : requiresPayment ? ["cancel"] : ["confirm", "cancel"];
+        }
+
+        if (status == ReservationStatus.Confirmed)
+        {
+            if (staffView)
+            {
+                return isPaid ? ["complete"] : ["complete", "cancel"];
+            }
+
+            return memberView && !isPaid ? ["cancel"] : [];
+        }
+
+        return [];
+    }
+
+    private Task<bool> HasOpenCheckoutAsync(
+        Guid reservationId,
+        CancellationToken cancellationToken) =>
+        dbContext.Payments.IgnoreQueryFilters().AnyAsync(
+            x => x.Purpose == PaymentPurpose.TrainerReservation &&
+                 x.TargetId == reservationId &&
+                 (x.Status == PaymentStatus.Created ||
+                  x.Status == PaymentStatus.Processing),
+            cancellationToken);
 
     private async Task<ReservationDto> GetAsync(
         Guid id,

@@ -87,6 +87,7 @@ public sealed class TrainerCatalogService(
             join user in dbContext.UserProfiles.AsNoTracking()
                 on membership.MemberUserId equals user.Id
             where membership.Status == MembershipStatus.Active &&
+                  membership.EndsAtUtc.HasValue &&
                   membership.EndsAtUtc > now &&
                   user.IsActive &&
                   dbContext.UserGymAssignments.Any(
@@ -101,7 +102,7 @@ public sealed class TrainerCatalogService(
                 membership.MemberUserId,
                 user.DisplayName,
                 membership.PlanName,
-                membership.EndsAtUtc,
+                EndsAtUtc = membership.EndsAtUtc.GetValueOrDefault(),
             };
 
         if (!string.IsNullOrWhiteSpace(request.Query))
@@ -224,6 +225,7 @@ public sealed class TrainerCatalogService(
                     membership =>
                         membership.MemberUserId == request.UserId &&
                         membership.Status == MembershipStatus.Active &&
+                        membership.EndsAtUtc.HasValue &&
                         membership.EndsAtUtc > now,
                     token))
             {

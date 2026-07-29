@@ -94,6 +94,47 @@ public sealed class Membership : TenantEntity, IConcurrencyTracked
 {
     private Membership() { }
 
+    private Membership(
+        Guid tenantId,
+        Guid memberUserId,
+        Guid gymId,
+        Guid membershipPlanId,
+        Guid membershipRequestId,
+        string planName,
+        int durationDays,
+        decimal price,
+        string currency)
+    {
+        if (durationDays <= 0)
+        {
+            throw new DomainException(
+                "invalid_duration",
+                "Membership duration must be greater than zero.");
+        }
+
+        if (price < 0)
+        {
+            throw new DomainException("invalid_price", "Membership price cannot be negative.");
+        }
+
+        if (string.IsNullOrWhiteSpace(planName) || string.IsNullOrWhiteSpace(currency))
+        {
+            throw new DomainException(
+                "invalid_membership_snapshot",
+                "Membership plan name and currency are required.");
+        }
+
+        TenantId = tenantId;
+        MemberUserId = memberUserId;
+        GymId = gymId;
+        MembershipPlanId = membershipPlanId;
+        MembershipRequestId = membershipRequestId;
+        PlanName = planName.Trim();
+        DurationDays = durationDays;
+        Price = price;
+        Currency = currency.Trim().ToUpperInvariant();
+    }
+
     public Membership(
         Guid tenantId,
         Guid memberUserId,
@@ -106,26 +147,18 @@ public sealed class Membership : TenantEntity, IConcurrencyTracked
         string currency,
         Guid activatedByUserId,
         DateTime activatedAtUtc)
+        : this(
+            tenantId,
+            memberUserId,
+            gymId,
+            membershipPlanId,
+            membershipRequestId,
+            planName,
+            durationDays,
+            price,
+            currency)
     {
-        if (durationDays <= 0)
-        {
-            throw new DomainException("invalid_duration", "Membership duration must be greater than zero.");
-        }
-
-        if (price < 0)
-        {
-            throw new DomainException("invalid_price", "Membership price cannot be negative.");
-        }
-
         EnsureActorAndUtc(activatedByUserId, activatedAtUtc);
-        TenantId = tenantId;
-        MemberUserId = memberUserId;
-        GymId = gymId;
-        MembershipPlanId = membershipPlanId;
-        MembershipRequestId = membershipRequestId;
-        PlanName = planName;
-        Price = price;
-        Currency = currency;
         StartsAtUtc = activatedAtUtc;
         EndsAtUtc = activatedAtUtc.AddDays(durationDays);
         Status = MembershipStatus.Active;
@@ -133,15 +166,47 @@ public sealed class Membership : TenantEntity, IConcurrencyTracked
         StatusChangedAtUtc = activatedAtUtc;
     }
 
+    public static Membership CreatePendingPayment(
+        Guid tenantId,
+        Guid memberUserId,
+        Guid gymId,
+        Guid membershipPlanId,
+        Guid membershipRequestId,
+        string planName,
+        int durationDays,
+        decimal price,
+        string currency,
+        Guid approvedByUserId,
+        DateTime approvedAtUtc)
+    {
+        EnsureActorAndUtc(approvedByUserId, approvedAtUtc);
+        return new Membership(
+            tenantId,
+            memberUserId,
+            gymId,
+            membershipPlanId,
+            membershipRequestId,
+            planName,
+            durationDays,
+            price,
+            currency)
+        {
+            Status = MembershipStatus.PendingPayment,
+            StatusChangedByUserId = approvedByUserId,
+            StatusChangedAtUtc = approvedAtUtc,
+        };
+    }
+
     public Guid MemberUserId { get; private set; }
     public Guid GymId { get; private set; }
     public Guid MembershipPlanId { get; private set; }
     public Guid MembershipRequestId { get; private set; }
     public string PlanName { get; private set; } = string.Empty;
+    public int DurationDays { get; private set; }
     public decimal Price { get; private set; }
     public string Currency { get; private set; } = string.Empty;
-    public DateTime StartsAtUtc { get; private set; }
-    public DateTime EndsAtUtc { get; private set; }
+    public DateTime? StartsAtUtc { get; private set; }
+    public DateTime? EndsAtUtc { get; private set; }
     public MembershipStatus Status { get; private set; } = MembershipStatus.PendingPayment;
     public Guid? PaymentId { get; private set; }
     public Guid? StatusChangedByUserId { get; private set; }
@@ -149,14 +214,35 @@ public sealed class Membership : TenantEntity, IConcurrencyTracked
     public string? StatusReason { get; private set; }
     public byte[] RowVersion { get; set; } = [];
 
+    public void ActivateFromPayment(Guid paymentId, DateTime activatedAtUtc)
+    {
+        EnsurePaymentIdAndUtc(paymentId, activatedAtUtc);
+        EnsureStatus(MembershipStatus.PendingPayment, MembershipStatus.Active);
+        PaymentId = paymentId;
+        StartsAtUtc = activatedAtUtc;
+        EndsAtUtc = activatedAtUtc.AddDays(DurationDays);
+        Status = MembershipStatus.Active;
+        StatusChangedByUserId = null;
+        StatusChangedAtUtc = activatedAtUtc;
+        StatusReason = null;
+    }
+
+    public void CancelPendingPayment(Guid actorUserId, DateTime cancelledAtUtc)
+    {
+        EnsureStatus(MembershipStatus.PendingPayment, MembershipStatus.Cancelled);
+        SetStatus(MembershipStatus.Cancelled, actorUserId, cancelledAtUtc, null);
+    }
+
     public void CancelByMember(Guid actorUserId, DateTime cancelledAtUtc)
     {
+        EnsurePaymentlessCancellation();
         EnsureStatus(MembershipStatus.Active, MembershipStatus.Cancelled);
         SetStatus(MembershipStatus.Cancelled, actorUserId, cancelledAtUtc, null);
     }
 
     public void CancelByStaff(Guid actorUserId, DateTime cancelledAtUtc, string reason)
     {
+        EnsurePaymentlessCancellation();
         EnsureStatus(MembershipStatus.Active, MembershipStatus.Cancelled);
         SetStatus(
             MembershipStatus.Cancelled,
@@ -178,7 +264,7 @@ public sealed class Membership : TenantEntity, IConcurrencyTracked
     public void Reactivate(Guid actorUserId, DateTime reactivatedAtUtc, string reason)
     {
         EnsureStatus(MembershipStatus.Suspended, MembershipStatus.Active);
-        if (EndsAtUtc <= reactivatedAtUtc)
+        if (!EndsAtUtc.HasValue || EndsAtUtc <= reactivatedAtUtc)
         {
             throw new DomainException(
                 "membership_expired",
@@ -195,7 +281,7 @@ public sealed class Membership : TenantEntity, IConcurrencyTracked
     public void Expire(Guid actorUserId, DateTime expiredAtUtc)
     {
         EnsureStatus(MembershipStatus.Active, MembershipStatus.Expired);
-        if (EndsAtUtc > expiredAtUtc)
+        if (!EndsAtUtc.HasValue || EndsAtUtc > expiredAtUtc)
         {
             throw new DomainException(
                 "membership_not_expired",
@@ -203,6 +289,16 @@ public sealed class Membership : TenantEntity, IConcurrencyTracked
         }
 
         SetStatus(MembershipStatus.Expired, actorUserId, expiredAtUtc, null);
+    }
+
+    private void EnsurePaymentlessCancellation()
+    {
+        if (PaymentId.HasValue)
+        {
+            throw new DomainException(
+                "paid_cancellation_not_supported",
+                "Paid memberships cannot be cancelled because refunds are not supported.");
+        }
     }
 
     private void EnsureStatus(MembershipStatus expected, MembershipStatus target)
@@ -243,6 +339,19 @@ public sealed class Membership : TenantEntity, IConcurrencyTracked
         if (actorUserId == Guid.Empty)
         {
             throw new DomainException("actor_required", "A status-change actor is required.");
+        }
+
+        if (occurredAtUtc.Kind != DateTimeKind.Utc)
+        {
+            throw new DomainException("utc_required", "Status-change time must use UTC.");
+        }
+    }
+
+    private static void EnsurePaymentIdAndUtc(Guid paymentId, DateTime occurredAtUtc)
+    {
+        if (paymentId == Guid.Empty)
+        {
+            throw new DomainException("payment_required", "A verified payment is required.");
         }
 
         if (occurredAtUtc.Kind != DateTimeKind.Utc)

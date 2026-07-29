@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -5,9 +7,11 @@ import 'package:provider/provider.dart';
 import 'core/auth.dart';
 import 'core/app_errors.dart';
 import 'core/theme.dart';
+import 'core/payments.dart';
 import 'features/auth/auth_screens.dart';
 import 'features/member/member_shell.dart';
 import 'features/notifications/notification_screen.dart';
+import 'features/payments/payment_result_screen.dart';
 import 'features/trainer/trainer_shell.dart';
 
 class GymLinkMobileApp extends StatefulWidget {
@@ -19,6 +23,7 @@ class GymLinkMobileApp extends StatefulWidget {
 
 class _GymLinkMobileAppState extends State<GymLinkMobileApp> {
   late final GoRouter _router;
+  StreamSubscription<Uri>? _paymentLinkSubscription;
 
   @override
   void initState() {
@@ -36,8 +41,21 @@ class _GymLinkMobileAppState extends State<GymLinkMobileApp> {
             state.matchedLocation == '/register' ||
             state.matchedLocation == '/forgot-password' ||
             state.matchedLocation == '/reset-password';
-        if (!auth.isAuthenticated) return signingIn ? null : '/login';
-        if (signingIn || state.matchedLocation == '/loading') return '/';
+        final paymentResult = state.matchedLocation == '/payment/result';
+        if (!auth.isAuthenticated) {
+          if (signingIn) return null;
+          final returnTo = paymentResult ? state.uri.toString() : null;
+          return Uri(
+            path: '/login',
+            queryParameters: returnTo == null ? null : {'returnTo': returnTo},
+          ).toString();
+        }
+        if (signingIn || state.matchedLocation == '/loading') {
+          final returnTo = state.uri.queryParameters['returnTo'];
+          return returnTo != null && returnTo.startsWith('/payment/result')
+              ? returnTo
+              : '/';
+        }
         return null;
       },
       routes: [
@@ -72,8 +90,40 @@ class _GymLinkMobileAppState extends State<GymLinkMobileApp> {
           path: '/notifications',
           builder: (_, _) => const NotificationScreen(),
         ),
+        GoRoute(
+          path: '/payment/result',
+          builder: (_, state) => PaymentResultScreen(
+            outcome: state.uri.queryParameters['outcome'],
+            paymentId: state.uri.queryParameters['payment_id'],
+          ),
+        ),
       ],
     );
+    final paymentLinks = context.read<PaymentDeepLinks>();
+    _paymentLinkSubscription = paymentLinks.links.listen(_openPaymentLink);
+    final initialLink = paymentLinks.initialLink;
+    if (initialLink != null) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _openPaymentLink(initialLink),
+      );
+    }
+  }
+
+  void _openPaymentLink(Uri uri) {
+    if (!PaymentDeepLinks.isPaymentResult(uri)) return;
+    _router.go(
+      Uri(
+        path: '/payment/result',
+        queryParameters: uri.queryParameters,
+      ).toString(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _paymentLinkSubscription?.cancel();
+    _router.dispose();
+    super.dispose();
   }
 
   @override
