@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using GymLink.Application.Catalog;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.Memberships;
@@ -19,6 +20,107 @@ public sealed class Phase4MembershipApiTests
 {
     private const string Password = "Test123!";
     private const string SigningKey = "integration-test-signing-key-at-least-32-bytes";
+
+    [Fact]
+    public async Task Gym_admin_promotes_only_an_active_tenant_member_to_trainer()
+    {
+        var databaseName = $"GymLink_TrainerPromotion_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+
+        try
+        {
+            await using (var migrationContext = CreateContext(connectionString))
+            {
+                await migrationContext.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            var member = await LoginAsync(client, "member");
+            var sarajevoAdmin = await LoginAsync(client, "desktop");
+            var mostarAdmin = await LoginAsync(client, "gymadmin");
+            var planId = await FindPlanAsync(client, "GymLink Sarajevo");
+
+            Authorize(client, member);
+            var request = await CreateRequestAsync(client, planId);
+            Authorize(client, sarajevoAdmin);
+            var approval = await client.PostAsJsonAsync(
+                $"/api/tenant/membership-requests/{request.Id}/approve",
+                new { concurrencyToken = request.ConcurrencyToken });
+            approval.EnsureSuccessStatusCode();
+
+            Authorize(client, mostarAdmin);
+            var isolatedCandidates =
+                await client.GetFromJsonAsync<PagedResult<TrainerCandidateDto>>(
+                    "/api/tenant/trainer-candidates?page=1&pageSize=10");
+            Assert.NotNull(isolatedCandidates);
+            Assert.Empty(isolatedCandidates.Items);
+
+            Authorize(client, sarajevoAdmin);
+            var candidates =
+                await client.GetFromJsonAsync<PagedResult<TrainerCandidateDto>>(
+                    "/api/tenant/trainer-candidates?query=Role&page=1&pageSize=10");
+            Assert.NotNull(candidates);
+            var candidate = Assert.Single(candidates.Items);
+            Assert.Equal(member.User.Id, candidate.UserId);
+            using var lookups = JsonDocument.Parse(
+                await client.GetStringAsync("/api/reference-data/lookups"));
+            var trainingTypeId = lookups.RootElement
+                .GetProperty("trainingTypes")[0]
+                .GetProperty("id")
+                .GetGuid();
+
+            var promotion = await client.PostAsJsonAsync(
+                "/api/tenant/trainers",
+                new
+                {
+                    userId = candidate.UserId,
+                    biography = "Promoted active member and certified trainer.",
+                    credentials = "Certified trainer",
+                    trainingTypeIds = new[] { trainingTypeId },
+                    reason = "Approved by the assigned gym administrator",
+                });
+            Assert.Equal(HttpStatusCode.Created, promotion.StatusCode);
+            var trainer = await promotion.Content.ReadFromJsonAsync<TrainerDto>();
+            Assert.NotNull(trainer);
+            Assert.Equal(candidate.UserId, trainer.UserId);
+
+            Authorize(client, member);
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                (await client.GetAsync("/api/profile")).StatusCode);
+            var trainerSession = await LoginAsync(client, "member");
+            Assert.Equal(RoleNames.Trainer, trainerSession.User.Role);
+            Assert.Equal("GymLink Sarajevo", trainerSession.User.Tenant?.Name);
+
+            await using var verification = CreateContext(connectionString);
+            Assert.True(await verification.Memberships.IgnoreQueryFilters().AnyAsync(
+                membership =>
+                    membership.MemberUserId == candidate.UserId &&
+                    membership.Status == MembershipStatus.Active));
+            Assert.True(await verification.TrainerProfiles.IgnoreQueryFilters().AnyAsync(
+                profile => profile.UserId == candidate.UserId));
+            Assert.True(await verification.UserGymAssignments.IgnoreQueryFilters().AnyAsync(
+                assignment =>
+                    assignment.UserId == candidate.UserId &&
+                    assignment.Role == RoleNames.Trainer &&
+                    assignment.Status == AssignmentStatus.Active));
+            Assert.True(await verification.UserGymAssignments.IgnoreQueryFilters().AnyAsync(
+                assignment =>
+                    assignment.UserId == candidate.UserId &&
+                    assignment.Role == RoleNames.Member &&
+                    assignment.Status == AssignmentStatus.Ended));
+            Assert.True(await verification.SecurityAuditRecords.AnyAsync(
+                audit =>
+                    audit.TargetUserId == candidate.UserId &&
+                    audit.Action == "trainer.promoted"));
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
 
     [Fact]
     public async Task Member_and_tenant_admin_complete_isolated_multi_gym_workflow()

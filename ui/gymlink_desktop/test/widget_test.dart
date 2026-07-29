@@ -7,6 +7,7 @@ import 'package:gymlink_desktop/features/auth/login_screen.dart';
 import 'package:gymlink_desktop/features/central/central_screens.dart';
 import 'package:gymlink_desktop/features/desktop_frame.dart';
 import 'package:gymlink_desktop/features/auth/password_reset_screens.dart';
+import 'package:gymlink_desktop/features/gym_admin/gym_admin_screens.dart';
 import 'package:provider/provider.dart';
 
 void main() {
@@ -314,6 +315,118 @@ void main() {
     expect(find.textContaining('aktivan plan članstva'), findsWidgets);
     expect(api.activationAttempts, 1);
   });
+
+  testWidgets('role assignment omits CentralAdmin and countries are hidden', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _CentralAdminApi();
+
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: UserManagementScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dodijeli ulogu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Član'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Centralni administrator'), findsNothing);
+    await tester.tap(find.text('Trener').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Odustani'));
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: ReferenceDataScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Države'), findsNothing);
+    expect(find.text('Gradovi'), findsOneWidget);
+  });
+
+  testWidgets('GymAdmin edits recurring shifts instead of manual slots', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _GymAdminScheduleApi();
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: TenantAvailabilityScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Jutarnja · 08:00–15:00'), findsWidgets);
+    expect(find.text('Popodnevna · 15:00–22:00'), findsWidgets);
+    expect(find.text('Dodaj termin'), findsNothing);
+    await tester.tap(find.text('Jutarnja · 08:00–15:00').first);
+    await tester.tap(find.text('Sačuvaj raspored'));
+    await tester.pumpAndSettle();
+
+    expect((api.savedSchedule?['shifts'] as List), isNotEmpty);
+  });
+
+  testWidgets('GymAdmin promotes an eligible active member to trainer', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _GymAdminTrainerApi();
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: TrainerManagementScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Dodaj trenera'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Active Member'), findsOneWidget);
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Biografija'),
+      'Iskusni trener funkcionalnog treninga.',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Razlog promocije'),
+      'Odobrio GymAdmin',
+    );
+    await tester.tap(find.text('Funkcionalni trening'));
+    await tester.tap(find.text('Promoviši u trenera'));
+    await tester.pumpAndSettle();
+
+    expect(api.promotionBody?['userId'], 'member-1');
+    expect(api.promotionBody?['reason'], 'Odobrio GymAdmin');
+    expect(api.promotionBody?['trainingTypeIds'], ['type-1']);
+  });
 }
 
 Widget _centralHarness(_CentralAdminApi api) => MultiProvider(
@@ -407,6 +520,22 @@ class _CentralAdminApi extends ApiClient {
         totalCount: 1,
       );
     }
+    if (path == '/api/admin/reference-data/cities') {
+      return const PagedData(
+        items: [
+          {
+            'id': 'city-sarajevo',
+            'countryId': 'country-bih',
+            'countryName': 'Bosna i Hercegovina',
+            'name': 'Sarajevo',
+            'isActive': true,
+          },
+        ],
+        page: 1,
+        pageSize: 50,
+        totalCount: 1,
+      );
+    }
     if (path == '/api/admin/reference-data/training-types') {
       return const PagedData(
         items: [
@@ -491,6 +620,126 @@ class _CentralAdminApi extends ApiClient {
         );
       }
       _assigned = true;
+      return const {};
+    }
+    throw StateError('Unexpected post request: $path');
+  }
+}
+
+class _GymAdminScheduleApi extends ApiClient {
+  _GymAdminScheduleApi() : super(_TestTokens());
+
+  Map<String, dynamic>? savedSchedule;
+
+  @override
+  Future<PagedData> page(
+    String path, {
+    Map<String, Object?> query = const {},
+  }) async {
+    if (path == '/api/tenant/trainers') {
+      return const PagedData(
+        items: [
+          {'id': 'trainer-1', 'displayName': 'Test Trainer', 'isActive': true},
+        ],
+        page: 1,
+        pageSize: 50,
+        totalCount: 1,
+      );
+    }
+    throw StateError('Unexpected page request: $path');
+  }
+
+  @override
+  Future<Object?> get(
+    String path, {
+    Map<String, Object?> query = const {},
+    bool authenticated = true,
+  }) async {
+    if (path == '/api/tenant/trainer-availability/schedule') {
+      return {
+        'id': 'schedule-1',
+        'trainerProfileId': 'trainer-1',
+        'timeZoneId': 'Europe/Sarajevo',
+        'bookingHorizonWeeks': 8,
+        'shifts': <Object>[],
+        'concurrencyToken': 'token-1',
+      };
+    }
+    throw StateError('Unexpected get request: $path');
+  }
+
+  @override
+  Future<Object?> put(String path, {Object? body}) async {
+    if (path == '/api/tenant/trainer-availability/schedule') {
+      savedSchedule = Map<String, dynamic>.from(body! as Map);
+      return {...savedSchedule!, 'concurrencyToken': 'token-2'};
+    }
+    throw StateError('Unexpected put request: $path');
+  }
+}
+
+class _GymAdminTrainerApi extends ApiClient {
+  _GymAdminTrainerApi() : super(_TestTokens());
+
+  Map<String, dynamic>? promotionBody;
+
+  @override
+  Future<PagedData> page(
+    String path, {
+    Map<String, Object?> query = const {},
+  }) async {
+    if (path == '/api/tenant/trainers' ||
+        path == '/api/tenant/trainer-offerings') {
+      return const PagedData(
+        items: [],
+        page: 1,
+        pageSize: 50,
+        totalCount: 0,
+      );
+    }
+    if (path == '/api/tenant/trainer-candidates') {
+      return const PagedData(
+        items: [
+          {
+            'userId': 'member-1',
+            'displayName': 'Active Member',
+            'email': 'active@gymlink.local',
+            'membershipPlan': 'Standard',
+            'membershipEndsAtUtc': '2030-01-31T00:00:00Z',
+          },
+        ],
+        page: 1,
+        pageSize: 50,
+        totalCount: 1,
+      );
+    }
+    throw StateError('Unexpected page request: $path');
+  }
+
+  @override
+  Future<Object?> get(
+    String path, {
+    Map<String, Object?> query = const {},
+    bool authenticated = true,
+  }) async {
+    if (path == '/api/reference-data/lookups') {
+      return {
+        'trainingTypes': [
+          {'id': 'type-1', 'name': 'Funkcionalni trening'},
+        ],
+      };
+    }
+    throw StateError('Unexpected get request: $path');
+  }
+
+  @override
+  Future<Object?> post(
+    String path, {
+    Object? body,
+    bool authenticated = true,
+  }) async {
+    if (path == '/api/tenant/trainers') {
+      promotionBody = Map<String, dynamic>.from(body! as Map);
       return const {};
     }
     throw StateError('Unexpected post request: $path');

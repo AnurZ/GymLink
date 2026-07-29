@@ -1149,33 +1149,60 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
         style: TextStyle(fontWeight: FontWeight.w800),
       ),
       const SizedBox(height: 8),
-      ..._days.map(
-        (day) => Card(
-          child: Row(
-            children: [
-              SizedBox(
-                width: 120,
-                child: SwitchListTile(
-                  dense: true,
-                  title: Text(_weekdayLabel(day.dayOfWeek)),
-                  value: !day.isClosed,
-                  onChanged: (value) => setState(() => day.isClosed = !value),
-                ),
-              ),
-              if (!day.isClosed) ...[
-                TextButton(
-                  onPressed: () => _pickTime(day, true),
-                  child: Text('Od ${day.opens.format(context)}'),
-                ),
-                TextButton(
-                  onPressed: () => _pickTime(day, false),
-                  child: Text('Do ${day.closes.format(context)}'),
-                ),
-              ] else
-                const Text('Zatvoreno'),
-            ],
-          ),
+      GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 210,
+          mainAxisExtent: 176,
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
         ),
+        itemCount: _days.length,
+        itemBuilder: (context, index) {
+          final day = _days[index];
+          return Card(
+            margin: EdgeInsets.zero,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _weekdayLabel(day.dayOfWeek),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      Switch(
+                        value: !day.isClosed,
+                        onChanged: (value) =>
+                            setState(() => day.isClosed = !value),
+                      ),
+                    ],
+                  ),
+                  if (day.isClosed)
+                    const Expanded(
+                      child: Center(child: Text('Zatvoreno')),
+                    )
+                  else ...[
+                    OutlinedButton(
+                      onPressed: () => _pickTime(day, true),
+                      child: Text('Od ${day.opens.format(context)}'),
+                    ),
+                    const SizedBox(height: 4),
+                    OutlinedButton(
+                      onPressed: () => _pickTime(day, false),
+                      child: Text('Do ${day.closes.format(context)}'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
       ),
       const SizedBox(height: 14),
       const Text('Oprema', style: TextStyle(fontWeight: FontWeight.w800)),
@@ -1849,7 +1876,7 @@ class ReferenceDataScreen extends StatefulWidget {
 
 class _ReferenceDataScreenState extends State<ReferenceDataScreen>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 4, vsync: this);
+  late final TabController _tabs = TabController(length: 3, vsync: this);
 
   @override
   void dispose() {
@@ -1863,7 +1890,6 @@ class _ReferenceDataScreenState extends State<ReferenceDataScreen>
       TabBar(
         controller: _tabs,
         tabs: const [
-          Tab(text: 'Države'),
           Tab(text: 'Gradovi'),
           Tab(text: 'Oprema'),
           Tab(text: 'Tipovi treninga'),
@@ -1874,7 +1900,6 @@ class _ReferenceDataScreenState extends State<ReferenceDataScreen>
         child: TabBarView(
           controller: _tabs,
           children: const [
-            _ReferenceSection(kind: _ReferenceKind.country),
             _ReferenceSection(kind: _ReferenceKind.city),
             _ReferenceSection(kind: _ReferenceKind.equipment),
             _ReferenceSection(kind: _ReferenceKind.trainingType),
@@ -1932,7 +1957,19 @@ class _ReferenceSectionState extends State<_ReferenceSection> {
           ),
       ]);
       _items = results[0].items;
-      if (results.length > 1) _countries = results[1].items;
+      if (results.length > 1) {
+        _countries = results[1].items
+            .where((country) => country['code'] == 'BIH')
+            .toList(growable: false);
+        if (_countries.isEmpty) {
+          throw const ApiProblem(
+            status: 0,
+            code: 'bih_country_missing',
+            message:
+                'Bosna i Hercegovina nije dostupna u referentnim podacima.',
+          );
+        }
+      }
       _error = null;
     } catch (error) {
       _error = error;
@@ -2112,14 +2149,10 @@ class _RoleDialogState extends State<_RoleDialog> {
                   value: 'GymAdmin',
                   child: Text('Administrator teretane'),
                 ),
-                DropdownMenuItem(
-                  value: 'CentralAdmin',
-                  child: Text('Centralni administrator'),
-                ),
               ],
               onChanged: (value) => setState(() {
                 _role = value!;
-                if (_role == 'Member' || _role == 'CentralAdmin') {
+                if (_role == 'Member') {
                   _tenant = null;
                 }
               }),
@@ -2216,22 +2249,6 @@ class _ReferenceDialogState extends State<_ReferenceDialog> {
             TextField(
               controller: _code,
               decoration: const InputDecoration(labelText: 'Kod'),
-            ),
-            const SizedBox(height: 10),
-          ],
-          if (widget.kind == _ReferenceKind.city) ...[
-            DropdownButtonFormField<Map<String, dynamic>>(
-              initialValue: _country,
-              decoration: const InputDecoration(labelText: 'Država'),
-              items: widget.countries
-                  .map(
-                    (item) => DropdownMenuItem(
-                      value: item,
-                      child: Text(item['name'].toString()),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) => _country = value,
             ),
             const SizedBox(height: 10),
           ],

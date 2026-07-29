@@ -29,6 +29,12 @@ public sealed class TenantCatalogController(
         CancellationToken cancellationToken) =>
         Ok(await trainers.SearchAsync(request, cancellationToken));
 
+    [HttpGet("trainer-candidates")]
+    public async Task<IActionResult> SearchTrainerCandidates(
+        [FromQuery] TrainerCandidateSearchRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(await trainers.SearchCandidatesAsync(request, cancellationToken));
+
     [HttpPost("trainers")]
     public async Task<IActionResult> CreateTrainer(
         CreateTrainerRequest request,

@@ -128,6 +128,13 @@ internal sealed class UserAdministrationService(
         {
             return await transaction.ExecuteSerializableAsync(async token =>
             {
+                if (request.Role == RoleNames.CentralAdmin)
+                {
+                    throw new ConflictException(
+                        "central_admin_fixed",
+                        "The seeded CentralAdmin is the only CentralAdmin account.");
+                }
+
                 if (!RoleNames.All.Contains(request.Role))
                 {
                     throw new ApplicationRuleException(
@@ -325,12 +332,19 @@ internal sealed class UserAdministrationService(
     {
         var profile = await dbContext.UserProfiles.AsNoTracking()
             .SingleAsync(x => x.Id == account.Id, cancellationToken);
-        var assignment = await (
-                from item in dbContext.UserGymAssignments.IgnoreQueryFilters().AsNoTracking()
-                join tenant in dbContext.Tenants.AsNoTracking() on item.TenantId equals tenant.Id
-                where item.UserId == account.Id && item.Status == AssignmentStatus.Active
-                select new TenantSessionDto(item.TenantId, tenant.Name, item.Role))
-            .SingleOrDefaultAsync(cancellationToken);
+        TenantSessionDto? assignment = null;
+        if (account.Role is RoleNames.GymAdmin or RoleNames.Trainer)
+        {
+            assignment = await (
+                    from item in dbContext.UserGymAssignments.IgnoreQueryFilters().AsNoTracking()
+                    join tenant in dbContext.Tenants.AsNoTracking() on item.TenantId equals tenant.Id
+                    where item.UserId == account.Id &&
+                          item.Role == account.Role &&
+                          item.Status == AssignmentStatus.Active
+                    select new TenantSessionDto(item.TenantId, tenant.Name, item.Role))
+                .SingleOrDefaultAsync(cancellationToken);
+        }
+
         return new(
             account.Id,
             account.Username,

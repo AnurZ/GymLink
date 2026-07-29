@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gymlink_desktop/core/api.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 void main() {
   test('ProblemDetails keeps backend validation messages', () {
@@ -29,6 +30,36 @@ void main() {
     expect(problem.message, contains('Ponovo pokrenite'));
   });
 
+  test('invalid credentials are localized safely', () {
+    final problem = ApiProblem.fromResponse(
+      http.Response(
+        '{"title":"invalid_credentials","detail":"Internal English text"}',
+        401,
+      ),
+    );
+
+    expect(problem.message, 'Pogrešno korisničko ime/email ili lozinka.');
+  });
+
+  test('transport failures become user-facing API problems', () async {
+    final api = ApiClient(
+      _Tokens(),
+      baseUrlOverride: 'https://example.test',
+      httpClient: MockClient((_) => throw http.ClientException('offline')),
+    );
+
+    await expectLater(
+      api.get('/api/test', authenticated: false),
+      throwsA(
+        isA<ApiProblem>().having(
+          (problem) => problem.code,
+          'code',
+          'network_error',
+        ),
+      ),
+    );
+  });
+
   test('paged response parses list and totals', () {
     final page = PagedData.fromJson({
       'items': [
@@ -42,4 +73,15 @@ void main() {
     expect(page.items.single['name'], 'GymLink');
     expect(page.totalCount, 1);
   });
+}
+
+final class _Tokens implements AuthTokenSource {
+  @override
+  String? get accessToken => null;
+
+  @override
+  Future<void> invalidate() async {}
+
+  @override
+  Future<bool> refresh() async => false;
 }

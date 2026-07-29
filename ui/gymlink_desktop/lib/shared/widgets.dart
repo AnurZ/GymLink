@@ -29,7 +29,7 @@ class AsyncPanel extends StatelessWidget {
             Text(
               error is ApiProblem
                   ? (error! as ApiProblem).message
-                  : error.toString(),
+                  : 'Došlo je do neočekivane greške.',
             ),
             const SizedBox(height: 12),
             if (onRetry != null)

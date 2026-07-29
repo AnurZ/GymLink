@@ -105,10 +105,21 @@ public sealed record TrainerDto(
     int ReviewCount,
     IReadOnlyList<Guid> TrainingTypeIds);
 
-public record CreateTrainerRequest
+public sealed record TrainerCandidateSearchRequest : PagedRequest
 {
-    public Guid UserId { get; init; }
+    [MaxLength(160)]
+    public string? Query { get; init; }
+}
 
+public sealed record TrainerCandidateDto(
+    Guid UserId,
+    string DisplayName,
+    string Email,
+    string MembershipPlan,
+    DateTime MembershipEndsAtUtc);
+
+public record TrainerWriteRequest
+{
     [Required, MaxLength(4000)]
     public required string Biography { get; init; }
 
@@ -118,8 +129,17 @@ public record CreateTrainerRequest
     public IReadOnlyList<Guid> TrainingTypeIds { get; init; } = [];
 }
 
-public sealed record UpdateTrainerRequest : CreateTrainerRequest
+public sealed record CreateTrainerRequest : TrainerWriteRequest
 {
+    public Guid UserId { get; init; }
+
+    [Required, StringLength(1000, MinimumLength = 2)]
+    public required string Reason { get; init; }
+}
+
+public sealed record UpdateTrainerRequest : TrainerWriteRequest
+{
+    public Guid UserId { get; init; }
     public bool IsActive { get; init; }
 }
 

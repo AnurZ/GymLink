@@ -67,18 +67,15 @@ class _MembershipScreenState extends State<MembershipScreen> {
     });
   }
 
-  Future<void> _cancelMembership(Map<String, dynamic> item) async {
-    if (!await confirmAction(
-      context,
-      title: 'Otkaži članstvo',
-      message: 'Aktivno članstvo će biti otkazano.',
-      action: 'Otkaži',
-    )) {
-      return;
-    }
-    await _mutate('/api/me/memberships/${item['id']}/cancel', {
-      'concurrencyToken': item['concurrencyToken'],
-    });
+  Future<void> _openMembership(Map<String, dynamic> item) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => MembershipDetailsScreen(
+          membershipId: item['id'].toString(),
+        ),
+      ),
+    );
+    if (mounted) await _load();
   }
 
   Future<void> _mutate(String path, Map<String, Object?> body) async {
@@ -134,19 +131,17 @@ class _MembershipScreenState extends State<MembershipScreen> {
                         subtitle: Text(
                           '${item['planName']} · ${_date(item['startsAtUtc'])} – ${_date(item['endsAtUtc'])}',
                         ),
-                        trailing: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
                             StatusPill(
                               enumLabel(item['status'], _membershipStatuses),
                             ),
+                            const SizedBox(width: 6),
+                            const Icon(Icons.chevron_right),
                           ],
                         ),
-                        onTap:
-                            (item['allowedActions'] as List? ?? const [])
-                                .contains('cancel')
-                            ? () => _cancelMembership(item)
-                            : null,
+                        onTap: () => _openMembership(item),
                       ),
                     ),
                   ),
@@ -186,4 +181,199 @@ class _MembershipScreenState extends State<MembershipScreen> {
   String _date(Object? value) => DateFormat(
     'dd.MM.yyyy.',
   ).format(DateTime.parse(value.toString()).toLocal());
+}
+
+class MembershipDetailsScreen extends StatefulWidget {
+  const MembershipDetailsScreen({required this.membershipId, super.key});
+
+  final String membershipId;
+
+  @override
+  State<MembershipDetailsScreen> createState() =>
+      _MembershipDetailsScreenState();
+}
+
+class _MembershipDetailsScreenState extends State<MembershipDetailsScreen> {
+  Map<String, dynamic>? _membership;
+  bool _loading = true;
+  bool _cancelling = false;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      _membership = Map<String, dynamic>.from(
+        (await context.read<ApiClient>().get(
+              '/api/me/memberships/${widget.membershipId}',
+            ))!
+            as Map,
+      );
+    } catch (error) {
+      _error = error;
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _cancel() async {
+    final membership = _membership;
+    final api = context.read<ApiClient>();
+    if (membership == null ||
+        !await confirmAction(
+          context,
+          title: 'Otkaži članstvo',
+          message: 'Aktivno članstvo će biti otkazano.',
+          action: 'Otkaži',
+        )) {
+      return;
+    }
+    setState(() => _cancelling = true);
+    try {
+      _membership = Map<String, dynamic>.from(
+        (await api.post(
+              '/api/me/memberships/${widget.membershipId}/cancel',
+              body: {'concurrencyToken': membership['concurrencyToken']},
+            ))!
+            as Map,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Članstvo je otkazano.')),
+        );
+      }
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+      if (error.status == 409) await _load();
+    } finally {
+      if (mounted) setState(() => _cancelling = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final membership = _membership;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Detalji članstva')),
+      body: AsyncPanel(
+        loading: _loading,
+        error: _error,
+        onRetry: _load,
+        child: membership == null
+            ? const SizedBox.shrink()
+            : ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  membership['gymName'].toString(),
+                                  style: Theme.of(context).textTheme.titleLarge
+                                      ?.copyWith(fontWeight: FontWeight.w800),
+                                ),
+                              ),
+                              StatusPill(
+                                enumLabel(
+                                  membership['status'],
+                                  _membershipStatuses,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 18),
+                          _DetailRow(
+                            label: 'Plan',
+                            value: membership['planName'].toString(),
+                          ),
+                          _DetailRow(
+                            label: 'Cijena',
+                            value:
+                                '${membership['price']} ${membership['currency']}',
+                          ),
+                          _DetailRow(
+                            label: 'Početak',
+                            value: _date(membership['startsAtUtc']),
+                          ),
+                          _DetailRow(
+                            label: 'Važi do',
+                            value: _date(membership['endsAtUtc']),
+                          ),
+                          if (membership['statusReason'] != null)
+                            _DetailRow(
+                              label: 'Razlog promjene',
+                              value: membership['statusReason'].toString(),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if ((membership['allowedActions'] as List? ?? const [])
+                      .contains('cancel')) ...[
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.red.shade700,
+                      ),
+                      onPressed: _cancelling ? null : _cancel,
+                      icon: _cancelling
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.cancel_outlined),
+                      label: const Text('Otkaži članstvo'),
+                    ),
+                  ],
+                ],
+              ),
+      ),
+    );
+  }
+
+  String _date(Object? value) => DateFormat(
+    'dd.MM.yyyy.',
+  ).format(DateTime.parse(value.toString()).toLocal());
+}
+
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 120,
+          child: Text(label, style: const TextStyle(color: Colors.blueGrey)),
+        ),
+        Expanded(
+          child: Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+        ),
+      ],
+    ),
+  );
 }

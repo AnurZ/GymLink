@@ -13,6 +13,9 @@ public interface IGymCatalogService
 public interface ITrainerCatalogService
 {
     Task<PagedResult<TrainerDto>> SearchAsync(TrainerSearchRequest request, CancellationToken cancellationToken);
+    Task<PagedResult<TrainerCandidateDto>> SearchCandidatesAsync(
+        TrainerCandidateSearchRequest request,
+        CancellationToken cancellationToken);
     Task<IReadOnlyList<TrainerDto>> GetPublicByGymAsync(Guid gymId, CancellationToken cancellationToken);
     Task<TrainerDto> CreateAsync(CreateTrainerRequest request, CancellationToken cancellationToken);
     Task<TrainerDto> UpdateAsync(Guid id, UpdateTrainerRequest request, CancellationToken cancellationToken);

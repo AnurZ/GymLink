@@ -4,8 +4,12 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Json;
+using GymLink.Application.Administration;
+using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Domain.Common;
+using GymLink.Domain.Enums;
+using GymLink.Domain.Tenancy;
 using GymLink.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -18,6 +22,66 @@ public sealed class SeededIdentityApiTests
 {
     private const string Password = "Test123!";
     private const string SigningKey = "integration-test-signing-key-at-least-32-bytes";
+
+    [Fact]
+    public async Task CentralAdmin_user_search_handles_members_with_multiple_active_gym_assignments()
+    {
+        var databaseName = $"GymLink_AdminUsers_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+
+        try
+        {
+            await using (var migrationContext = CreateContext(connectionString))
+            {
+                await migrationContext.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+            var centralAdmin = await LoginAsync(client, "centraladmin");
+
+            await using (var setup = CreateContext(connectionString))
+            {
+                var memberId = await setup.Users
+                    .Where(x => x.UserName == "mobile")
+                    .Select(x => x.Id)
+                    .SingleAsync();
+                var tenantIds = await setup.Tenants
+                    .OrderBy(x => x.Name)
+                    .Select(x => x.Id)
+                    .Take(2)
+                    .ToListAsync();
+                Assert.Equal(2, tenantIds.Count);
+
+                setup.UserGymAssignments.AddRange(tenantIds.Select(tenantId =>
+                    new UserGymAssignment
+                    {
+                        TenantId = tenantId,
+                        UserId = memberId,
+                        Role = RoleNames.Member,
+                        Status = AssignmentStatus.Active,
+                        StartsAtUtc = DateTime.UtcNow,
+                        Reason = "Regression setup for multiple memberships.",
+                    }));
+                await setup.SaveChangesAsync();
+            }
+
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", centralAdmin.AccessToken);
+            var users = await client.GetFromJsonAsync<PagedResult<AdminUserDto>>(
+                "/api/admin/users?query=mobile&page=1&pageSize=10");
+            var member = Assert.Single(users!.Items);
+            Assert.Equal(RoleNames.Member, member.Role);
+            Assert.Null(member.Assignment);
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
 
     [Fact]
     public async Task Seed_is_idempotent_and_every_documented_account_authenticates()
@@ -40,6 +104,22 @@ public sealed class SeededIdentityApiTests
 
             await using var factory = CreateFactory(connectionString);
             using var client = factory.CreateClient();
+            var invalidLogin = await client.PostAsJsonAsync(
+                "/api/auth/login",
+                new { identifier = "member", password = "wrong-password" });
+            Assert.Equal(HttpStatusCode.Unauthorized, invalidLogin.StatusCode);
+            using (var problem = JsonDocument.Parse(
+                       await invalidLogin.Content.ReadAsStringAsync()))
+            {
+                Assert.Equal(
+                    "invalid_credentials",
+                    problem.RootElement.GetProperty("title").GetString());
+                Assert.True(problem.RootElement.TryGetProperty("traceId", out _));
+            }
+            Assert.Equal(
+                HttpStatusCode.OK,
+                (await client.GetAsync("/health")).StatusCode);
+
             var accounts = new[]
             {
                 new ExpectedAccount("desktop", RoleNames.GymAdmin, "GymLink Sarajevo"),
@@ -81,6 +161,22 @@ public sealed class SeededIdentityApiTests
             Assert.Equal(
                 HttpStatusCode.OK,
                 (await client.GetAsync("/api/admin/users")).StatusCode);
+            var secondCentralAdmin = await client.PostAsJsonAsync(
+                "/api/admin/users/roles/assign",
+                new
+                {
+                    identifier = "member",
+                    role = RoleNames.CentralAdmin,
+                    reason = "Not permitted",
+                });
+            Assert.Equal(HttpStatusCode.Conflict, secondCentralAdmin.StatusCode);
+            using (var problem = JsonDocument.Parse(
+                       await secondCentralAdmin.Content.ReadAsStringAsync()))
+            {
+                Assert.Equal(
+                    "central_admin_fixed",
+                    problem.RootElement.GetProperty("title").GetString());
+            }
             Assert.Equal(
                 HttpStatusCode.OK,
                 (await client.GetAsync(

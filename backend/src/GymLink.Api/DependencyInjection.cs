@@ -30,7 +30,9 @@ public static class DependencyInjection
                         Title = "rate_limit_exceeded",
                         Detail = "Too many requests. Try again later.",
                     },
-                    cancellationToken);
+                    options: null,
+                    contentType: "application/problem+json",
+                    cancellationToken: cancellationToken);
             };
             options.AddPolicy(
                 "PasswordResetRequest",

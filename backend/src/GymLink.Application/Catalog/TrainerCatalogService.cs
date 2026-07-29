@@ -3,6 +3,9 @@ using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
+using GymLink.Domain.Identity;
+using GymLink.Domain.Memberships;
+using GymLink.Domain.Tenancy;
 using GymLink.Domain.Trainers;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,7 +14,11 @@ namespace GymLink.Application.Catalog;
 public sealed class TrainerCatalogService(
     IApplicationDbContext dbContext,
     ITenantContext tenantContext,
-    IIdentityAccountManager accounts) : ITrainerCatalogService
+    IIdentityAccountManager accounts,
+    IApplicationTransaction transaction,
+    ICurrentUser currentUser,
+    ITenantMutationScope tenantMutationScope,
+    TimeProvider timeProvider) : ITrainerCatalogService
 {
     public async Task<PagedResult<TrainerDto>> SearchAsync(
         TrainerSearchRequest request,
@@ -68,6 +75,71 @@ public sealed class TrainerCatalogService(
         return new PagedResult<TrainerDto>(items, request.Page, request.PageSize, totalCount);
     }
 
+    public async Task<PagedResult<TrainerCandidateDto>> SearchCandidatesAsync(
+        TrainerCandidateSearchRequest request,
+        CancellationToken cancellationToken)
+    {
+        RequireTenant();
+        request.Validate();
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        var query =
+            from membership in dbContext.Memberships.AsNoTracking()
+            join user in dbContext.UserProfiles.AsNoTracking()
+                on membership.MemberUserId equals user.Id
+            where membership.Status == MembershipStatus.Active &&
+                  membership.EndsAtUtc > now &&
+                  user.IsActive &&
+                  dbContext.UserGymAssignments.Any(
+                      assignment =>
+                          assignment.UserId == membership.MemberUserId &&
+                          assignment.Role == RoleNames.Member &&
+                          assignment.Status == AssignmentStatus.Active) &&
+                  !dbContext.TrainerProfiles.Any(
+                      trainer => trainer.UserId == membership.MemberUserId)
+            select new
+            {
+                membership.MemberUserId,
+                user.DisplayName,
+                membership.PlanName,
+                membership.EndsAtUtc,
+            };
+
+        if (!string.IsNullOrWhiteSpace(request.Query))
+        {
+            var pattern = $"%{request.Query.Trim()}%";
+            query = query.Where(candidate =>
+                EF.Functions.Like(candidate.DisplayName, pattern));
+        }
+
+        var totalCount = await query.LongCountAsync(cancellationToken);
+        var rows = await query
+            .OrderBy(candidate => candidate.DisplayName)
+            .ThenBy(candidate => candidate.MemberUserId)
+            .Skip((request.Page - 1) * request.PageSize)
+            .Take(request.PageSize)
+            .ToListAsync(cancellationToken);
+        var items = new List<TrainerCandidateDto>(rows.Count);
+        foreach (var row in rows)
+        {
+            var account = await accounts.FindByIdAsync(row.MemberUserId, cancellationToken);
+            if (account?.Role == RoleNames.Member)
+            {
+                items.Add(new TrainerCandidateDto(
+                    row.MemberUserId,
+                    row.DisplayName,
+                    account.Email,
+                    row.PlanName,
+                    row.EndsAtUtc));
+            }
+        }
+
+        return new PagedResult<TrainerCandidateDto>(
+            items,
+            request.Page,
+            request.PageSize,
+            totalCount);
+    }
+
     public async Task<IReadOnlyList<TrainerDto>> GetPublicByGymAsync(
         Guid gymId,
         CancellationToken cancellationToken)
@@ -120,42 +192,154 @@ public sealed class TrainerCatalogService(
         CancellationToken cancellationToken)
     {
         var tenantId = RequireTenant();
-        var user = await dbContext.UserProfiles.AsNoTracking()
-            .SingleOrDefaultAsync(x => x.Id == request.UserId && x.IsActive, cancellationToken)
-            ?? throw new NotFoundException("user_not_found", "The selected user was not found.");
-        if (!await accounts.IsInRoleAsync(request.UserId, RoleNames.Trainer) ||
-            !await dbContext.UserGymAssignments.AnyAsync(
-                x => x.UserId == request.UserId &&
-                     x.Role == RoleNames.Trainer &&
-                     x.Status == AssignmentStatus.Active,
-                cancellationToken))
+        var actorId = currentUser.UserId
+            ?? throw new AuthenticationFailedException(
+                "authentication_required",
+                "Authentication is required.");
+        var trainingTypeIds = await ValidateTrainingTypesAsync(
+            request.TrainingTypeIds,
+            cancellationToken);
+        return await transaction.ExecuteSerializableAsync(async token =>
         {
-            throw new ConflictException(
-                "trainer_assignment_required",
-                "The selected user must have the Trainer role and an active assignment in this gym.");
-        }
-        if (await dbContext.TrainerProfiles.AnyAsync(x => x.UserId == request.UserId, cancellationToken))
-        {
-            throw new ConflictException("trainer_duplicate", "This user already has a trainer profile in the gym.");
-        }
+            var now = timeProvider.GetUtcNow().UtcDateTime;
+            var user = await dbContext.UserProfiles
+                .SingleOrDefaultAsync(
+                    candidate => candidate.Id == request.UserId && candidate.IsActive,
+                    token)
+                ?? throw new NotFoundException(
+                    "trainer_candidate_not_found",
+                    "The selected active member was not found.");
+            var account = await accounts.FindByIdAsync(request.UserId, token)
+                ?? throw new NotFoundException(
+                    "trainer_candidate_not_found",
+                    "The selected active member was not found.");
+            if (account.Role != RoleNames.Member)
+            {
+                throw new ConflictException(
+                    "trainer_candidate_invalid",
+                    "Only an active Member account can be promoted to Trainer.");
+            }
 
-        var trainingTypeIds = await ValidateTrainingTypesAsync(request.TrainingTypeIds, cancellationToken);
-        var trainer = new TrainerProfile
-        {
-            TenantId = tenantId,
-            UserId = request.UserId,
-            Biography = request.Biography.Trim(),
-            Credentials = request.Credentials?.Trim(),
-        };
-        dbContext.TrainerProfiles.Add(trainer);
-        dbContext.TrainerTrainingTypes.AddRange(trainingTypeIds.Select(id => new TrainerTrainingType
-        {
-            TenantId = tenantId,
-            TrainerProfileId = trainer.Id,
-            TrainingTypeId = id,
-        }));
-        await dbContext.SaveChangesAsync(cancellationToken);
-        return ToDto(trainer, user.DisplayName, trainingTypeIds);
+            if (!await dbContext.Memberships.AnyAsync(
+                    membership =>
+                        membership.MemberUserId == request.UserId &&
+                        membership.Status == MembershipStatus.Active &&
+                        membership.EndsAtUtc > now,
+                    token))
+            {
+                throw new ConflictException(
+                    "active_membership_required",
+                    "The selected member must have an active membership in this gym.");
+            }
+
+            if (await dbContext.TrainerProfiles.IgnoreQueryFilters()
+                    .AnyAsync(trainer => trainer.UserId == request.UserId, token))
+            {
+                throw new ConflictException(
+                    "trainer_duplicate",
+                    "This user already has a trainer profile.");
+            }
+
+            var assignments = await dbContext.UserGymAssignments
+                .IgnoreQueryFilters()
+                .Where(assignment =>
+                    assignment.UserId == request.UserId &&
+                    assignment.Status == AssignmentStatus.Active)
+                .ToListAsync(token);
+            if (assignments.Any(assignment =>
+                    assignment.TenantId != tenantId ||
+                    assignment.Role != RoleNames.Member))
+            {
+                throw new ConflictException(
+                    "trainer_assignment_conflict",
+                    "The selected member already has a conflicting active gym assignment.");
+            }
+
+            using var tenantWrite = tenantMutationScope.Begin(tenantId);
+            foreach (var assignment in assignments)
+            {
+                assignment.Status = AssignmentStatus.Ended;
+                assignment.EndsAtUtc = now;
+                assignment.Reason = request.Reason.Trim();
+            }
+
+            var trainerAssignment = await dbContext.UserGymAssignments
+                .IgnoreQueryFilters()
+                .SingleOrDefaultAsync(
+                    assignment =>
+                        assignment.UserId == request.UserId &&
+                        assignment.TenantId == tenantId &&
+                        assignment.Role == RoleNames.Trainer,
+                    token);
+            if (trainerAssignment is null)
+            {
+                dbContext.UserGymAssignments.Add(new UserGymAssignment
+                {
+                    TenantId = tenantId,
+                    UserId = request.UserId,
+                    Role = RoleNames.Trainer,
+                    Status = AssignmentStatus.Active,
+                    StartsAtUtc = now,
+                    ApprovedByUserId = actorId,
+                    Reason = request.Reason.Trim(),
+                });
+            }
+            else
+            {
+                trainerAssignment.Status = AssignmentStatus.Active;
+                trainerAssignment.StartsAtUtc = now;
+                trainerAssignment.EndsAtUtc = null;
+                trainerAssignment.ApprovedByUserId = actorId;
+                trainerAssignment.Reason = request.Reason.Trim();
+            }
+
+            var trainer = new TrainerProfile
+            {
+                TenantId = tenantId,
+                UserId = request.UserId,
+                Biography = request.Biography.Trim(),
+                Credentials = request.Credentials?.Trim(),
+            };
+            dbContext.TrainerProfiles.Add(trainer);
+            dbContext.TrainerTrainingTypes.AddRange(trainingTypeIds.Select(id =>
+                new TrainerTrainingType
+                {
+                    TenantId = tenantId,
+                    TrainerProfileId = trainer.Id,
+                    TrainingTypeId = id,
+                }));
+
+            EnsureSucceeded(await accounts.ReplaceRoleAsync(
+                request.UserId,
+                RoleNames.Trainer,
+                token));
+            var sessions = await dbContext.RefreshTokenSessions
+                .Where(session =>
+                    session.UserId == request.UserId &&
+                    session.RevokedAtUtc == null)
+                .ToListAsync(token);
+            foreach (var session in sessions)
+            {
+                session.RevokedAtUtc = now;
+                session.RevocationReason = "role_changed";
+            }
+
+            user.TokenVersion++;
+            dbContext.SecurityAuditRecords.Add(new SecurityAuditRecord
+            {
+                ActorUserId = actorId,
+                TargetUserId = request.UserId,
+                TargetTenantId = tenantId,
+                Action = "trainer.promoted",
+                TargetType = nameof(TrainerProfile),
+                TargetId = trainer.Id,
+                Reason = request.Reason.Trim(),
+                CorrelationId = Guid.NewGuid().ToString("N"),
+                OccurredAtUtc = now,
+            });
+            await dbContext.SaveChangesAsync(token);
+            return ToDto(trainer, user.DisplayName, trainingTypeIds);
+        }, cancellationToken);
     }
 
     public async Task<TrainerDto> UpdateAsync(
@@ -256,4 +440,14 @@ public sealed class TrainerCatalogService(
             trainer.AverageRating,
             trainer.ReviewCount,
             trainingTypeIds);
+
+    private static void EnsureSucceeded(IdentityOperationResult result)
+    {
+        if (!result.Succeeded)
+        {
+            throw new ConflictException(
+                "trainer_promotion_failed",
+                string.Join(" ", result.Errors));
+        }
+    }
 }

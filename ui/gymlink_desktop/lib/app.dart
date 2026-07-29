@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import 'core/auth.dart';
+import 'core/app_errors.dart';
 import 'core/theme.dart';
 import 'features/auth/login_screen.dart';
 import 'features/auth/password_reset_screens.dart';
@@ -83,6 +84,7 @@ class _GymLinkDesktopAppState extends State<GymLinkDesktopApp> {
     title: 'GymLink Admin',
     theme: buildGymLinkTheme(),
     routerConfig: _router,
+    builder: (context, child) => AppErrorBanner(child: child!),
   );
 }
 

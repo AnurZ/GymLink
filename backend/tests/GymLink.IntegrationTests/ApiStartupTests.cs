@@ -1,10 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using GymLink.Application.Identity;
 using GymLink.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace GymLink.IntegrationTests;
 
@@ -104,8 +107,41 @@ public sealed class ApiStartupTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Unexpected_request_failure_returns_problem_and_host_remains_healthy()
+    {
+        await using var factory = CreateFactory(services =>
+        {
+            services.RemoveAll<IAuthenticationService>();
+            services.AddScoped<IAuthenticationService, FailingAuthenticationService>();
+        });
+        using var client = factory.CreateClient();
+
+        var failure = await client.PostAsJsonAsync(
+            "/api/auth/login",
+            new { identifier = "member", password = "Test123!" });
+
+        Assert.Equal(HttpStatusCode.InternalServerError, failure.StatusCode);
+        Assert.Equal(
+            "application/problem+json",
+            failure.Content.Headers.ContentType?.MediaType);
+        using (var problem = JsonDocument.Parse(
+                   await failure.Content.ReadAsStringAsync()))
+        {
+            Assert.Equal(
+                "unexpected_error",
+                problem.RootElement.GetProperty("title").GetString());
+            Assert.True(problem.RootElement.TryGetProperty("traceId", out _));
+        }
+
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.GetAsync("/health")).StatusCode);
+    }
+
     private static WebApplicationFactory<Program> CreateFactory(
-        string? connectionString = null)
+        string? connectionString = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         Environment.SetEnvironmentVariable(
             "ConnectionStrings__GymLink",
@@ -123,8 +159,16 @@ public sealed class ApiStartupTests
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            if (configureServices is not null)
+            {
+                builder.ConfigureServices(configureServices);
+            }
         });
     }
+
+    private static WebApplicationFactory<Program> CreateFactory(
+        Action<IServiceCollection> configureServices) =>
+        CreateFactory(null, configureServices);
 
     private static GymLinkDbContext CreateContext(string connectionString)
     {
@@ -132,5 +176,31 @@ public sealed class ApiStartupTests
             .UseSqlServer(connectionString)
             .Options;
         return new GymLinkDbContext(options, new TestTenantContext(null));
+    }
+
+    private sealed class FailingAuthenticationService : IAuthenticationService
+    {
+        public Task<AuthSessionDto> RegisterAsync(
+            RegisterRequest request,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Forced integration-test failure.");
+
+        public Task<AuthSessionDto> LoginAsync(
+            LoginRequest request,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Forced integration-test failure.");
+
+        public Task<AuthSessionDto> RefreshAsync(
+            RefreshSessionRequest request,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Forced integration-test failure.");
+
+        public Task LogoutAsync(
+            LogoutRequest request,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Forced integration-test failure.");
+
+        public Task LogoutAllAsync(CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Forced integration-test failure.");
     }
 }

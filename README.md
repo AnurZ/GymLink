@@ -8,7 +8,6 @@ Members and Trainers, and a Windows app for GymAdmins and CentralAdmins.
 - .NET SDK 10.0.103 or a compatible .NET 10 patch
 - SQL Server available as `localhost`
 - Visual Studio 2026/2022 with the ASP.NET and web development workload, or the .NET CLI
-- A trusted local ASP.NET Core HTTPS development certificate
 - Flutter 3.44.8 or a compatible stable release
 - Android SDK/emulator for the mobile client
 - Visual Studio with Desktop development with C++ for the Windows client
@@ -56,16 +55,16 @@ The seed is idempotent and runs only in `Development`. Startup rejects developme
 From the command line:
 
 ```powershell
-dotnet run --project backend/src/GymLink.Api --launch-profile https
+dotnet run --project backend/src/GymLink.Api --launch-profile http
 ```
 
-Swagger opens at [https://localhost:62286/swagger](https://localhost:62286/swagger). The HTTP profile is also available at [http://localhost:62287/swagger](http://localhost:62287/swagger).
+Swagger opens at [http://localhost:62287/swagger](http://localhost:62287/swagger).
 
 In Visual Studio:
 
 1. Open `backend/GymLink.sln`.
 2. Set `GymLink.Api` as the startup project.
-3. Select the `https` or `http` launch profile, not IIS Express.
+3. Select the `http` launch profile, not IIS Express.
 4. Start the project. The selected profile opens `/swagger`.
 
 Use Swagger's **Authorize** button with `Bearer <access-token>` after calling `POST /api/auth/login`.
@@ -135,8 +134,9 @@ flutter pub get
 flutter run -d windows --dart-define=API_BASE_URL=http://localhost:62287
 ```
 
-Use the HTTPS profile only after configuring the emulator or Windows host to
-trust the ASP.NET development certificate.
+Local Flutter development intentionally uses the API's HTTP launch profile.
+Production TLS is terminated by the deployment environment and is not configured
+through `launchSettings.json`.
 
 ## Evaluation credentials
 
@@ -220,6 +220,17 @@ Get-Process GymLink.Api -ErrorAction SilentlyContinue | Stop-Process
 ```
 
 Then start the selected launch profile again.
+
+### Visual Studio development-certificate failure
+
+GymLink does not require an ASP.NET development certificate for local
+Flutter-to-API communication. Close any stale debugging session, select the
+`http` profile, and start `GymLink.Api` again. Both Flutter clients must use port
+`62287`; the Windows command is:
+
+```powershell
+flutter run -d windows --dart-define=API_BASE_URL=http://localhost:62287
+```
 
 ### Visual Studio stops on an expected business conflict
 

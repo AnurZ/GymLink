@@ -9,6 +9,7 @@ import 'package:gymlink_mobile/core/api.dart';
 import 'package:gymlink_mobile/core/theme.dart';
 import 'package:gymlink_mobile/features/auth/auth_screens.dart';
 import 'package:gymlink_mobile/features/member/gym_screens.dart';
+import 'package:gymlink_mobile/features/member/membership_screen.dart';
 import 'package:gymlink_mobile/features/member/reservation_screen.dart';
 import 'package:gymlink_mobile/features/trainer/trainer_screens.dart';
 import 'package:gymlink_mobile/shared/widgets.dart';
@@ -237,6 +238,61 @@ void main() {
     );
     expect(purchase.onPressed, isNull);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('membership details expose contextual cancellation', (
+    tester,
+  ) async {
+    var cancelled = false;
+    final client = MockClient((request) async {
+      if (request.method == 'POST') cancelled = true;
+      final membership = {
+        'id': 'membership-1',
+        'gymName': 'Test Gym',
+        'planName': 'Mjesečna',
+        'price': 50,
+        'currency': 'BAM',
+        'startsAtUtc': '2030-01-01T00:00:00Z',
+        'endsAtUtc': '2030-01-31T00:00:00Z',
+        'status': cancelled ? 3 : 1,
+        'statusReason': cancelled ? 'Otkazao član' : null,
+        'allowedActions': cancelled ? <String>[] : ['cancel'],
+        'concurrencyToken': cancelled ? 'token-2' : 'token-1',
+      };
+      return http.Response(
+        jsonEncode(membership),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
+    final api = ApiClient(
+      _TestTokenSource(),
+      httpClient: client,
+      baseUrlOverride: 'http://test.local',
+    );
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const MembershipDetailsScreen(
+            membershipId: 'membership-1',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Detalji članstva'), findsOneWidget);
+    expect(find.text('Otkaži članstvo'), findsOneWidget);
+    await tester.tap(find.text('Otkaži članstvo'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Otkaži').last);
+    await tester.pumpAndSettle();
+
+    expect(cancelled, isTrue);
+    expect(find.text('Otkaži članstvo'), findsNothing);
   });
 }
 

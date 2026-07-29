@@ -18,25 +18,33 @@ internal sealed class JwtTokenValidationEvents(
     {
         context.HandleResponse();
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        await context.Response.WriteAsJsonAsync(new ProblemDetails
-        {
-            Status = StatusCodes.Status401Unauthorized,
-            Title = "authentication_required",
-            Detail = "A valid bearer token is required.",
-            Extensions = { ["traceId"] = context.HttpContext.TraceIdentifier },
-        });
+        await context.Response.WriteAsJsonAsync(
+            new ProblemDetails
+            {
+                Status = StatusCodes.Status401Unauthorized,
+                Title = "authentication_required",
+                Detail = "A valid bearer token is required.",
+                Extensions = { ["traceId"] = context.HttpContext.TraceIdentifier },
+            },
+            options: null,
+            contentType: "application/problem+json",
+            cancellationToken: context.HttpContext.RequestAborted);
     }
 
     public override async Task Forbidden(ForbiddenContext context)
     {
         context.Response.StatusCode = StatusCodes.Status403Forbidden;
-        await context.Response.WriteAsJsonAsync(new ProblemDetails
-        {
-            Status = StatusCodes.Status403Forbidden,
-            Title = "access_denied",
-            Detail = "You are not authorized to perform this action.",
-            Extensions = { ["traceId"] = context.HttpContext.TraceIdentifier },
-        });
+        await context.Response.WriteAsJsonAsync(
+            new ProblemDetails
+            {
+                Status = StatusCodes.Status403Forbidden,
+                Title = "access_denied",
+                Detail = "You are not authorized to perform this action.",
+                Extensions = { ["traceId"] = context.HttpContext.TraceIdentifier },
+            },
+            options: null,
+            contentType: "application/problem+json",
+            cancellationToken: context.HttpContext.RequestAborted);
     }
 
     public override async Task TokenValidated(TokenValidatedContext context)

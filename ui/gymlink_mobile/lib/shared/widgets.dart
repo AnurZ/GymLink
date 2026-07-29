@@ -49,7 +49,7 @@ class AsyncPanel extends StatelessWidget {
               Text(
                 error is ApiProblem
                     ? (error! as ApiProblem).message
-                    : error.toString(),
+                    : 'Došlo je do neočekivane greške.',
                 textAlign: TextAlign.center,
               ),
               if (onRetry != null) ...[

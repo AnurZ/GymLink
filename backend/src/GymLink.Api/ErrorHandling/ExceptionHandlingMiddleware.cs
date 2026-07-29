@@ -2,6 +2,7 @@ using GymLink.Application.Common;
 using GymLink.Domain.Common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.ComponentModel.DataAnnotations;
 
 namespace GymLink.Api.ErrorHandling;
 
@@ -29,6 +30,12 @@ internal sealed class ExceptionHandlingMiddleware(
         }
         catch (Exception exception)
         {
+            if (exception is OperationCanceledException &&
+                context.RequestAborted.IsCancellationRequested)
+            {
+                return;
+            }
+
             await WriteProblemAsync(context, exception);
         }
     }
@@ -57,6 +64,14 @@ internal sealed class ExceptionHandlingMiddleware(
                 domain.Message),
             DomainException domain => (StatusCodes.Status400BadRequest, domain.Code, domain.Message),
             ApplicationRuleException rule => (StatusCodes.Status400BadRequest, rule.Code, rule.Message),
+            ValidationException validation => (
+                StatusCodes.Status400BadRequest,
+                "validation_failed",
+                validation.Message),
+            BadHttpRequestException badRequest => (
+                StatusCodes.Status400BadRequest,
+                "invalid_request",
+                badRequest.Message),
             DbUpdateConcurrencyException => (
                 StatusCodes.Status409Conflict,
                 "concurrency_conflict",
@@ -76,13 +91,24 @@ internal sealed class ExceptionHandlingMiddleware(
             LogHandled(logger, code, context.TraceIdentifier, exception);
         }
 
-        context.Response.StatusCode = status;
-        await context.Response.WriteAsJsonAsync(new ProblemDetails
+        if (context.Response.HasStarted)
         {
-            Status = status,
-            Title = code,
-            Detail = detail,
-            Extensions = { ["traceId"] = context.TraceIdentifier },
-        });
+            LogUnhandled(logger, context.TraceIdentifier, exception);
+            return;
+        }
+
+        context.Response.Clear();
+        context.Response.StatusCode = status;
+        await context.Response.WriteAsJsonAsync(
+            new ProblemDetails
+            {
+                Status = status,
+                Title = code,
+                Detail = detail,
+                Extensions = { ["traceId"] = context.TraceIdentifier },
+            },
+            options: null,
+            contentType: "application/problem+json",
+            cancellationToken: context.RequestAborted);
     }
 }

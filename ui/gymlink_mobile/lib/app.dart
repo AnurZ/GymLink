@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import 'core/auth.dart';
+import 'core/app_errors.dart';
 import 'core/theme.dart';
 import 'features/auth/auth_screens.dart';
 import 'features/member/member_shell.dart';
@@ -81,6 +82,7 @@ class _GymLinkMobileAppState extends State<GymLinkMobileApp> {
     title: 'GymLink',
     theme: buildGymLinkTheme(),
     routerConfig: _router,
+    builder: (context, child) => AppErrorBanner(child: child!),
   );
 }
 

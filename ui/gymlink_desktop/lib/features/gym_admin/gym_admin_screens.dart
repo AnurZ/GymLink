@@ -14,12 +14,6 @@ const _membershipStatuses = [
   'Suspended',
 ];
 const _reservationStatuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
-const _availabilityStatuses = [
-  'Available',
-  'Unavailable',
-  'Reserved',
-  'Cancelled',
-];
 
 class GymDashboardScreen extends StatefulWidget {
   const GymDashboardScreen({super.key});
@@ -447,6 +441,36 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
     }
   }
 
+  Future<void> _addTrainer() async {
+    final result = await showDialog<Map<String, Object?>>(
+      context: context,
+      builder: (_) => const _TrainerPromotionDialog(),
+    );
+    if (result == null || !mounted) return;
+    try {
+      await context.read<ApiClient>().post(
+        '/api/tenant/trainers',
+        body: result,
+      );
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Član je promovisan u trenera. Njegove postojeće sesije su odjavljene.',
+            ),
+          ),
+        );
+      }
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    }
+  }
+
   Future<void> _addOffering() async {
     final api = context.read<ApiClient>();
     try {
@@ -491,13 +515,18 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
           child: Card(
             child: Column(
               children: [
-                const ListTile(
-                  title: Text(
+                ListTile(
+                  title: const Text(
                     'Lista trenera',
                     style: TextStyle(fontWeight: FontWeight.w800),
                   ),
-                  subtitle: Text(
-                    'Novi trener se prvo dodjeljuje računu kroz CentralAdmin.',
+                  subtitle: const Text(
+                    'Aktivnog člana ove teretane možete unaprijediti u trenera.',
+                  ),
+                  trailing: FilledButton.icon(
+                    onPressed: _addTrainer,
+                    icon: const Icon(Icons.person_add_alt_1),
+                    label: const Text('Dodaj trenera'),
                   ),
                 ),
                 const Divider(height: 1),
@@ -604,10 +633,21 @@ class TenantAvailabilityScreen extends StatefulWidget {
 }
 
 class _TenantAvailabilityScreenState extends State<TenantAvailabilityScreen> {
+  static const _days = [
+    'Ponedjeljak',
+    'Utorak',
+    'Srijeda',
+    'Četvrtak',
+    'Petak',
+    'Subota',
+    'Nedjelja',
+  ];
   List<Map<String, dynamic>> _trainers = const [];
-  List<Map<String, dynamic>> _slots = const [];
+  final Set<(int, int)> _selected = {};
   String? _trainerId;
+  String? _concurrencyToken;
   bool _loading = true;
+  bool _saving = false;
   Object? _error;
 
   @override
@@ -624,7 +664,8 @@ class _TenantAvailabilityScreenState extends State<TenantAvailabilityScreen> {
         query: {'isActive': true},
       )).items;
       _trainerId ??= _trainers.firstOrNull?['id']?.toString();
-      await _loadSlots();
+      await _loadSchedule();
+      _error = null;
     } catch (error) {
       _error = error;
     } finally {
@@ -632,66 +673,68 @@ class _TenantAvailabilityScreenState extends State<TenantAvailabilityScreen> {
     }
   }
 
-  Future<void> _loadSlots() async {
+  Future<void> _loadSchedule() async {
     if (_trainerId == null) {
-      _slots = const [];
+      _selected.clear();
+      _concurrencyToken = null;
       return;
     }
-    _slots = (await context.read<ApiClient>().page(
-      '/api/tenant/trainer-availability',
-      query: {
-        'trainerProfileId': _trainerId,
-        'fromUtc': DateTime.now().toUtc().toIso8601String(),
-      },
-    )).items;
+    final schedule = Map<String, dynamic>.from(
+      (await context.read<ApiClient>().get(
+            '/api/tenant/trainer-availability/schedule',
+            query: {'trainerProfileId': _trainerId},
+          ))!
+          as Map,
+    );
+    _concurrencyToken = schedule['concurrencyToken']?.toString();
+    _selected
+      ..clear()
+      ..addAll(
+        (schedule['shifts'] as List? ?? const []).whereType<Map>().map(
+          (item) => (
+            (item['dayOfWeek'] as num).toInt(),
+            (item['period'] as num).toInt(),
+          ),
+        ),
+      );
     if (mounted) setState(() {});
   }
 
-  Future<void> _create() async {
+  Future<void> _save() async {
     if (_trainerId == null) return;
-    final api = context.read<ApiClient>();
-    final result = await showDialog<Map<String, Object?>>(
-      context: context,
-      builder: (_) => const _AvailabilityDialog(),
-    );
-    if (result == null) return;
+    setState(() => _saving = true);
     try {
-      await api.post(
-        '/api/tenant/trainer-availability',
-        body: {'trainerProfileId': _trainerId, ...result},
+      final schedule = Map<String, dynamic>.from(
+        (await context.read<ApiClient>().put(
+              '/api/tenant/trainer-availability/schedule',
+              body: {
+                'trainerProfileId': _trainerId,
+                'shifts': _selected
+                    .map((item) => {
+                      'dayOfWeek': item.$1,
+                      'period': item.$2,
+                    })
+                    .toList(),
+                'concurrencyToken': _concurrencyToken,
+              },
+            ))!
+            as Map,
       );
-      await _loadSlots();
+      _concurrencyToken = schedule['concurrencyToken']?.toString();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Sedmični raspored je sačuvan.')),
+        );
+      }
     } on ApiProblem catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(error.message)));
       }
-    }
-  }
-
-  Future<void> _cancel(Map<String, dynamic> item) async {
-    final api = context.read<ApiClient>();
-    if (!await confirmAction(
-      context,
-      title: 'Otkaži termin',
-      message: 'Rezervisani termin nije moguće promijeniti.',
-    )) {
-      return;
-    }
-    try {
-      await api.post(
-        '/api/tenant/trainer-availability/${item['id']}/cancel',
-        body: {'concurrencyToken': item['concurrencyToken']},
-      );
-      await _loadSlots();
-    } on ApiProblem catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-      if (error.status == 409) await _loadSlots();
+      if (error.status == 409) await _loadSchedule();
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -719,54 +762,101 @@ class _TenantAvailabilityScreenState extends State<TenantAvailabilityScreen> {
                     .toList(),
                 onChanged: (value) {
                   _trainerId = value;
-                  _loadSlots();
+                  setState(() => _loading = true);
+                  _loadSchedule()
+                      .catchError((Object error) {
+                        _error = error;
+                      })
+                      .whenComplete(() {
+                        if (mounted) setState(() => _loading = false);
+                      });
                 },
               ),
             ),
             const Spacer(),
             FilledButton.icon(
-              onPressed: _trainerId == null ? null : _create,
-              icon: const Icon(Icons.add),
-              label: const Text('Dodaj termin'),
+              onPressed: _trainerId == null || _saving ? null : _save,
+              icon: _saving
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.save_outlined),
+              label: const Text('Sačuvaj raspored'),
             ),
           ],
         ),
         const SizedBox(height: 16),
         Expanded(
-          child: _slots.isEmpty
-              ? const EmptyState('Nema budućih termina za ovog trenera.')
-              : Card(
-                  child: ListView.separated(
-                    itemCount: _slots.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (_, index) {
-                      final item = _slots[index];
-                      final status = (item['status'] as num?)?.toInt() ?? -1;
-                      return ListTile(
-                        title: Text(_dateTime(item['startsAtUtc'])),
-                        subtitle: Text('do ${_time(item['endsAtUtc'])}'),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
+          child: _trainerId == null
+              ? const EmptyState('Nema aktivnih trenera.')
+              : GridView.builder(
+                  gridDelegate:
+                      const SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 330,
+                        mainAxisExtent: 170,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                      ),
+                  itemCount: _days.length,
+                  itemBuilder: (context, index) {
+                    final day = (index + 1) % 7;
+                    return Card(
+                      margin: EdgeInsets.zero,
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            StatusPill(
-                              enumLabel(item['status'], _availabilityStatuses),
-                            ),
-                            if (status < 2)
-                              IconButton(
-                                tooltip: 'Otkaži',
-                                onPressed: () => _cancel(item),
-                                icon: const Icon(Icons.cancel_outlined),
+                            Text(
+                              _days[index],
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
                               ),
+                            ),
+                            CheckboxListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              value: _selected.contains((day, 0)),
+                              onChanged: (value) =>
+                                  _toggle(day, 0, value ?? false),
+                              title: const Text('Jutarnja · 08:00–15:00'),
+                            ),
+                            CheckboxListTile(
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              value: _selected.contains((day, 1)),
+                              onChanged: (value) =>
+                                  _toggle(day, 1, value ?? false),
+                              title: const Text('Popodnevna · 15:00–22:00'),
+                            ),
                           ],
                         ),
-                      );
-                    },
-                  ),
+                      ),
+                    );
+                  },
                 ),
+        ),
+        const SizedBox(height: 8),
+        const Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Aktivne smjene se ponavljaju sedmično u vremenskoj zoni Sarajevo.',
+          ),
         ),
       ],
     ),
   );
+
+  void _toggle(int day, int period, bool selected) {
+    setState(() {
+      if (selected) {
+        _selected.add((day, period));
+      } else {
+        _selected.remove((day, period));
+      }
+    });
+  }
 }
 
 class TenantReservationsScreen extends StatefulWidget {
@@ -1183,6 +1273,216 @@ class _FilterBar extends StatelessWidget {
   );
 }
 
+class _TrainerPromotionDialog extends StatefulWidget {
+  const _TrainerPromotionDialog();
+
+  @override
+  State<_TrainerPromotionDialog> createState() =>
+      _TrainerPromotionDialogState();
+}
+
+class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _search = TextEditingController();
+  final _biography = TextEditingController();
+  final _credentials = TextEditingController();
+  final _reason = TextEditingController();
+  final Set<String> _trainingTypeIds = {};
+  List<Map<String, dynamic>> _candidates = const [];
+  List<Map<String, dynamic>> _trainingTypes = const [];
+  Map<String, dynamic>? _candidate;
+  bool _loading = true;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    _biography.dispose();
+    _credentials.dispose();
+    _reason.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final api = context.read<ApiClient>();
+      final results = await Future.wait([
+        api.page(
+          '/api/tenant/trainer-candidates',
+          query: {'query': _search.text.trim()},
+        ),
+        api.get('/api/reference-data/lookups', authenticated: false),
+      ]);
+      _candidates = (results[0] as PagedData).items;
+      final lookups = Map<String, dynamic>.from(results[1]! as Map);
+      _trainingTypes = (lookups['trainingTypes'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+      if (!_candidates.contains(_candidate)) {
+        _candidate = _candidates.firstOrNull;
+      }
+    } catch (error) {
+      _error = error;
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Dodaj trenera'),
+    content: SizedBox(
+      width: 620,
+      child: AsyncPanel(
+        loading: _loading,
+        error: _error,
+        onRetry: _load,
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _search,
+                        onSubmitted: (_) => _load(),
+                        decoration: const InputDecoration(
+                          labelText: 'Pretraži aktivne članove',
+                          prefixIcon: Icon(Icons.search),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: 'Pretraži',
+                      onPressed: _load,
+                      icon: const Icon(Icons.search),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<Map<String, dynamic>>(
+                  initialValue: _candidate,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Aktivni član'),
+                  items: _candidates
+                      .map(
+                        (item) => DropdownMenuItem(
+                          value: item,
+                          child: Text(
+                            '${item['displayName']} · ${item['email']} · ${item['membershipPlan']}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) => _candidate = value,
+                  validator: (value) =>
+                      value == null ? 'Odaberite aktivnog člana.' : null,
+                ),
+                if (_candidates.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text(
+                      'Nema članova koji ispunjavaju uslove za promociju.',
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _biography,
+                  maxLines: 3,
+                  decoration: const InputDecoration(labelText: 'Biografija'),
+                  validator: (value) => value == null || value.trim().isEmpty
+                      ? 'Biografija je obavezna.'
+                      : null,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _credentials,
+                  decoration: const InputDecoration(
+                    labelText: 'Kvalifikacije i iskustvo',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Specijalnosti',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: _trainingTypes.map((item) {
+                    final id = item['id'].toString();
+                    return FilterChip(
+                      label: Text(item['name'].toString()),
+                      selected: _trainingTypeIds.contains(id),
+                      onSelected: (selected) => setState(
+                        () => selected
+                            ? _trainingTypeIds.add(id)
+                            : _trainingTypeIds.remove(id),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _reason,
+                  decoration: const InputDecoration(
+                    labelText: 'Razlog promocije',
+                  ),
+                  validator: (value) => value == null || value.trim().length < 2
+                      ? 'Unesite razlog promocije.'
+                      : null,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Odustani'),
+      ),
+      FilledButton(
+        onPressed: _candidates.isEmpty
+            ? null
+            : () {
+                if (!_formKey.currentState!.validate()) return;
+                Navigator.pop(context, {
+                  'userId': _candidate!['userId'],
+                  'biography': _biography.text.trim(),
+                  'credentials': _credentials.text.trim().isEmpty
+                      ? null
+                      : _credentials.text.trim(),
+                  'trainingTypeIds': _trainingTypeIds.toList(),
+                  'reason': _reason.text.trim(),
+                });
+              },
+        child: const Text('Promoviši u trenera'),
+      ),
+    ],
+  );
+}
+
 class _OfferingDialog extends StatefulWidget {
   const _OfferingDialog({required this.trainers, required this.types});
   final List<Map<String, dynamic>> trainers;
@@ -1284,103 +1584,6 @@ class _OfferingDialogState extends State<_OfferingDialog> {
                 'price': double.tryParse(_price.text.replaceFirst(',', '.')),
                 'currency': 'BAM',
               }),
-        child: const Text('Sačuvaj'),
-      ),
-    ],
-  );
-}
-
-class _AvailabilityDialog extends StatefulWidget {
-  const _AvailabilityDialog();
-  @override
-  State<_AvailabilityDialog> createState() => _AvailabilityDialogState();
-}
-
-class _AvailabilityDialogState extends State<_AvailabilityDialog> {
-  DateTime _date = DateTime.now().add(const Duration(days: 1));
-  TimeOfDay _start = const TimeOfDay(hour: 9, minute: 0);
-  TimeOfDay _end = const TimeOfDay(hour: 10, minute: 0);
-  bool _unavailable = false;
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Novi termin'),
-    content: SizedBox(
-      width: 420,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            title: const Text('Datum'),
-            trailing: Text(DateFormat('dd.MM.yyyy.').format(_date)),
-            onTap: () async {
-              final value = await showDatePicker(
-                context: context,
-                initialDate: _date,
-                firstDate: DateTime.now(),
-                lastDate: DateTime.now().add(const Duration(days: 365)),
-              );
-              if (value != null) setState(() => _date = value);
-            },
-          ),
-          ListTile(
-            title: const Text('Početak'),
-            trailing: Text(_start.format(context)),
-            onTap: () async {
-              final value = await showTimePicker(
-                context: context,
-                initialTime: _start,
-              );
-              if (value != null) setState(() => _start = value);
-            },
-          ),
-          ListTile(
-            title: const Text('Kraj'),
-            trailing: Text(_end.format(context)),
-            onTap: () async {
-              final value = await showTimePicker(
-                context: context,
-                initialTime: _end,
-              );
-              if (value != null) setState(() => _end = value);
-            },
-          ),
-          SwitchListTile(
-            value: _unavailable,
-            onChanged: (value) => setState(() => _unavailable = value),
-            title: const Text('Nedostupno'),
-          ),
-        ],
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Odustani'),
-      ),
-      FilledButton(
-        onPressed: () {
-          final start = DateTime(
-            _date.year,
-            _date.month,
-            _date.day,
-            _start.hour,
-            _start.minute,
-          );
-          final end = DateTime(
-            _date.year,
-            _date.month,
-            _date.day,
-            _end.hour,
-            _end.minute,
-          );
-          if (!end.isAfter(start)) return;
-          Navigator.pop(context, {
-            'startsAtUtc': start.toUtc().toIso8601String(),
-            'endsAtUtc': end.toUtc().toIso8601String(),
-            'status': _unavailable ? 1 : 0,
-          });
-        },
         child: const Text('Sačuvaj'),
       ),
     ],
@@ -1629,5 +1832,3 @@ String _date(Object? value) => DateFormat(
 String _dateTime(Object? value) => DateFormat(
   'dd.MM.yyyy. HH:mm',
 ).format(DateTime.parse(value.toString()).toLocal());
-String _time(Object? value) =>
-    DateFormat('HH:mm').format(DateTime.parse(value.toString()).toLocal());

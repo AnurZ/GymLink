@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -40,24 +41,39 @@ final class ApiProblem implements Exception {
             : [value.toString()];
       }
     }
+    final code =
+        json['title']?.toString() ??
+        (response.statusCode == 404 ? 'endpoint_not_found' : 'request_failed');
     return ApiProblem(
       status: response.statusCode,
-      code:
-          json['title']?.toString() ??
-          (response.statusCode == 404
-              ? 'endpoint_not_found'
-              : 'request_failed'),
-      message:
-          json['detail']?.toString() ??
-          switch (response.statusCode) {
-            404 =>
-              'API endpoint nije pronađen. Ponovo pokrenite najnoviju verziju API-ja.',
-            >= 500 => 'Server trenutno nije dostupan.',
-            _ => 'Zahtjev nije moguće izvršiti.',
-          },
+      code: code,
+      message: _localizedMessage(
+        response.statusCode,
+        code,
+        json['detail']?.toString(),
+      ),
       fieldErrors: errors,
     );
   }
+
+  static String _localizedMessage(int status, String code, String? detail) =>
+      switch (code) {
+        'invalid_credentials' =>
+          'Pogrešno korisničko ime/email ili lozinka.',
+        'authentication_required' || 'invalid_refresh_token' =>
+          'Sesija je istekla. Prijavite se ponovo.',
+        'access_denied' => 'Nemate dozvolu za ovu radnju.',
+        _ =>
+          switch (status) {
+            404 when detail == null || detail.isEmpty =>
+              'API endpoint nije pronađen. Ponovo pokrenite najnoviju verziju API-ja.',
+            429 => 'Previše zahtjeva. Sačekajte i pokušajte ponovo.',
+            500 => 'Došlo je do greške na serveru. Pokušajte ponovo.',
+            503 => 'Usluga trenutno nije dostupna. Pokušajte ponovo.',
+            _ when detail != null && detail.isNotEmpty => detail,
+            _ => 'Zahtjev nije moguće izvršiti.',
+          },
+      };
 
   @override
   String toString() => message;
@@ -159,40 +175,79 @@ final class ApiClient {
     bool authenticated = true,
     bool retry = true,
   }) async {
-    final headers = <String, String>{'Accept': 'application/json'};
-    if (body != null) headers['Content-Type'] = 'application/json';
-    if (authenticated && _tokens.accessToken != null) {
-      headers['Authorization'] = 'Bearer ${_tokens.accessToken}';
-    }
-    final request = http.Request(method, _uri(path, query));
-    request.headers.addAll(headers);
-    if (body != null) request.body = jsonEncode(body);
-    final streamed = await _http
-        .send(request)
-        .timeout(const Duration(seconds: 20));
-    final response = await http.Response.fromStream(streamed);
-    if (response.statusCode == 401 && authenticated && retry) {
-      final refreshFuture = _refreshing ??= _tokens.refresh();
-      final refreshed = await refreshFuture.whenComplete(() {
-        _refreshing = null;
-      });
-      if (refreshed) {
-        return _send(
-          method,
-          path,
-          query: query,
-          body: body,
-          authenticated: authenticated,
-          retry: false,
+    try {
+      final headers = <String, String>{'Accept': 'application/json'};
+      if (body != null) headers['Content-Type'] = 'application/json';
+      if (authenticated && _tokens.accessToken != null) {
+        headers['Authorization'] = 'Bearer ${_tokens.accessToken}';
+      }
+      final request = http.Request(method, _uri(path, query));
+      request.headers.addAll(headers);
+      if (body != null) request.body = jsonEncode(body);
+      final streamed = await _http
+          .send(request)
+          .timeout(const Duration(seconds: 20));
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode == 401 && authenticated && retry) {
+        final refreshFuture = _refreshing ??= _tokens.refresh();
+        final refreshed = await refreshFuture.whenComplete(() {
+          _refreshing = null;
+        });
+        if (refreshed) {
+          return _send(
+            method,
+            path,
+            query: query,
+            body: body,
+            authenticated: authenticated,
+            retry: false,
+          );
+        }
+        await _tokens.invalidate();
+        throw ApiProblem(
+          status: 401,
+          code: 'authentication_required',
+          message: 'Sesija je istekla. Prijavite se ponovo.',
         );
       }
-      await _tokens.invalidate();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ApiProblem.fromResponse(response);
+      }
+      if (response.body.trim().isEmpty) return null;
+      return jsonDecode(response.body);
+    } on ApiProblem {
+      rethrow;
+    } on TimeoutException {
+      throw ApiProblem(
+        status: 0,
+        code: 'request_timeout',
+        message: 'Zahtjev je istekao. Provjerite vezu i pokušajte ponovo.',
+      );
+    } on SocketException {
+      throw ApiProblem(
+        status: 0,
+        code: 'network_unavailable',
+        message: 'Nije moguće povezati se sa serverom.',
+      );
+    } on http.ClientException {
+      throw ApiProblem(
+        status: 0,
+        code: 'network_error',
+        message: 'Mrežni zahtjev nije uspio. Pokušajte ponovo.',
+      );
+    } on FormatException {
+      throw ApiProblem(
+        status: 0,
+        code: 'invalid_response',
+        message: 'Server je vratio neočekivan odgovor.',
+      );
+    } catch (_) {
+      throw ApiProblem(
+        status: 0,
+        code: 'client_error',
+        message: 'Zahtjev nije moguće izvršiti.',
+      );
     }
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiProblem.fromResponse(response);
-    }
-    if (response.body.trim().isEmpty) return null;
-    return jsonDecode(response.body);
   }
 
   Future<PagedData> page(
