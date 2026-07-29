@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../profile/profile_screen.dart';
 import '../notifications/notification_screen.dart';
+import '../chat/chat_screens.dart';
 import 'gym_screens.dart';
 import 'membership_screen.dart';
 import 'reservation_screen.dart';
@@ -15,18 +16,38 @@ class MemberShell extends StatefulWidget {
 
 class _MemberShellState extends State<MemberShell> {
   int _index = 0;
-  final _pages = const [
-    GymDiscoveryScreen(),
-    MembershipScreen(),
-    MemberReservationsScreen(),
-    ProfileScreen(),
-  ];
+  int _chatUnreadCount = 0;
+  late final List<Widget> _pages;
+
+  @override
+  void initState() {
+    super.initState();
+    _pages = [
+      const GymDiscoveryScreen(),
+      const MembershipScreen(),
+      const MemberReservationsScreen(),
+      ConversationListScreen(onUnreadChanged: _setChatUnreadCount),
+      const ProfileScreen(),
+    ];
+  }
+
+  void _setChatUnreadCount(int value) {
+    if (mounted && value != _chatUnreadCount) {
+      setState(() => _chatUnreadCount = value);
+    }
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
       title: Text(
-        const ['Teretane', 'Članstva', 'Rezervacije', 'Profil'][_index],
+        const [
+          'Teretane',
+          'Članstva',
+          'Rezervacije',
+          'Razgovori',
+          'Profil',
+        ][_index],
         style: const TextStyle(fontWeight: FontWeight.w800),
       ),
       actions: const [NotificationBell()],
@@ -35,17 +56,29 @@ class _MemberShellState extends State<MemberShell> {
     bottomNavigationBar: NavigationBar(
       selectedIndex: _index,
       onDestinationSelected: (value) => setState(() => _index = value),
-      destinations: const [
-        NavigationDestination(
+      destinations: [
+        const NavigationDestination(
           icon: Icon(Icons.fitness_center),
           label: 'Teretane',
         ),
-        NavigationDestination(
+        const NavigationDestination(
           icon: Icon(Icons.card_membership),
           label: 'Članstva',
         ),
-        NavigationDestination(icon: Icon(Icons.event_note), label: 'Termini'),
+        const NavigationDestination(
+          icon: Icon(Icons.event_note),
+          label: 'Termini',
+        ),
         NavigationDestination(
+          icon: Badge(
+            key: const Key('member-chat-unread'),
+            isLabelVisible: _chatUnreadCount > 0,
+            label: Text(_chatUnreadCount > 99 ? '99+' : '$_chatUnreadCount'),
+            child: const Icon(Icons.forum_outlined),
+          ),
+          label: 'Razgovori',
+        ),
+        const NavigationDestination(
           icon: Icon(Icons.person_outline),
           label: 'Profil',
         ),

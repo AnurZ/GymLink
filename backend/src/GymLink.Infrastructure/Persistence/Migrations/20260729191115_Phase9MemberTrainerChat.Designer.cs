@@ -4,6 +4,7 @@ using GymLink.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace GymLink.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(GymLinkDbContext))]
-    partial class GymLinkDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260729191115_Phase9MemberTrainerChat")]
+    partial class Phase9MemberTrainerChat
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

@@ -2,6 +2,7 @@ using DotNetEnv;
 using GymLink.Application;
 using GymLink.Infrastructure;
 using GymLink.Api;
+using GymLink.Api.Hubs;
 using GymLink.Infrastructure.Seeding;
 
 Env.TraversePath().NoClobber().Load();
@@ -15,6 +16,7 @@ await app.SeedDevelopmentDataAsync();
 app.UseGymLinkApi();
 app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
 app.MapControllers();
+app.MapHub<ChatHub>("/hubs/chat");
 app.Run();
 
 public partial class Program;

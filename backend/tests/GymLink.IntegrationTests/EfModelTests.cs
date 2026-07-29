@@ -142,6 +142,20 @@ public sealed class EfModelTests
                 PropertyNames(index).SequenceEqual(["SourceMessageId"]) &&
                 index.GetFilter()!.Contains("IS NOT NULL", StringComparison.Ordinal));
         Assert.Contains(
+            context.Model.FindEntityType(typeof(Conversation))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(
+                    ["TenantId", "MemberUserId", "TrainerUserId"]));
+        Assert.Contains(
+            context.Model.FindEntityType(typeof(ConversationParticipant))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["ConversationId", "UserId"]));
+        Assert.Contains(
+            context.Model.FindEntityType(typeof(Message))!.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(
+                    ["ConversationId", "SenderUserId", "ClientMessageId"]));
+        Assert.Contains(
             context.Model.FindEntityType(typeof(PasswordResetChallenge))!.GetIndexes(),
             index => index.IsUnique &&
                 PropertyNames(index).SequenceEqual(["UserId"]) &&
@@ -166,6 +180,50 @@ public sealed class EfModelTests
             context.Model.FindEntityType(typeof(StripeEventReceipt))!.GetIndexes(),
             index => index.IsUnique &&
                 PropertyNames(index).SequenceEqual(["ProviderObjectId", "EventType"]));
+    }
+
+    [Fact]
+    public void Phase9_chat_model_has_pair_identity_read_state_and_restrictive_history()
+    {
+        using var context = CreateContext(Guid.NewGuid());
+
+        var conversation = context.Model.FindEntityType(typeof(Conversation))!;
+        Assert.False(conversation.FindProperty(nameof(Conversation.MemberUserId))!.IsNullable);
+        Assert.False(conversation.FindProperty(nameof(Conversation.TrainerUserId))!.IsNullable);
+        Assert.True(conversation.FindProperty(nameof(Conversation.LastMessageAtUtc))!.IsNullable);
+        Assert.Equal(
+            64,
+            conversation.FindProperty(nameof(Conversation.Type))!.GetMaxLength());
+        Assert.Equal(
+            2000,
+            context.Model.FindEntityType(typeof(Message))!
+                .FindProperty(nameof(Message.Text))!
+                .GetMaxLength());
+        Assert.True(
+            context.Model.FindEntityType(typeof(ConversationParticipant))!
+                .FindProperty(nameof(ConversationParticipant.LastReadAtUtc))!
+                .IsNullable);
+
+        Assert.All(
+            conversation.GetForeignKeys()
+                .Where(x =>
+                    x.PrincipalEntityType.ClrType is
+                    { } type &&
+                    (type == typeof(UserProfile) ||
+                     type == typeof(AppointmentReservation) ||
+                     type == typeof(Tenant))),
+            foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
+
+        var message = context.Model.FindEntityType(typeof(Message))!;
+        Assert.Contains(
+            message.GetIndexes(),
+            index => PropertyNames(index).SequenceEqual(
+                ["ConversationId", "SentAtUtc", "Id"]));
+        Assert.Contains(
+            message.GetForeignKeys(),
+            foreignKey =>
+                foreignKey.PrincipalEntityType.ClrType == typeof(Conversation) &&
+                foreignKey.DeleteBehavior == DeleteBehavior.Restrict);
     }
 
     [Fact]

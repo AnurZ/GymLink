@@ -1,4 +1,5 @@
 using GymLink.Api.ErrorHandling;
+using GymLink.Api.Hubs;
 using GymLink.Application.Authorization;
 using GymLink.Domain.Common;
 using Microsoft.AspNetCore.Mvc;
@@ -88,6 +89,10 @@ public static class DependencyInjection
                     return new BadRequestObjectResult(details);
                 };
             });
+        services.AddSignalR(options =>
+            options.EnableDetailedErrors =
+                configuration.GetValue<bool>("SignalR:EnableDetailedErrors"));
+        services.AddSingleton<ChatDeliveryService>();
         var origins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
         services.AddCors(options =>
             options.AddPolicy(

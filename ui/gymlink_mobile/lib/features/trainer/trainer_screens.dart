@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
 import '../../shared/widgets.dart';
+import '../chat/chat_screens.dart';
 
 const _reservationStatuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
 const _emptyGuid = '00000000-0000-0000-0000-000000000000';
@@ -209,6 +210,14 @@ class _TrainerAppointmentDetailsState extends State<TrainerAppointmentDetails> {
             OutlinedButton(
               onPressed: _busy ? null : _cancel,
               child: const Text('Otkaži uz razlog'),
+            ),
+          if (status == 1 || status == 2)
+            OutlinedButton.icon(
+              key: const Key('trainer-open-chat'),
+              onPressed: () =>
+                  openChatForReservation(context, _item['id'].toString()),
+              icon: const Icon(Icons.forum_outlined),
+              label: const Text('Otvori razgovor'),
             ),
         ],
       ),

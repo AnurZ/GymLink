@@ -9,6 +9,7 @@ import 'core/api.dart';
 import 'core/app_errors.dart';
 import 'core/auth.dart';
 import 'core/payments.dart';
+import 'features/chat/chat_realtime.dart';
 
 void main() {
   runZonedGuarded(
@@ -39,15 +40,18 @@ void main() {
       );
       final auth = AuthController();
       final api = ApiClient(auth);
+      final chatRealtime = ChatRealtime(auth);
       final paymentLinks = PaymentDeepLinks();
       await paymentLinks.initialize();
       auth.attachApi(api);
+      auth.attachConnection(chatRealtime);
       await auth.initialize();
       runApp(
         MultiProvider(
           providers: [
             ChangeNotifierProvider.value(value: auth),
             Provider.value(value: api),
+            Provider<ChatRealtimeGateway>.value(value: chatRealtime),
             Provider.value(value: paymentLinks),
           ],
           child: const GymLinkMobileApp(),

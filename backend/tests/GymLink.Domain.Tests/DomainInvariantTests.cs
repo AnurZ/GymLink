@@ -484,4 +484,87 @@ public sealed class DomainInvariantTests
             new Notification().MarkRead(
                 DateTime.SpecifyKind(firstRead, DateTimeKind.Local)));
     }
+
+    [Fact]
+    public void Conversation_tracks_pair_latest_message_and_read_only_close()
+    {
+        var ids = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
+        var now = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var conversation = new Conversation(
+            ids[0],
+            ids[1],
+            ids[2],
+            ids[3],
+            now);
+
+        conversation.RecordMessage(now.AddMinutes(1));
+        conversation.Close(now.AddMinutes(2));
+        conversation.Close(now.AddMinutes(3));
+
+        Assert.Equal(Conversation.MemberTrainerType, conversation.Type);
+        Assert.Equal(now.AddMinutes(1), conversation.LastMessageAtUtc);
+        Assert.Equal(now.AddMinutes(2), conversation.ClosedAtUtc);
+        var closed = Assert.Throws<DomainException>(() =>
+            conversation.RecordMessage(now.AddMinutes(4)));
+        Assert.Equal("conversation_closed", closed.Code);
+        Assert.Throws<DomainException>(() =>
+            new Conversation(ids[0], ids[1], ids[2], ids[2], now));
+    }
+
+    [Fact]
+    public void Conversation_participant_read_state_is_monotonic_and_ends_on_leave()
+    {
+        var now = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var participant = new ConversationParticipant(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            now);
+
+        participant.MarkRead(now.AddMinutes(2));
+        participant.MarkRead(now.AddMinutes(1));
+        participant.Leave(now.AddMinutes(3));
+        participant.Leave(now.AddMinutes(4));
+
+        Assert.Equal(now.AddMinutes(2), participant.LastReadAtUtc);
+        Assert.Equal(now.AddMinutes(3), participant.LeftAtUtc);
+        var ended = Assert.Throws<DomainException>(() =>
+            participant.MarkRead(now.AddMinutes(5)));
+        Assert.Equal("conversation_participation_ended", ended.Code);
+    }
+
+    [Fact]
+    public void Message_requires_trimmed_bounded_text_and_utc()
+    {
+        var ids = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
+        var now = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var message = new Message(
+            ids[0],
+            ids[1],
+            ids[2],
+            ids[3],
+            "  Hello  ",
+            now);
+
+        Assert.Equal("Hello", message.Text);
+        Assert.Equal(ids[3], message.ClientMessageId);
+        Assert.Throws<DomainException>(() =>
+            new Message(ids[0], ids[1], ids[2], Guid.NewGuid(), " ", now));
+        Assert.Throws<DomainException>(() =>
+            new Message(
+                ids[0],
+                ids[1],
+                ids[2],
+                Guid.NewGuid(),
+                new string('x', Message.MaximumTextLength + 1),
+                now));
+        Assert.Throws<DomainException>(() =>
+            new Message(
+                ids[0],
+                ids[1],
+                ids[2],
+                Guid.NewGuid(),
+                "Hello",
+                DateTime.SpecifyKind(now, DateTimeKind.Local)));
+    }
 }

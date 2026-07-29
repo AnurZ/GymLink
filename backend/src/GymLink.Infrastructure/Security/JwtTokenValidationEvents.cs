@@ -14,6 +14,18 @@ internal sealed class JwtTokenValidationEvents(
     GymLinkDbContext dbContext,
     TimeProvider timeProvider) : JwtBearerEvents
 {
+    public override Task MessageReceived(MessageReceivedContext context)
+    {
+        var accessToken = context.Request.Query["access_token"];
+        if (!string.IsNullOrEmpty(accessToken) &&
+            context.HttpContext.Request.Path.StartsWithSegments("/hubs/chat"))
+        {
+            context.Token = accessToken;
+        }
+
+        return Task.CompletedTask;
+    }
+
     public override async Task Challenge(JwtBearerChallengeContext context)
     {
         context.HandleResponse();

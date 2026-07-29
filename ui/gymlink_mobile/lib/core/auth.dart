@@ -6,6 +6,10 @@ import 'package:http/http.dart' as http;
 
 import 'api.dart';
 
+abstract interface class AuthenticatedConnection {
+  Future<void> disconnect();
+}
+
 final class UserSession {
   const UserSession({
     required this.accessToken,
@@ -34,6 +38,7 @@ final class AuthController extends ChangeNotifier implements AuthTokenSource {
   static const _refreshKey = 'gymlink.refresh_token';
   static const _storage = FlutterSecureStorage();
   ApiClient? _api;
+  final List<AuthenticatedConnection> _connections = [];
   UserSession? _session;
   bool _initializing = true;
   ApiProblem? _error;
@@ -47,6 +52,9 @@ final class AuthController extends ChangeNotifier implements AuthTokenSource {
   String? get accessToken => _session?.accessToken;
 
   void attachApi(ApiClient api) => _api = api;
+
+  void attachConnection(AuthenticatedConnection connection) =>
+      _connections.add(connection);
 
   Future<void> initialize() async {
     final token = await _storage.read(key: _refreshKey);
@@ -187,6 +195,9 @@ final class AuthController extends ChangeNotifier implements AuthTokenSource {
 
   @override
   Future<void> invalidate() async {
+    await Future.wait(
+      _connections.map((connection) => connection.disconnect()),
+    );
     _session = null;
     await _storage.delete(key: _refreshKey);
     notifyListeners();

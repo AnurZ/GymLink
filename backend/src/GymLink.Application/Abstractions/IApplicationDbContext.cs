@@ -42,6 +42,9 @@ public interface IApplicationDbContext
     DbSet<AppointmentReservation> AppointmentReservations { get; }
     DbSet<Review> Reviews { get; }
     DbSet<GymReview> GymReviews { get; }
+    DbSet<Conversation> Conversations { get; }
+    DbSet<ConversationParticipant> ConversationParticipants { get; }
+    DbSet<Message> Messages { get; }
     DbSet<Notification> Notifications { get; }
     DbSet<OutboxMessage> OutboxMessages { get; }
     DbSet<InboxMessage> InboxMessages { get; }

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../core/api.dart';
 import '../../core/payments.dart';
 import '../../shared/widgets.dart';
+import '../chat/chat_screens.dart';
 
 const _reservationStatuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
 
@@ -315,6 +316,15 @@ class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
                     onPressed: _review,
                     icon: const Icon(Icons.star_outline),
                     label: const Text('Ocijeni trenera'),
+                  ),
+                if (((_item!['status'] as num?)?.toInt() == 1) ||
+                    ((_item!['status'] as num?)?.toInt() == 2))
+                  OutlinedButton.icon(
+                    key: const Key('member-open-chat'),
+                    onPressed: () =>
+                        openChatForReservation(context, widget.reservationId),
+                    icon: const Icon(Icons.forum_outlined),
+                    label: const Text('Otvori razgovor'),
                   ),
               ],
             ),

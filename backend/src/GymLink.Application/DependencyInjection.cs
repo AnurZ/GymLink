@@ -38,6 +38,10 @@ public static class DependencyInjection
         services.AddScoped<IReservationService, ReservationService>();
         services.AddScoped<IReviewService, ReviewService>();
         services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<ChatService>();
+        services.AddScoped<IChatService>(provider => provider.GetRequiredService<ChatService>());
+        services.AddScoped<IChatActorService>(
+            provider => provider.GetRequiredService<ChatService>());
         services.AddScoped<IPaymentService, PaymentService>();
         services.AddScoped<IPaymentReconciliationService, PaymentReconciliationService>();
         return services;

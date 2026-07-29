@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../profile/profile_screen.dart';
 import '../notifications/notification_screen.dart';
+import '../chat/chat_screens.dart';
 import 'trainer_screens.dart';
 
 class TrainerShell extends StatefulWidget {
@@ -13,13 +14,27 @@ class TrainerShell extends StatefulWidget {
 
 class _TrainerShellState extends State<TrainerShell> {
   int _index = 0;
-  final _pages = const [
-    TrainerAppointmentsScreen(),
-    TrainerAvailabilityScreen(),
-    TrainerOfferingsScreen(),
-    TrainerReviewsScreen(),
-    ProfileScreen(),
-  ];
+  int _chatUnreadCount = 0;
+  late final List<Widget> _pages;
+
+  @override
+  void initState() {
+    super.initState();
+    _pages = [
+      const TrainerAppointmentsScreen(),
+      const TrainerAvailabilityScreen(),
+      const TrainerOfferingsScreen(),
+      const TrainerReviewsScreen(),
+      ConversationListScreen(onUnreadChanged: _setChatUnreadCount),
+      const ProfileScreen(),
+    ];
+  }
+
+  void _setChatUnreadCount(int value) {
+    if (mounted && value != _chatUnreadCount) {
+      setState(() => _chatUnreadCount = value);
+    }
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -30,6 +45,7 @@ class _TrainerShellState extends State<TrainerShell> {
           'Dostupnost',
           'Usluge',
           'Recenzije',
+          'Razgovori',
           'Profil',
         ][_index],
         style: const TextStyle(fontWeight: FontWeight.w800),
@@ -40,18 +56,33 @@ class _TrainerShellState extends State<TrainerShell> {
     bottomNavigationBar: NavigationBar(
       selectedIndex: _index,
       onDestinationSelected: (value) => setState(() => _index = value),
-      destinations: const [
-        NavigationDestination(icon: Icon(Icons.event_note), label: 'Termini'),
-        NavigationDestination(
+      destinations: [
+        const NavigationDestination(
+          icon: Icon(Icons.event_note),
+          label: 'Termini',
+        ),
+        const NavigationDestination(
           icon: Icon(Icons.calendar_month),
           label: 'Dostupnost',
         ),
-        NavigationDestination(icon: Icon(Icons.sell_outlined), label: 'Usluge'),
-        NavigationDestination(
+        const NavigationDestination(
+          icon: Icon(Icons.sell_outlined),
+          label: 'Usluge',
+        ),
+        const NavigationDestination(
           icon: Icon(Icons.star_outline),
           label: 'Recenzije',
         ),
         NavigationDestination(
+          icon: Badge(
+            key: const Key('trainer-chat-unread'),
+            isLabelVisible: _chatUnreadCount > 0,
+            label: Text(_chatUnreadCount > 99 ? '99+' : '$_chatUnreadCount'),
+            child: const Icon(Icons.forum_outlined),
+          ),
+          label: 'Razgovori',
+        ),
+        const NavigationDestination(
           icon: Icon(Icons.person_outline),
           label: 'Profil',
         ),

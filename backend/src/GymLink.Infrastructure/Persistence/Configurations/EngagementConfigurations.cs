@@ -14,8 +14,20 @@ internal sealed class ConversationConfiguration : EntityConfiguration<Conversati
         ConfigureTenant(builder);
         ConfigureConcurrency(builder);
         builder.Property(x => x.Type).HasMaxLength(64).IsRequired();
+        builder.HasIndex(x => new
+        {
+            x.TenantId,
+            x.MemberUserId,
+            x.TrainerUserId,
+        })
+            .IsUnique();
+        builder.HasIndex(x => new { x.TenantId, x.LastMessageAtUtc });
         builder.HasIndex(x => new { x.TenantId, x.ReservationId });
         builder.HasOne<AppointmentReservation>().WithMany().HasForeignKey(x => x.ReservationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.MemberUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.TrainerUserId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Tenant>().WithMany().HasForeignKey(x => x.TenantId)
             .OnDelete(DeleteBehavior.Restrict);
@@ -28,6 +40,7 @@ internal sealed class ConversationParticipantConfiguration : EntityConfiguration
     {
         ConfigureTenant(builder);
         builder.HasIndex(x => new { x.ConversationId, x.UserId }).IsUnique();
+        builder.HasIndex(x => new { x.UserId, x.LeftAtUtc });
         builder.HasOne<Conversation>().WithMany().HasForeignKey(x => x.ConversationId)
             .OnDelete(DeleteBehavior.Cascade);
         builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.UserId)
@@ -42,8 +55,15 @@ internal sealed class MessageConfiguration : EntityConfiguration<Message>
     protected override void ConfigureEntity(EntityTypeBuilder<Message> builder)
     {
         ConfigureTenant(builder);
-        builder.Property(x => x.Text).HasMaxLength(4000).IsRequired();
-        builder.HasIndex(x => new { x.ConversationId, x.SentAtUtc });
+        builder.Property(x => x.Text).HasMaxLength(Message.MaximumTextLength).IsRequired();
+        builder.HasIndex(x => new { x.ConversationId, x.SentAtUtc, x.Id });
+        builder.HasIndex(x => new
+        {
+            x.ConversationId,
+            x.SenderUserId,
+            x.ClientMessageId,
+        })
+            .IsUnique();
         builder.HasOne<Conversation>().WithMany().HasForeignKey(x => x.ConversationId)
             .OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.SenderUserId)
