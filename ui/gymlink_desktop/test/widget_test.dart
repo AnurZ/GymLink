@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -96,8 +98,7 @@ void main() {
     await tester.pumpWidget(_centralHarness(api));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Dodaj teretanu'));
-    await tester.pumpAndSettle();
+    await _openGymWizardAtLocation(tester);
     await tester.enterText(
       find.byKey(const Key('gym-location-search')),
       'Sarajevo',
@@ -115,6 +116,164 @@ void main() {
     expect(find.text('Grad/općina: Sarajevo'), findsOneWidget);
     expect(
       find.widgetWithText(TextFormField, 'Odabrana adresa'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('map click resolves an editable nearest address', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _CentralAdminApi();
+    await tester.pumpWidget(_centralHarness(api));
+    await tester.pumpAndSettle();
+
+    await _openGymWizardAtLocation(tester);
+    final map = find.byKey(const Key('gym-location-map'));
+    await tester.scrollUntilVisible(
+      map,
+      250,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(tester.getSize(map).height, greaterThanOrEqualTo(400));
+    await tester.tapAt(tester.getCenter(map));
+    await tester.pump(const Duration(milliseconds: 301));
+    await tester.pumpAndSettle();
+
+    expect(api.lastReverseQuery, isNotNull);
+    expect(find.text('Grad/općina: Sarajevo'), findsOneWidget);
+    final addressField = find.widgetWithText(TextFormField, 'Odabrana adresa');
+    expect(
+      tester.widget<TextFormField>(addressField).controller!.text,
+      'Zmaja od Bosne 12, Sarajevo, Bosna i Hercegovina',
+    );
+    await tester.enterText(addressField, 'Zmaja od Bosne 12, ulaz B');
+    expect(
+      tester.widget<TextFormField>(addressField).controller!.text,
+      'Zmaja od Bosne 12, ulaz B',
+    );
+  });
+
+  testWidgets('gym map remains substantially visible at 1366x768', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1366, 768);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(_centralHarness(_CentralAdminApi()));
+    await tester.pumpAndSettle();
+
+    await _openGymWizardAtLocation(tester);
+    expect(
+      find.text('Savjet: Pretražite adresu ili odaberite tačku na mapi.'),
+      findsOneWidget,
+    );
+    final mapRect = tester.getRect(find.byKey(const Key('gym-location-map')));
+    final viewportRect = tester.getRect(
+      find.byKey(const Key('gym-location-scroll')),
+    );
+    final visibleMapHeight = mapRect.intersect(viewportRect).height;
+
+    expect(mapRect.height, greaterThanOrEqualTo(400));
+    expect(visibleMapHeight, greaterThanOrEqualTo(280));
+    expect(find.byKey(const Key('gym-map-zoom-in')), findsOneWidget);
+    expect(find.byKey(const Key('gym-map-zoom-out')), findsOneWidget);
+    expect(find.byKey(const Key('gym-map-center')), findsOneWidget);
+    final controlsRect = tester.getRect(
+      find.byKey(const Key('gym-map-controls')),
+    );
+    expect(controlsRect.height, lessThanOrEqualTo(34));
+    expect(controlsRect.width, lessThanOrEqualTo(100));
+    expect(controlsRect.top - mapRect.top, lessThanOrEqualTo(10));
+    expect(mapRect.right - controlsRect.right, lessThanOrEqualTo(10));
+    await tester.tap(find.byKey(const Key('gym-map-zoom-in')));
+    await tester.tap(find.byKey(const Key('gym-map-zoom-out')));
+    await tester.tap(find.byKey(const Key('gym-map-center')));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('latest map click wins and failed lookup blocks progress', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _DelayedReverseCentralAdminApi();
+    await tester.pumpWidget(_centralHarness(api));
+    await tester.pumpAndSettle();
+
+    await _openGymWizardAtLocation(tester);
+    final map = find.byKey(const Key('gym-location-map'));
+    await tester.scrollUntilVisible(
+      map,
+      250,
+      scrollable: find.byType(Scrollable).last,
+    );
+    final rect = tester.getRect(map);
+    await tester.tapAt(rect.center - const Offset(50, 0));
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pump();
+    expect(api.pending, hasLength(1));
+
+    await tester.tapAt(rect.center + const Offset(50, 0));
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pump();
+    expect(api.pending, hasLength(2));
+    api.pending[1].complete(const {
+      'resultKey': 'way:second',
+      'displayName': 'Druga adresa',
+      'address': 'Druga adresa 2',
+      'cityId': 'city-sarajevo',
+      'cityName': 'Sarajevo',
+    });
+    await tester.pump();
+    api.pending[0].complete(const {
+      'resultKey': 'way:first',
+      'displayName': 'Prva adresa',
+      'address': 'Prva adresa 1',
+      'cityId': 'city-sarajevo',
+      'cityName': 'Sarajevo',
+    });
+    await tester.pump();
+
+    final addressField = find.widgetWithText(TextFormField, 'Odabrana adresa');
+    expect(
+      tester.widget<TextFormField>(addressField).controller!.text,
+      'Druga adresa 2',
+    );
+
+    api.problem = const ApiProblem(
+      status: 404,
+      code: 'location_not_resolved',
+      message: 'Not resolved',
+    );
+    await tester.tapAt(rect.center);
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pump();
+    expect(
+      find.text(
+        'Za ovu tačku nije pronađena upotrebljiva adresa. Izaberite drugu lokaciju.',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('gym-create-continue')));
+    await tester.pump();
+    expect(find.text('Radno vrijeme'), findsNothing);
+
+    api.problem = const ApiProblem(
+      status: 400,
+      code: 'location_outside_bih',
+      message: 'Outside BiH',
+    );
+    await tester.tapAt(rect.center);
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pump();
+    expect(
+      find.text('Odabrana lokacija mora biti u Bosni i Hercegovini.'),
       findsOneWidget,
     );
   });
@@ -140,20 +299,27 @@ void main() {
       find.widgetWithText(TextFormField, 'Opis'),
       'Potpun opis nove teretane za aktivaciju.',
     );
-    await tester.enterText(
-      find.byKey(const Key('gym-location-search')),
-      'Sarajevo',
-    );
-    await tester.tap(find.byKey(const Key('gym-location-search-button')));
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.text(
-        'Grad Sarajevo, Kanton Sarajevo, Federacija Bosne i Hercegovine',
-      ),
-    );
-    await tester.pump();
     await tester.tap(find.byKey(const Key('gym-create-continue')));
     await tester.pumpAndSettle();
+    final map = find.byKey(const Key('gym-location-map'));
+    await tester.scrollUntilVisible(
+      map,
+      250,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tapAt(tester.getCenter(map));
+    await tester.pump(const Duration(milliseconds: 301));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Odabrana adresa'),
+      'Zmaja od Bosne 12, ulaz B',
+    );
+    final stepper = tester.widget<Stepper>(find.byType(Stepper));
+    expect(stepper.controller, isNotNull);
+    stepper.controller!.jumpTo(stepper.controller!.position.maxScrollExtent);
+    await tester.tap(find.byKey(const Key('gym-create-continue')));
+    await tester.pumpAndSettle();
+    expect(stepper.controller!.offset, 0);
 
     await tester.scrollUntilVisible(
       find.text('Oprema'),
@@ -192,12 +358,103 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(api.creationBody?['cityId'], 'city-sarajevo');
+    expect(api.creationBody?['address'], 'Zmaja od Bosne 12, ulaz B');
+    expect(api.creationBody?['latitude'], api.lastReverseQuery?['latitude']);
+    expect(api.creationBody?['longitude'], api.lastReverseQuery?['longitude']);
     expect(api.creationBody?['gymAdminUserId'], 'user-owner');
     expect(api.creationBody?['equipmentIds'], ['equipment-1']);
     expect(api.creationBody?['trainingTypeIds'], ['type-1']);
     expect((api.creationBody?['workingHours'] as List).length, 7);
     expect((api.creationBody?['membershipPlan'] as Map)['currency'], 'BAM');
   });
+
+  testWidgets(
+    'gym creation conflict returns to GymAdmin selection with inline error',
+    (tester) async {
+      tester.view.physicalSize = const Size(1800, 1100);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _CentralAdminApi(
+        creationConflictCode: 'gym_admin_already_assigned',
+      );
+      await tester.pumpWidget(_centralHarness(api));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Dodaj teretanu'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Naziv'),
+        'Konflikt teretana',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Opis'),
+        'Potpun opis teretane za provjeru konflikta.',
+      );
+      await tester.tap(find.byKey(const Key('gym-create-continue')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('gym-location-search')),
+        'Sarajevo',
+      );
+      await tester.tap(find.byKey(const Key('gym-location-search-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('Grad Sarajevo').first);
+      await tester.tap(find.byKey(const Key('gym-create-continue')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Slobodni utezi'));
+      await tester.tap(find.text('Funkcionalni trening'));
+      await tester.scrollUntilVisible(
+        find.widgetWithText(TextField, 'Naziv plana'),
+        300,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Naziv plana'),
+        'Standard',
+      );
+      await tester.tap(find.byKey(const Key('gym-create-continue')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const Key('gym-admin-search')),
+        'owner',
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pump();
+      await tester.tap(find.text('Owner Account'));
+      await tester.pump();
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Razlog dodjele GymAdmin uloge'),
+        'Vlasnik teretane',
+      );
+      await tester.tap(find.byKey(const Key('gym-create-continue')));
+      await tester.pumpAndSettle();
+      expect(find.text('Konflikt teretana'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('gym-create-continue')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Potvrdi'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('GymAdmin'), findsWidgets);
+      expect(
+        find.text(
+          'Odabrani korisnik je već dodijeljen drugoj teretani. '
+          'Izaberite drugog korisnika.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('gym-admin-search')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(find.byType(AlertDialog), findsOneWidget);
+    },
+  );
 
   testWidgets('gym row assigns one GymAdmin through candidate search', (
     tester,
@@ -429,6 +686,26 @@ void main() {
   });
 }
 
+Future<void> _openGymWizardAtLocation(WidgetTester tester) async {
+  await tester.tap(find.text('Dodaj teretanu'));
+  await tester.pumpAndSettle();
+
+  expect(find.text('Osnovni podaci'), findsOneWidget);
+  expect(find.byKey(const Key('gym-location-map')), findsNothing);
+  await tester.enterText(
+    find.widgetWithText(TextFormField, 'Naziv'),
+    'Testna teretana',
+  );
+  await tester.enterText(
+    find.widgetWithText(TextFormField, 'Opis'),
+    'Potpun opis testne teretane.',
+  );
+  await tester.tap(find.byKey(const Key('gym-create-continue')));
+  await tester.pumpAndSettle();
+
+  expect(find.byKey(const Key('gym-location-map')), findsOneWidget);
+}
+
 Widget _centralHarness(_CentralAdminApi api) => MultiProvider(
   providers: [
     Provider<ApiClient>.value(value: api),
@@ -452,12 +729,17 @@ class _TestTokens implements AuthTokenSource {
 }
 
 class _CentralAdminApi extends ApiClient {
-  _CentralAdminApi({this.assignmentConflictCode, this.activationConflictCode})
-    : super(_TestTokens());
+  _CentralAdminApi({
+    this.assignmentConflictCode,
+    this.activationConflictCode,
+    this.creationConflictCode,
+  }) : super(_TestTokens());
 
   final String? assignmentConflictCode;
   final String? activationConflictCode;
+  final String? creationConflictCode;
   Map<String, Object?>? lastLocationQuery;
+  Map<String, Object?>? lastReverseQuery;
   Map<String, dynamic>? assignmentBody;
   Map<String, dynamic>? creationBody;
   bool _assigned = false;
@@ -588,6 +870,16 @@ class _CentralAdminApi extends ApiClient {
         },
       ];
     }
+    if (path == '/api/admin/locations/reverse') {
+      lastReverseQuery = Map<String, Object?>.from(query);
+      return const {
+        'resultKey': 'way:200',
+        'displayName': 'Zmaja od Bosne 12, Sarajevo, Bosna i Hercegovina',
+        'address': 'Zmaja od Bosne 12, Sarajevo, Bosna i Hercegovina',
+        'cityId': 'city-sarajevo',
+        'cityName': 'Sarajevo',
+      };
+    }
     throw StateError('Unexpected get request: $path');
   }
 
@@ -607,6 +899,13 @@ class _CentralAdminApi extends ApiClient {
     }
     if (path == '/api/admin/gyms') {
       creationBody = Map<String, dynamic>.from(body! as Map);
+      if (creationConflictCode != null) {
+        throw ApiProblem(
+          status: 409,
+          code: creationConflictCode!,
+          message: 'Backend conflict',
+        );
+      }
       _assigned = true;
       return const {};
     }
@@ -623,6 +922,29 @@ class _CentralAdminApi extends ApiClient {
       return const {};
     }
     throw StateError('Unexpected post request: $path');
+  }
+}
+
+class _DelayedReverseCentralAdminApi extends _CentralAdminApi {
+  final List<Completer<Object?>> pending = [];
+  ApiProblem? problem;
+
+  @override
+  Future<Object?> get(
+    String path, {
+    Map<String, Object?> query = const {},
+    bool authenticated = true,
+  }) {
+    if (path != '/api/admin/locations/reverse') {
+      return super.get(path, query: query, authenticated: authenticated);
+    }
+    lastReverseQuery = Map<String, Object?>.from(query);
+    if (problem case final value?) {
+      return Future.error(value);
+    }
+    final completer = Completer<Object?>();
+    pending.add(completer);
+    return completer.future;
   }
 }
 
@@ -690,12 +1012,7 @@ class _GymAdminTrainerApi extends ApiClient {
   }) async {
     if (path == '/api/tenant/trainers' ||
         path == '/api/tenant/trainer-offerings') {
-      return const PagedData(
-        items: [],
-        page: 1,
-        pageSize: 50,
-        totalCount: 0,
-      );
+      return const PagedData(items: [], page: 1, pageSize: 50, totalCount: 0);
     }
     if (path == '/api/tenant/trainer-candidates') {
       return const PagedData(

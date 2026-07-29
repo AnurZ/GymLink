@@ -54,24 +54,32 @@ class ApiProblem implements Exception {
     );
   }
 
-  static String _localizedMessage(int status, String code, String? detail) =>
-      switch (code) {
-        'invalid_credentials' =>
-          'Pogrešno korisničko ime/email ili lozinka.',
-        'authentication_required' || 'invalid_refresh_token' =>
-          'Sesija je istekla. Prijavite se ponovo.',
-        'access_denied' => 'Nemate dozvolu za ovu radnju.',
-        _ =>
-          switch (status) {
-            404 when detail == null || detail.isEmpty =>
-              'API endpoint nije pronađen. Ponovo pokrenite najnoviju verziju API-ja.',
-            429 => 'Previše zahtjeva. Sačekajte i pokušajte ponovo.',
-            500 => 'Došlo je do greške na serveru. Pokušajte ponovo.',
-            503 => 'Usluga trenutno nije dostupna. Pokušajte ponovo.',
-            _ when detail != null && detail.isNotEmpty => detail,
-            _ => 'Zahtjev nije moguće izvršiti.',
-          },
-      };
+  static String _localizedMessage(
+    int status,
+    String code,
+    String? detail,
+  ) => switch (code) {
+    'invalid_credentials' => 'Pogrešno korisničko ime/email ili lozinka.',
+    'authentication_required' ||
+    'invalid_refresh_token' => 'Sesija je istekla. Prijavite se ponovo.',
+    'access_denied' => 'Nemate dozvolu za ovu radnju.',
+    'location_outside_bih' =>
+      'Odabrana lokacija mora biti u Bosni i Hercegovini.',
+    'location_not_resolved' =>
+      'Za ovu tačku nije pronađena upotrebljiva adresa. Izaberite drugu lokaciju.',
+    'gym_admin_already_assigned' =>
+      'Odabrani korisnik je već dodijeljen drugoj teretani. Izaberite drugog korisnika.',
+    'tenant_gym_admin_exists' => 'Ova teretana već ima aktivnog GymAdmina.',
+    _ => switch (status) {
+      404 when detail == null || detail.isEmpty =>
+        'API endpoint nije pronađen. Ponovo pokrenite najnoviju verziju API-ja.',
+      429 => 'Previše zahtjeva. Sačekajte i pokušajte ponovo.',
+      500 => 'Došlo je do greške na serveru. Pokušajte ponovo.',
+      503 => 'Usluga trenutno nije dostupna. Pokušajte ponovo.',
+      _ when detail != null && detail.isNotEmpty => detail,
+      _ => 'Zahtjev nije moguće izvršiti.',
+    },
+  };
 
   @override
   String toString() => message;

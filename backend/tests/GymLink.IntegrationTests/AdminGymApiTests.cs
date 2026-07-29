@@ -146,6 +146,9 @@ public sealed class AdminGymApiTests
             Assert.Equal(
                 "gym_admin_already_assigned",
                 await ProblemCodeAsync(assignedElsewhere));
+            Assert.Equal(
+                HttpStatusCode.OK,
+                (await client.GetAsync("/health")).StatusCode);
 
             await using var verification = CreateContext(connectionString);
             var persistedGym = await verification.Gyms.IgnoreQueryFilters()
@@ -431,6 +434,135 @@ public sealed class AdminGymApiTests
         }
     }
 
+    [Fact]
+    public async Task CentralAdmin_reverse_geocoding_resolves_BiH_map_clicks_safely()
+    {
+        var databaseName = $"GymLink_ReverseGeocoding_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+        var handler = new NominatimHandler(
+            """
+            {
+              "osm_type": "way",
+              "osm_id": 200,
+              "display_name": "Zmaja od Bosne 12, Sarajevo, Bosna i Hercegovina",
+              "lat": "43.856900",
+              "lon": "18.412500",
+              "address": {
+                "road": "Zmaja od Bosne",
+                "house_number": "12",
+                "city": "Sarajevo",
+                "state": "Federacija Bosne i Hercegovine",
+                "country_code": "ba"
+              }
+            }
+            """);
+        try
+        {
+            await using (var migration = CreateContext(connectionString))
+            {
+                await migration.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString, handler);
+            using var client = factory.CreateClient();
+            var centralAdmin = await LoginAsync(client, "centraladmin");
+            var member = await LoginAsync(client, "member");
+
+            Authorize(client, member);
+            Assert.Equal(
+                HttpStatusCode.Forbidden,
+                (await client.GetAsync(
+                    "/api/admin/locations/reverse?latitude=43.8563&longitude=18.4131")).StatusCode);
+
+            Authorize(client, centralAdmin);
+            Assert.Equal(
+                HttpStatusCode.BadRequest,
+                (await client.GetAsync(
+                    "/api/admin/locations/reverse?latitude=91&longitude=18.4131")).StatusCode);
+            Assert.Equal(
+                HttpStatusCode.BadRequest,
+                (await client.GetAsync(
+                    "/api/admin/locations/reverse?longitude=18.4131")).StatusCode);
+
+            var first = await client.GetFromJsonAsync<LocationReverseResultDto>(
+                "/api/admin/locations/reverse?latitude=43.856301&longitude=18.413101");
+            var cached = await client.GetFromJsonAsync<LocationReverseResultDto>(
+                "/api/admin/locations/reverse?latitude=43.856304&longitude=18.413104");
+
+            Assert.NotNull(first);
+            Assert.Equal("Zmaja od Bosne 12, Sarajevo, Bosna i Hercegovina", first.Address);
+            Assert.Equal("Sarajevo", first.CityName);
+            Assert.Equal(first, cached);
+            Assert.Equal(1, handler.RequestCount);
+            Assert.Contains("/reverse", handler.RequestUri!.AbsolutePath);
+            Assert.Contains("lat=43.85630", handler.RequestUri.Query);
+            Assert.Contains("lon=18.41310", handler.RequestUri.Query);
+            Assert.Contains("format=jsonv2", handler.RequestUri.Query);
+            Assert.Contains("addressdetails=1", handler.RequestUri.Query);
+            Assert.Contains("zoom=18", handler.RequestUri.Query);
+            Assert.Contains("layer=address", handler.RequestUri.Query);
+            Assert.Contains("accept-language=bs", handler.RequestUri.Query);
+
+            handler.ResponseBody =
+                """
+                {
+                  "osm_type": "way",
+                  "osm_id": 201,
+                  "display_name": "Dubrovnik, Hrvatska",
+                  "lat": "42.6500",
+                  "lon": "18.0900",
+                  "address": {
+                    "city": "Dubrovnik",
+                    "country_code": "hr"
+                  }
+                }
+                """;
+            var outside = await client.GetAsync(
+                "/api/admin/locations/reverse?latitude=42.6500&longitude=18.0900");
+            Assert.Equal(HttpStatusCode.BadRequest, outside.StatusCode);
+            Assert.Equal("location_outside_bih", await ProblemCodeAsync(outside));
+            Assert.Equal(
+                HttpStatusCode.OK,
+                (await client.GetAsync("/health")).StatusCode);
+
+            handler.ResponseBody =
+                """
+                {
+                  "osm_type": "way",
+                  "osm_id": 202,
+                  "display_name": "Nepoznata lokacija, Bosna i Hercegovina",
+                  "lat": "44.1000",
+                  "lon": "17.9000",
+                  "address": {
+                    "village": "Nepostojeće mjesto",
+                    "country_code": "ba"
+                  }
+                }
+                """;
+            var unmapped = await client.GetAsync(
+                "/api/admin/locations/reverse?latitude=44.1000&longitude=17.9000");
+            Assert.Equal(HttpStatusCode.NotFound, unmapped.StatusCode);
+            Assert.Equal("location_not_resolved", await ProblemCodeAsync(unmapped));
+
+            handler.StatusCode = HttpStatusCode.NotFound;
+            var noResult = await client.GetAsync(
+                "/api/admin/locations/reverse?latitude=44.2000&longitude=17.8000");
+            Assert.Equal(HttpStatusCode.NotFound, noResult.StatusCode);
+            Assert.Equal("location_not_resolved", await ProblemCodeAsync(noResult));
+
+            handler.StatusCode = HttpStatusCode.BadGateway;
+            var unavailable = await client.GetAsync(
+                "/api/admin/locations/reverse?latitude=44.3000&longitude=17.7000");
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+            Assert.Equal("location_search_unavailable", await ProblemCodeAsync(unavailable));
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
+
     private static object CreateRequest(
         Guid cityId,
         Guid gymAdminUserId,
@@ -551,6 +683,7 @@ public sealed class AdminGymApiTests
         public Uri? RequestUri { get; private set; }
         public string UserAgent { get; private set; } = string.Empty;
         public HttpStatusCode StatusCode { get; set; } = HttpStatusCode.OK;
+        public string ResponseBody { get; set; } = responseBody;
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -563,7 +696,7 @@ public sealed class AdminGymApiTests
             return Task.FromResult(new HttpResponseMessage(StatusCode)
             {
                 Content = new StringContent(
-                    responseBody,
+                    ResponseBody,
                     System.Text.Encoding.UTF8,
                     "application/json"),
             });

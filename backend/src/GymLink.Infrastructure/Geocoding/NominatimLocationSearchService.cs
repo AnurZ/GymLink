@@ -55,13 +55,7 @@ internal sealed class NominatimLocationSearchService(
                 return await SearchProviderAsync(query, cancellationToken);
             }) ?? [];
 
-        var cities = await (
-                from city in dbContext.Cities.AsNoTracking()
-                join country in dbContext.Countries.AsNoTracking()
-                    on city.CountryId equals country.Id
-                where city.IsActive && country.IsActive && country.Code == "BIH"
-                select new CityCandidate(city.Id, city.Name))
-            .ToListAsync(cancellationToken);
+        var cities = await LoadCitiesAsync(cancellationToken);
 
         return providerResults
             .Select(result => MapResult(result, cities))
@@ -70,6 +64,54 @@ internal sealed class NominatimLocationSearchService(
             .Take(ResultLimit)
             .ToArray();
     }
+
+    public async Task<LocationReverseResultDto> ReverseAsync(
+        LocationReverseRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!_settings.Enabled)
+        {
+            throw Unavailable();
+        }
+
+        var latitude = request.Latitude!.Value;
+        var longitude = request.Longitude!.Value;
+        var roundedLatitude = decimal.Round(latitude, 5, MidpointRounding.AwayFromZero);
+        var roundedLongitude = decimal.Round(longitude, 5, MidpointRounding.AwayFromZero);
+        var cacheKey =
+            $"geocoding:nominatim:reverse:{roundedLatitude.ToString(CultureInfo.InvariantCulture)}:"
+            + roundedLongitude.ToString(CultureInfo.InvariantCulture);
+        var providerResult = await cache.GetOrCreateAsync(
+            cacheKey,
+            async entry =>
+            {
+                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(_settings.CacheHours);
+                return await ReverseProviderAsync(
+                    roundedLatitude,
+                    roundedLongitude,
+                    cancellationToken);
+            });
+        if (providerResult is null)
+        {
+            throw NotResolved();
+        }
+
+        return MapReverseResult(
+            providerResult,
+            await LoadCitiesAsync(cancellationToken),
+            roundedLatitude,
+            roundedLongitude);
+    }
+
+    private async Task<IReadOnlyList<CityCandidate>> LoadCitiesAsync(
+        CancellationToken cancellationToken) =>
+        await (
+                from city in dbContext.Cities.AsNoTracking()
+                join country in dbContext.Countries.AsNoTracking()
+                    on city.CountryId equals country.Id
+                where city.IsActive && country.IsActive && country.Code == "BIH"
+                select new CityCandidate(city.Id, city.Name))
+            .ToListAsync(cancellationToken);
 
     private async Task<IReadOnlyList<NominatimResult>> SearchProviderAsync(
         string query,
@@ -118,6 +160,81 @@ internal sealed class NominatimLocationSearchService(
             return await response.Content.ReadFromJsonAsync<NominatimResult[]>(
                     cancellationToken: cancellationToken)
                 ?? [];
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw Unavailable();
+        }
+        catch (ExternalServiceUnavailableException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is HttpRequestException or NotSupportedException or System.Text.Json.JsonException)
+        {
+            throw new ExternalServiceUnavailableException(
+                "location_search_unavailable",
+                "Location search is temporarily unavailable. Try again.",
+                exception);
+        }
+        finally
+        {
+            UpstreamLock.Release();
+        }
+    }
+
+    private async Task<NominatimResult?> ReverseProviderAsync(
+        decimal latitude,
+        decimal longitude,
+        CancellationToken cancellationToken)
+    {
+        await UpstreamLock.WaitAsync(cancellationToken);
+        try
+        {
+            var elapsed = timeProvider.GetUtcNow() - _lastUpstreamRequest;
+            var minimumInterval = TimeSpan.FromMilliseconds(_settings.MinimumIntervalMilliseconds);
+            if (elapsed < minimumInterval)
+            {
+                await Task.Delay(minimumInterval - elapsed, timeProvider, cancellationToken);
+            }
+
+            _lastUpstreamRequest = timeProvider.GetUtcNow();
+            var parameters = new Dictionary<string, string?>
+            {
+                ["lat"] = latitude.ToString(CultureInfo.InvariantCulture),
+                ["lon"] = longitude.ToString(CultureInfo.InvariantCulture),
+                ["format"] = "jsonv2",
+                ["addressdetails"] = "1",
+                ["zoom"] = "18",
+                ["layer"] = "address",
+                ["accept-language"] = "bs",
+                ["email"] = string.IsNullOrWhiteSpace(_settings.ContactEmail)
+                    ? null
+                    : _settings.ContactEmail.Trim(),
+            };
+            var queryString = string.Join(
+                "&",
+                parameters
+                    .Where(pair => pair.Value is not null)
+                    .Select(pair =>
+                        $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value!)}"));
+            var endpoint = new Uri(
+                new Uri(_settings.BaseUrl.TrimEnd('/') + "/", UriKind.Absolute),
+                $"reverse?{queryString}");
+            using var response = await httpClientFactory.CreateClient("Nominatim")
+                .GetAsync(endpoint, cancellationToken);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw Unavailable();
+            }
+
+            return await response.Content.ReadFromJsonAsync<NominatimResult>(
+                cancellationToken: cancellationToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -190,6 +307,62 @@ internal sealed class NominatimLocationSearchService(
             city.Name,
             latitude,
             longitude);
+    }
+
+    private static LocationReverseResultDto MapReverseResult(
+        NominatimResult result,
+        IReadOnlyList<CityCandidate> cities,
+        decimal latitude,
+        decimal longitude)
+    {
+        if (string.IsNullOrWhiteSpace(result.DisplayName) || result.Address is null)
+        {
+            throw NotResolved();
+        }
+
+        if (string.IsNullOrWhiteSpace(result.Address.CountryCode))
+        {
+            throw NotResolved();
+        }
+
+        if (!string.Equals(
+                result.Address.CountryCode,
+                "ba",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ApplicationRuleException(
+                "location_outside_bih",
+                "The selected location must be in Bosnia and Herzegovina.");
+        }
+
+        var hierarchy = new[]
+        {
+            result.Address.City,
+            result.Address.Town,
+            result.Address.Municipality,
+            result.Address.Village,
+            result.Address.County,
+            result.Address.StateDistrict,
+        }.Where(value => !string.IsNullOrWhiteSpace(value)).Cast<string>().ToArray();
+        var city = ResolveCity(
+            hierarchy,
+            result.DisplayName,
+            result.Address.State,
+            cities);
+        if (city is null)
+        {
+            throw NotResolved();
+        }
+
+        var key = string.IsNullOrWhiteSpace(result.OsmType) || result.OsmId is null
+            ? $"{latitude.ToString(CultureInfo.InvariantCulture)},{longitude.ToString(CultureInfo.InvariantCulture)}"
+            : $"{result.OsmType}:{result.OsmId.Value.ToString(CultureInfo.InvariantCulture)}";
+        return new(
+            key,
+            result.DisplayName.Trim(),
+            result.DisplayName.Trim(),
+            city.Id,
+            city.Name);
     }
 
     private static CityCandidate? ResolveCity(
@@ -296,6 +469,11 @@ internal sealed class NominatimLocationSearchService(
         new(
             "location_search_unavailable",
             "Location search is temporarily unavailable. Try again.");
+
+    private static NotFoundException NotResolved() =>
+        new(
+            "location_not_resolved",
+            "No usable address was found for the selected location.");
 
     private sealed record CityCandidate(Guid Id, string Name);
 

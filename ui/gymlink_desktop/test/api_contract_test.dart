@@ -41,6 +41,33 @@ void main() {
     expect(problem.message, 'Pogrešno korisničko ime/email ili lozinka.');
   });
 
+  test('location and GymAdmin business failures are localized safely', () {
+    final outside = ApiProblem.fromResponse(
+      http.Response(
+        '{"title":"location_outside_bih",'
+        '"detail":"The selected location must be in Bosnia and Herzegovina."}',
+        400,
+      ),
+    );
+    final assigned = ApiProblem.fromResponse(
+      http.Response(
+        '{"title":"gym_admin_already_assigned",'
+        '"detail":"The selected account already has an active gym assignment."}',
+        409,
+      ),
+    );
+
+    expect(
+      outside.message,
+      'Odabrana lokacija mora biti u Bosni i Hercegovini.',
+    );
+    expect(
+      assigned.message,
+      'Odabrani korisnik je već dodijeljen drugoj teretani. '
+      'Izaberite drugog korisnika.',
+    );
+  });
+
   test('transport failures become user-facing API problems', () async {
     final api = ApiClient(
       _Tokens(),

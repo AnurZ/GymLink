@@ -655,6 +655,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
   final _adminSearch = TextEditingController();
   final _adminReason = TextEditingController();
   final _mapController = MapController();
+  final _stepperScrollController = ScrollController();
   final _days = List.generate(
     7,
     (index) =>
@@ -669,8 +670,11 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
   List<Map<String, dynamic>> _adminCandidates = const [];
   Map<String, dynamic>? _gymAdmin;
   Timer? _adminDebounce;
+  Timer? _locationDebounce;
+  int _locationRequestVersion = 0;
   bool _loadingSetup = true;
   bool _locationLoading = false;
+  bool _reverseLocationLoading = false;
   bool _adminLoading = false;
   String? _locationError;
   LatLng? _location;
@@ -697,7 +701,9 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
     _planPrice.dispose();
     _adminSearch.dispose();
     _adminReason.dispose();
+    _stepperScrollController.dispose();
     _adminDebounce?.cancel();
+    _locationDebounce?.cancel();
     super.dispose();
   }
 
@@ -736,8 +742,11 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
       setState(() => _locationError = 'Unesite najmanje dva znaka.');
       return;
     }
+    _locationDebounce?.cancel();
+    _locationRequestVersion++;
     setState(() {
       _locationLoading = true;
+      _reverseLocationLoading = false;
       _locationError = null;
       _locationResults = const [];
     });
@@ -779,6 +788,8 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
   }
 
   void _selectLocation(Map<String, dynamic> result) {
+    _locationDebounce?.cancel();
+    _locationRequestVersion++;
     final point = LatLng(
       (result['latitude'] as num).toDouble(),
       (result['longitude'] as num).toDouble(),
@@ -789,8 +800,65 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
       _location = point;
       _locationResults = const [];
       _locationError = null;
+      _reverseLocationLoading = false;
     });
     _mapController.move(point, 15);
+  }
+
+  void _selectMapPoint(LatLng point) {
+    _locationDebounce?.cancel();
+    final requestVersion = ++_locationRequestVersion;
+    setState(() {
+      _location = point;
+      _city = null;
+      _address.clear();
+      _locationResults = const [];
+      _locationError = null;
+      _reverseLocationLoading = true;
+    });
+    _locationDebounce = Timer(
+      const Duration(milliseconds: 300),
+      () => _reverseLocation(point, requestVersion),
+    );
+  }
+
+  Future<void> _reverseLocation(LatLng point, int requestVersion) async {
+    try {
+      final raw = await context.read<ApiClient>().get(
+        '/api/admin/locations/reverse',
+        query: {'latitude': point.latitude, 'longitude': point.longitude},
+      );
+      if (!mounted || requestVersion != _locationRequestVersion) return;
+      final result = Map<String, dynamic>.from(raw! as Map);
+      setState(() {
+        _city = {'id': result['cityId'], 'name': result['cityName']};
+        _address.text = result['address'].toString();
+        _locationError = null;
+      });
+    } on ApiProblem catch (error) {
+      if (!mounted || requestVersion != _locationRequestVersion) return;
+      setState(() {
+        _locationError = switch (error.code) {
+          'location_outside_bih' =>
+            'Odabrana lokacija mora biti u Bosni i Hercegovini.',
+          'location_not_resolved' =>
+            'Za ovu tačku nije pronađena upotrebljiva adresa. Izaberite drugu lokaciju.',
+          'location_search_unavailable' =>
+            'Pronalaženje adrese trenutno nije dostupno. Pokušajte ponovo.',
+          _ => error.message,
+        };
+      });
+    } catch (_) {
+      if (!mounted || requestVersion != _locationRequestVersion) return;
+      setState(
+        () => _locationError =
+            'Pronalaženje adrese trenutno nije dostupno. Pokušajte ponovo.',
+      );
+    } finally {
+      if (mounted && requestVersion == _locationRequestVersion) {
+        setState(() => _reverseLocationLoading = false);
+      }
+    }
   }
 
   String? _serverError(String field) {
@@ -864,12 +932,16 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
         message = 'Unesite naziv teretane.';
       } else if (_description.text.trim().length < 10) {
         message = 'Opis mora imati najmanje 10 znakova.';
+      }
+    } else if (_step == 1) {
+      if (_reverseLocationLoading) {
+        message = 'Sačekajte da se pronađe adresa odabrane lokacije.';
       } else if (_city == null || _location == null) {
-        message = 'Pretražite i izaberite lokaciju iz ponuđene liste.';
+        message = 'Pretražite adresu ili izaberite lokaciju na mapi.';
       } else if (_address.text.trim().length < 3) {
         message = 'Unesite adresu.';
       }
-    } else if (_step == 1) {
+    } else if (_step == 2) {
       if (!_days.any((day) => !day.isClosed)) {
         message = 'Najmanje jedan dan mora biti otvoren.';
       } else if (_days.any(
@@ -888,7 +960,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
           double.tryParse(_planPrice.text.replaceFirst(',', '.')) == null) {
         message = 'Unesite ispravne podatke početnog plana članstva.';
       }
-    } else if (_step == 2) {
+    } else if (_step == 3) {
       if (_gymAdmin == null) {
         message = 'Izaberite aktivnog Member korisnika.';
       } else if (_adminReason.text.trim().length < 2) {
@@ -901,9 +973,17 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
 
   void _continue() {
     if (!_validateStep()) return;
+    _setStep(_step + 1);
+  }
+
+  void _setStep(int value, {String? error}) {
     setState(() {
-      _step++;
-      _error = null;
+      _step = value;
+      _error = error;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_stepperScrollController.hasClients) return;
+      _stepperScrollController.jumpTo(0);
     });
   }
 
@@ -957,10 +1037,17 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
       if (mounted) Navigator.pop(context, true);
     } on ApiProblem catch (error) {
       if (mounted) {
+        final invalidAdmin =
+            error.code == 'gym_admin_already_assigned' ||
+            error.code == 'gym_admin_candidate_invalid';
         setState(() {
           _error = switch (error.code) {
             'gym_admin_already_assigned' =>
-              'Odabrani korisnik je već dodijeljen drugoj teretani.',
+              'Odabrani korisnik je već dodijeljen drugoj teretani. '
+                  'Izaberite drugog korisnika.',
+            'gym_admin_candidate_invalid' =>
+              'Odabrani korisnik više nije dostupan za GymAdmin ulogu. '
+                  'Izaberite drugog korisnika.',
             'tenant_gym_admin_exists' =>
               'Ova teretana već ima aktivnog GymAdmina.',
             'location_search_unavailable' =>
@@ -968,7 +1055,19 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
             _ => error.message,
           };
           _fieldErrors = error.fieldErrors;
+          if (invalidAdmin) {
+            _step = 3;
+            _gymAdmin = null;
+            _adminCandidates = const [];
+            _adminSearch.clear();
+          }
         });
+        if (invalidAdmin) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || !_stepperScrollController.hasClients) return;
+            _stepperScrollController.jumpTo(0);
+          });
+        }
       }
     } catch (_) {
       if (mounted) {
@@ -986,8 +1085,47 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
       '${value.hour.toString().padLeft(2, '0')}:'
       '${value.minute.toString().padLeft(2, '0')}:00';
 
-  Widget _detailsStep() => ListView(
+  void _changeMapZoom(double delta) {
+    final camera = _mapController.camera;
+    final zoom = (camera.zoom + delta).clamp(6.0, 19.0);
+    _mapController.move(camera.center, zoom);
+  }
+
+  void _centerMap() {
+    final selectedLocation = _location;
+    _mapController.move(
+      selectedLocation ?? const LatLng(43.8563, 18.4131),
+      selectedLocation == null ? 12 : 15,
+    );
+  }
+
+  Widget _mapControlButton({
+    required Key key,
+    required String tooltip,
+    required VoidCallback onPressed,
+    required IconData icon,
+  }) => SizedBox.square(
+    dimension: 32,
+    child: IconButton(
+      key: key,
+      tooltip: tooltip,
+      padding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+      iconSize: 18,
+      onPressed: onPressed,
+      icon: Icon(icon),
+    ),
+  );
+
+  Widget _basicInfoStep() => ListView(
+    key: const Key('gym-basic-info-scroll'),
     children: [
+      const Text(
+        'Osnovni podaci',
+        style: TextStyle(fontWeight: FontWeight.w800),
+      ),
+      const SizedBox(height: 10),
       Row(
         children: [
           Expanded(
@@ -1014,16 +1152,60 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
       const SizedBox(height: 12),
       TextFormField(
         controller: _description,
-        minLines: 3,
-        maxLines: 4,
+        minLines: 5,
+        maxLines: 8,
         decoration: InputDecoration(
           labelText: 'Opis',
           errorText: _serverError('Description'),
         ),
       ),
-      const SizedBox(height: 16),
-      const Text('Lokacija', style: TextStyle(fontWeight: FontWeight.w800)),
-      const SizedBox(height: 8),
+    ],
+  );
+
+  Widget _locationStep() => LayoutBuilder(
+    builder: (context, constraints) {
+      final wideLayout = constraints.maxWidth >= 760;
+      return ListView(
+        key: const Key('gym-location-scroll'),
+        children: [
+          const Text('Lokacija', style: TextStyle(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          const Row(
+            key: Key('gym-location-tip'),
+            children: [
+              Icon(Icons.info_outline, size: 16, color: Colors.black54),
+              SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Savjet: Pretražite adresu ili odaberite tačku na mapi.',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (wideLayout)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 9, child: _locationFields()),
+                const SizedBox(width: 16),
+                Expanded(flex: 11, child: _locationMap(420)),
+              ],
+            )
+          else ...[
+            _locationFields(),
+            const SizedBox(height: 12),
+            _locationMap(320),
+          ],
+        ],
+      );
+    },
+  );
+
+  Widget _locationFields() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
       Row(
         children: [
           Expanded(
@@ -1053,7 +1235,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
       ),
       if (_locationResults.isNotEmpty)
         Container(
-          constraints: const BoxConstraints(maxHeight: 150),
+          constraints: const BoxConstraints(maxHeight: 180),
           margin: const EdgeInsets.only(top: 6),
           decoration: BoxDecoration(
             color: Colors.white,
@@ -1071,7 +1253,11 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
                 return ListTile(
                   dense: true,
                   leading: const Icon(Icons.place_outlined),
-                  title: Text(result['displayName'].toString()),
+                  title: Text(
+                    result['displayName'].toString(),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   subtitle: Text(result['cityName'].toString()),
                   onTap: () => _selectLocation(result),
                 );
@@ -1086,6 +1272,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
       const SizedBox(height: 10),
       TextFormField(
         controller: _address,
+        maxLines: 2,
         decoration: InputDecoration(
           labelText: 'Odabrana adresa',
           prefixIcon: const Icon(Icons.location_on_outlined),
@@ -1096,9 +1283,15 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
         const SizedBox(height: 6),
         Text('Grad/općina: ${_city!['name']}'),
       ],
-      const SizedBox(height: 10),
+    ],
+  );
+
+  Widget _locationMap(double height) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
       SizedBox(
-        height: 250,
+        key: const Key('gym-location-map'),
+        height: height,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(14),
           child: FlutterMap(
@@ -1106,7 +1299,9 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
             options: MapOptions(
               initialCenter: const LatLng(43.8563, 18.4131),
               initialZoom: 12,
-              onTap: (_, point) => setState(() => _location = point),
+              minZoom: 6,
+              maxZoom: 19,
+              onTap: (_, point) => _selectMapPoint(point),
             ),
             children: [
               TileLayer(
@@ -1128,17 +1323,93 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
                     ),
                   ],
                 ),
-              const RichAttributionWidget(
-                attributions: [
-                  TextSourceAttribution('OpenStreetMap contributors'),
-                ],
+              Align(
+                alignment: Alignment.topRight,
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Material(
+                    key: const Key('gym-map-controls'),
+                    color: Colors.white.withValues(alpha: 0.94),
+                    elevation: 2,
+                    borderRadius: BorderRadius.circular(6),
+                    clipBehavior: Clip.antiAlias,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _mapControlButton(
+                          key: const Key('gym-map-zoom-in'),
+                          tooltip: 'Uvećaj mapu',
+                          onPressed: () => _changeMapZoom(1),
+                          icon: Icons.add,
+                        ),
+                        const SizedBox(
+                          height: 20,
+                          child: VerticalDivider(width: 1),
+                        ),
+                        _mapControlButton(
+                          key: const Key('gym-map-zoom-out'),
+                          tooltip: 'Umanji mapu',
+                          onPressed: () => _changeMapZoom(-1),
+                          icon: Icons.remove,
+                        ),
+                        const SizedBox(
+                          height: 20,
+                          child: VerticalDivider(width: 1),
+                        ),
+                        _mapControlButton(
+                          key: const Key('gym-map-center'),
+                          tooltip: 'Centriraj mapu',
+                          onPressed: _centerMap,
+                          icon: Icons.center_focus_strong,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Align(
+                alignment: Alignment.bottomRight,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.88),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(6),
+                    ),
+                  ),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    child: Text(
+                      '© OpenStreetMap contributors',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ),
+                ),
               ),
             ],
           ),
         ),
       ),
       const SizedBox(height: 6),
-      const Text('Nakon izbora rezultat možete precizirati klikom na mapu.'),
+      if (_reverseLocationLoading)
+        const Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            Text('Pronalaženje najbliže adrese...'),
+          ],
+        )
+      else
+        const Text(
+          'Kliknite na mapu da automatski pronađete najbližu adresu. '
+          'Adresu zatim možete dopuniti.',
+        ),
     ],
   );
 
@@ -1184,9 +1455,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
                     ],
                   ),
                   if (day.isClosed)
-                    const Expanded(
-                      child: Center(child: Text('Zatvoreno')),
-                    )
+                    const Expanded(child: Center(child: Text('Zatvoreno')))
                   else ...[
                     OutlinedButton(
                       onPressed: () => _pickTime(day, true),
@@ -1387,40 +1656,56 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
                 children: [
                   Expanded(
                     child: Stepper(
+                      controller: _stepperScrollController,
                       type: StepperType.horizontal,
+                      headerPadding: const EdgeInsets.symmetric(horizontal: 8),
                       currentStep: _step,
                       onStepTapped: (value) {
-                        if (value < _step) setState(() => _step = value);
+                        if (value < _step) _setStep(value);
                       },
                       controlsBuilder: (_, _) => const SizedBox.shrink(),
                       steps: [
                         Step(
-                          title: const Text('Podaci i lokacija'),
+                          title: const Text('Osnovno'),
                           isActive: _step >= 0,
                           state: _step > 0
                               ? StepState.complete
                               : StepState.indexed,
-                          content: SizedBox(height: 570, child: _detailsStep()),
+                          content: SizedBox(
+                            height: 570,
+                            child: _basicInfoStep(),
+                          ),
+                        ),
+                        Step(
+                          title: const Text('Lokacija'),
+                          isActive: _step >= 1,
+                          state: _step > 1
+                              ? StepState.complete
+                              : StepState.indexed,
+                          content: SizedBox(
+                            height: 570,
+                            child: _locationStep(),
+                          ),
                         ),
                         Step(
                           title: const Text('Katalog'),
-                          isActive: _step >= 1,
-                          state: _step > 1
+                          isActive: _step >= 2,
+                          state: _step > 2
                               ? StepState.complete
                               : StepState.indexed,
                           content: SizedBox(height: 570, child: _catalogStep()),
                         ),
                         Step(
                           title: const Text('GymAdmin'),
-                          isActive: _step >= 2,
-                          state: _step > 2
+                          isActive: _step >= 3,
+                          state: _step > 3
                               ? StepState.complete
                               : StepState.indexed,
                           content: SizedBox(height: 570, child: _adminStep()),
                         ),
                         Step(
                           title: const Text('Pregled'),
-                          isActive: _step >= 3,
+                          isActive: _step >= 4,
                           content: SizedBox(height: 570, child: _reviewStep()),
                         ),
                       ],
@@ -1445,14 +1730,14 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
       ),
       if (_step > 0)
         TextButton(
-          onPressed: _busy ? null : () => setState(() => _step--),
+          onPressed: _busy ? null : () => _setStep(_step - 1),
           child: const Text('Nazad'),
         ),
       FilledButton(
         key: const Key('gym-create-continue'),
-        onPressed: _busy ? null : (_step == 3 ? _submit : _continue),
+        onPressed: _busy ? null : (_step == 4 ? _submit : _continue),
         child: Text(
-          _busy ? 'Kreiranje...' : (_step == 3 ? 'Kreiraj' : 'Dalje'),
+          _busy ? 'Kreiranje...' : (_step == 4 ? 'Kreiraj' : 'Dalje'),
         ),
       ),
     ],

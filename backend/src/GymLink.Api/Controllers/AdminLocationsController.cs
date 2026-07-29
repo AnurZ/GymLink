@@ -17,4 +17,10 @@ public sealed class AdminLocationsController(ILocationSearchService service) : C
         [FromQuery] LocationSearchRequest request,
         CancellationToken cancellationToken) =>
         Ok(await service.SearchAsync(request, cancellationToken));
+
+    [HttpGet("reverse")]
+    public async Task<IActionResult> Reverse(
+        [FromQuery] LocationReverseRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(await service.ReverseAsync(request, cancellationToken));
 }

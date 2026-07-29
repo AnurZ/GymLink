@@ -88,7 +88,9 @@ internal sealed class ExceptionHandlingMiddleware(
         }
         else
         {
-            LogHandled(logger, code, context.TraceIdentifier, exception);
+            // Expected application failures are part of the HTTP contract. Keep
+            // their trace ID and code in logs without printing an exception stack.
+            LogHandled(logger, code, context.TraceIdentifier, null);
         }
 
         if (context.Response.HasStarted)
