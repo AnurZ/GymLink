@@ -735,16 +735,20 @@ class BookingScreen extends StatefulWidget {
 
 class _BookingScreenState extends State<BookingScreen> {
   List<Map<String, dynamic>> _offerings = const [];
-  List<Map<String, dynamic>> _slots = const [];
+  Map<String, Map<String, dynamic>> _calendarDays = const {};
   String? _offeringId;
   Map<String, dynamic>? _slot;
-  DateTime _date = DateTime.now();
+  DateTime _focusedMonth = DateTime(DateTime.now().year, DateTime.now().month);
+  DateTime? _selectedDate;
+  DateTime _bookingHorizonEnd = DateTime.now().add(const Duration(days: 56));
   bool _loading = true;
+  bool _calendarLoading = false;
   bool _checkingMembership = false;
   bool _hasCoveringMembership = false;
   bool _booking = false;
   String? _membershipMessage;
   Object? _error;
+  Object? _calendarError;
 
   Map<String, dynamic>? get _offering => _offeringId == null
       ? null
@@ -752,17 +756,27 @@ class _BookingScreenState extends State<BookingScreen> {
             .where((item) => item['id']?.toString() == _offeringId)
             .firstOrNull;
 
+  Map<String, dynamic>? get _selectedDay =>
+      _selectedDate == null ? null : _calendarDays[_dateKey(_selectedDate!)];
+
+  List<Map<String, dynamic>> get _slots =>
+      (_selectedDay?['slots'] as List? ?? const [])
+          .whereType<Map>()
+          .map(Map<String, dynamic>.from)
+          .toList();
+
   @override
   void initState() {
     super.initState();
     _load();
   }
 
-  Future<void> _load({String? preserveStartAtUtc}) async {
+  Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = null;
       _slot = null;
+      _selectedDate = null;
       _hasCoveringMembership = false;
       _membershipMessage = null;
     });
@@ -776,43 +790,77 @@ class _BookingScreenState extends State<BookingScreen> {
       if (!_offerings.any((item) => item['id']?.toString() == _offeringId)) {
         _offeringId = _offerings.firstOrNull?['id']?.toString();
       }
-      final dayStart = DateTime(_date.year, _date.month, _date.day).toUtc();
-      final slots = await api.page(
-        '/api/trainers/${widget.trainer['id']}/availability',
-        authenticated: false,
-        query: {
-          'trainerServiceOfferingId': _offering?['id'],
-          'fromUtc': dayStart.toIso8601String(),
-          'toUtc': dayStart.add(const Duration(days: 1)).toIso8601String(),
-        },
-      );
-      _slots = slots.items;
-      if (preserveStartAtUtc != null) {
-        _slot = _slots
-            .where(
-              (item) => item['startsAtUtc']?.toString() == preserveStartAtUtc,
-            )
-            .firstOrNull;
-      }
     } catch (error) {
       _error = error;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-    if (_slot != null) await _checkMembershipCoverage();
+    if (_error == null && _offering != null) await _loadCalendar();
   }
 
-  Future<void> _pickDate() async {
-    final selected = await showDatePicker(
-      context: context,
-      initialDate: _date,
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 180)),
-    );
-    if (selected != null) {
-      _date = selected;
-      await _load();
+  Future<void> _loadCalendar({
+    DateTime? preserveDate,
+    String? preserveStartAtUtc,
+  }) async {
+    final offering = _offering;
+    if (offering == null) return;
+    setState(() {
+      _calendarLoading = true;
+      _calendarError = null;
+      _slot = null;
+      _hasCoveringMembership = false;
+      _membershipMessage = null;
+    });
+    try {
+      final first = DateTime(_focusedMonth.year, _focusedMonth.month);
+      final last = DateTime(_focusedMonth.year, _focusedMonth.month + 1, 0);
+      final result = Map<String, dynamic>.from(
+        (await context.read<ApiClient>().get(
+              '/api/trainers/${widget.trainer['id']}/availability-calendar',
+              authenticated: false,
+              query: {
+                'trainerServiceOfferingId': offering['id'],
+                'fromLocalDate': _dateKey(first),
+                'toLocalDate': _dateKey(last),
+              },
+            ))!
+            as Map,
+      );
+      final days = <String, Map<String, dynamic>>{};
+      for (final item
+          in (result['days'] as List? ?? const []).whereType<Map>()) {
+        days[item['date'].toString()] = Map<String, dynamic>.from(item);
+      }
+      final horizon = DateTime.tryParse(
+        result['bookingHorizonEndsOn']?.toString() ?? '',
+      );
+      _calendarDays = days;
+      if (horizon != null) _bookingHorizonEnd = DateUtils.dateOnly(horizon);
+      final retainedDay = preserveDate == null
+          ? null
+          : days[_dateKey(preserveDate)];
+      if (retainedDay != null && _availableSlots(retainedDay) > 0) {
+        _selectedDate = DateUtils.dateOnly(preserveDate!);
+        if (preserveStartAtUtc != null) {
+          _slot = (retainedDay['slots'] as List? ?? const [])
+              .whereType<Map>()
+              .map(Map<String, dynamic>.from)
+              .where(
+                (item) =>
+                    item['isAvailable'] == true &&
+                    item['startsAtUtc']?.toString() == preserveStartAtUtc,
+              )
+              .firstOrNull;
+        }
+      } else if (preserveDate != null) {
+        _selectedDate = null;
+      }
+    } catch (error) {
+      _calendarError = error;
+    } finally {
+      if (mounted) setState(() => _calendarLoading = false);
     }
+    if (_slot != null) await _checkMembershipCoverage();
   }
 
   Future<void> _book() async {
@@ -849,7 +897,10 @@ class _BookingScreenState extends State<BookingScreen> {
     } on ApiProblem catch (error) {
       if (error.status == 409) {
         final selectedStart = _slot?['startsAtUtc']?.toString();
-        await _load(preserveStartAtUtc: selectedStart);
+        await _loadCalendar(
+          preserveDate: _selectedDate,
+          preserveStartAtUtc: selectedStart,
+        );
       }
       if (mounted) {
         ScaffoldMessenger.of(
@@ -868,6 +919,7 @@ class _BookingScreenState extends State<BookingScreen> {
   }
 
   Future<void> _selectSlot(Map<String, dynamic> slot) async {
+    if (slot['isAvailable'] != true) return;
     setState(() {
       _slot = slot;
       _hasCoveringMembership = false;
@@ -875,6 +927,38 @@ class _BookingScreenState extends State<BookingScreen> {
     });
     await _checkMembershipCoverage();
   }
+
+  void _selectDate(DateTime date) {
+    final day = _calendarDays[_dateKey(date)];
+    if (day == null || _availableSlots(day) == 0) return;
+    setState(() {
+      _selectedDate = DateUtils.dateOnly(date);
+      _slot = null;
+      _hasCoveringMembership = false;
+      _membershipMessage = null;
+    });
+  }
+
+  Future<void> _changeMonth(int offset) async {
+    final target = DateTime(_focusedMonth.year, _focusedMonth.month + offset);
+    if (target.isBefore(_currentMonth) || target.isAfter(_lastMonth)) return;
+    setState(() {
+      _focusedMonth = target;
+      _selectedDate = null;
+      _slot = null;
+      _hasCoveringMembership = false;
+      _membershipMessage = null;
+    });
+    await _loadCalendar();
+  }
+
+  DateTime get _currentMonth {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month);
+  }
+
+  DateTime get _lastMonth =>
+      DateTime(_bookingHorizonEnd.year, _bookingHorizonEnd.month);
 
   Future<void> _checkMembershipCoverage() async {
     final offering = _offering;
@@ -934,16 +1018,11 @@ class _BookingScreenState extends State<BookingScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Card(
-            child: ListTile(
-              leading: const CircleAvatar(child: Icon(Icons.person)),
-              title: Text(widget.trainer['displayName'].toString()),
-              subtitle: Text('★ ${widget.trainer['averageRating']}'),
-            ),
-          ),
+          _trainerCard(context),
           const SizedBox(height: 14),
           DropdownButtonFormField<String>(
-            key: ValueKey(_offeringId),
+            key: const Key('booking-offering'),
+            isExpanded: true,
             initialValue: _offeringId,
             decoration: const InputDecoration(labelText: 'Usluga'),
             items: _offerings
@@ -952,71 +1031,27 @@ class _BookingScreenState extends State<BookingScreen> {
                     value: item['id'].toString(),
                     child: Text(
                       '${item['name']} · ${item['durationMinutes']} min',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 )
                 .toList(),
             onChanged: (value) {
-              _offeringId = value;
-              _load();
+              setState(() {
+                _offeringId = value;
+                _selectedDate = null;
+                _slot = null;
+                _hasCoveringMembership = false;
+                _membershipMessage = null;
+              });
+              _loadCalendar();
             },
           ),
           const SizedBox(height: 14),
-          OutlinedButton.icon(
-            onPressed: _pickDate,
-            icon: const Icon(Icons.calendar_today),
-            label: Text(DateFormat('dd.MM.yyyy.').format(_date)),
-          ),
+          _calendarCard(context),
           const SizedBox(height: 14),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Dostupni termini',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 14),
-                  if (_slots.isEmpty)
-                    const Text('Nema slobodnih termina za izabrani datum.')
-                  else
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: _slots.map((slot) {
-                        final selected = identical(_slot, slot);
-                        final time = DateTime.parse(
-                          slot['startsAtUtc'].toString(),
-                        ).toLocal();
-                        return ChoiceChip(
-                          selected: selected,
-                          selectedColor: GymLinkColors.blue,
-                          labelStyle: TextStyle(
-                            color: selected ? Colors.white : null,
-                          ),
-                          label: Text(DateFormat('HH:mm').format(time)),
-                          onSelected: (_) => _selectSlot(slot),
-                        );
-                      }).toList(),
-                    ),
-                  const SizedBox(height: 16),
-                  const Wrap(
-                    spacing: 14,
-                    children: [
-                      _Legend(
-                        color: GymLinkColors.warning,
-                        label: 'Djelimično',
-                      ),
-                      _Legend(color: GymLinkColors.danger, label: 'Nedostupno'),
-                      _Legend(color: GymLinkColors.blue, label: 'Izabrano'),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
+          _timeSlotsCard(context),
           const SizedBox(height: 16),
           if (_checkingMembership)
             const LinearProgressIndicator()
@@ -1035,25 +1070,493 @@ class _BookingScreenState extends State<BookingScreen> {
             ),
           if (_checkingMembership || _membershipMessage != null)
             const SizedBox(height: 12),
-          FilledButton(
-            onPressed:
-                _slot == null ||
-                    _checkingMembership ||
-                    !_hasCoveringMembership ||
-                    _booking
-                ? null
-                : _book,
-            child: _booking
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Rezerviši termin'),
+          _summaryCard(context),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 52,
+            child: FilledButton(
+              key: const Key('booking-confirm'),
+              onPressed:
+                  _slot == null ||
+                      _checkingMembership ||
+                      !_hasCoveringMembership ||
+                      _booking
+                  ? null
+                  : _book,
+              child: _booking
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Rezerviši termin'),
+            ),
           ),
         ],
       ),
     ),
   );
+
+  Widget _trainerCard(BuildContext context) {
+    final name = widget.trainer['displayName']?.toString() ?? 'Trener';
+    final credentials = widget.trainer['credentials']?.toString().trim();
+    final biography = widget.trainer['biography']?.toString().trim();
+    final reviewCount = (widget.trainer['reviewCount'] as num?)?.toInt() ?? 0;
+    return Card(
+      key: const Key('booking-trainer-card'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              radius: 29,
+              backgroundColor: GymLinkColors.blue.withValues(alpha: 0.12),
+              child: Text(
+                _initials(name),
+                style: const TextStyle(
+                  color: GymLinkColors.blue,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  Text(
+                    credentials == null || credentials.isEmpty
+                        ? 'Personalni trener'
+                        : credentials,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.star,
+                        size: 18,
+                        color: Color(0xFFF4B400),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          '${widget.trainer['averageRating'] ?? 0} · $reviewCount recenzija',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (biography != null && biography.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      biography,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _calendarCard(BuildContext context) => Card(
+    key: const Key('booking-calendar'),
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Izaberi datum',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const Spacer(),
+              const Icon(Icons.calendar_month_outlined),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              IconButton(
+                key: const Key('booking-calendar-previous'),
+                tooltip: 'Prethodni mjesec',
+                onPressed: _focusedMonth.isAfter(_currentMonth)
+                    ? () => _changeMonth(-1)
+                    : null,
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Expanded(
+                child: Text(
+                  '${_months[_focusedMonth.month - 1]} ${_focusedMonth.year}',
+                  key: const Key('booking-calendar-month'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              IconButton(
+                key: const Key('booking-calendar-next'),
+                tooltip: 'Sljedeći mjesec',
+                onPressed: _focusedMonth.isBefore(_lastMonth)
+                    ? () => _changeMonth(1)
+                    : null,
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              for (final label in ['P', 'U', 'S', 'Č', 'P', 'S', 'N'])
+                Expanded(
+                  child: Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.blueGrey,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (_calendarLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 56),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_calendarError != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Column(
+                  children: [
+                    Text(
+                      _calendarError is ApiProblem
+                          ? (_calendarError! as ApiProblem).message
+                          : 'Došlo je do neočekivane greške.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: _loadCalendar,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Pokušaj ponovo'),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            _calendarGrid(context),
+          const SizedBox(height: 12),
+          const Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: [
+              _Legend(color: Color(0xFFFFF1A8), label: 'Djelimično popunjeno'),
+              _Legend(color: Color(0xFFFFD7D7), label: 'Skoro popunjeno'),
+              _Legend(color: Color(0xFFE5E7EB), label: 'Termini popunjeni'),
+              _Legend(color: GymLinkColors.blue, label: 'Izabrano'),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _calendarGrid(BuildContext context) {
+    final first = DateTime(_focusedMonth.year, _focusedMonth.month);
+    final daysInMonth = DateTime(
+      _focusedMonth.year,
+      _focusedMonth.month + 1,
+      0,
+    ).day;
+    final leading = first.weekday - DateTime.monday;
+    final cellCount = ((leading + daysInMonth + 6) ~/ 7) * 7;
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: cellCount,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 7,
+        mainAxisSpacing: 5,
+        crossAxisSpacing: 5,
+      ),
+      itemBuilder: (context, index) {
+        final dayNumber = index - leading + 1;
+        if (dayNumber < 1 || dayNumber > daysInMonth) {
+          return const SizedBox.shrink();
+        }
+        final date = DateTime(
+          _focusedMonth.year,
+          _focusedMonth.month,
+          dayNumber,
+        );
+        return _calendarDay(context, date);
+      },
+    );
+  }
+
+  Widget _calendarDay(BuildContext context, DateTime date) {
+    final day = _calendarDays[_dateKey(date)];
+    final total = day == null ? 0 : _totalSlots(day);
+    final available = day == null ? 0 : _availableSlots(day);
+    final disabled = available == 0;
+    final selected =
+        _selectedDate != null && DateUtils.isSameDay(_selectedDate, date);
+    final partiallyFull = available > 0 && available < total;
+    final almostFull = partiallyFull && available / total <= 0.25;
+    final background = selected
+        ? GymLinkColors.blue
+        : disabled
+        ? const Color(0xFFE5E7EB)
+        : almostFull
+        ? const Color(0xFFFFD7D7)
+        : partiallyFull
+        ? const Color(0xFFFFF1A8)
+        : Colors.white;
+    final foreground = selected
+        ? Colors.white
+        : disabled
+        ? Theme.of(context).disabledColor
+        : almostFull
+        ? const Color(0xFFB42318)
+        : GymLinkColors.ink;
+    final today = DateUtils.isSameDay(DateTime.now(), date);
+    return Semantics(
+      button: !disabled,
+      selected: selected,
+      label:
+          '${date.day}. ${_months[date.month - 1]}, $available slobodnih termina',
+      child: InkWell(
+        key: Key('booking-calendar-day-${_dateKey(date)}'),
+        onTap: disabled ? null : () => _selectDate(date),
+        borderRadius: BorderRadius.circular(10),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: today && !selected
+                  ? GymLinkColors.blue
+                  : Colors.transparent,
+            ),
+          ),
+          child: Center(
+            child: Text(
+              '${date.day}',
+              style: TextStyle(color: foreground, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _timeSlotsCard(BuildContext context) => Card(
+    key: const Key('booking-time-slots'),
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Dostupni termini',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const Spacer(),
+              const Icon(Icons.schedule_outlined, color: Colors.blueGrey),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (_selectedDate == null)
+            const Text('Odaberite datum da biste vidjeli termine.')
+          else if (_slots.isEmpty)
+            const Text('Nema termina za izabrani datum.')
+          else
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final width = (constraints.maxWidth - 24) / 4;
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _slots.map((slot) {
+                    final available = slot['isAvailable'] == true;
+                    final selected =
+                        _slot?['startsAtUtc']?.toString() ==
+                        slot['startsAtUtc']?.toString();
+                    final time = DateTime.parse(
+                      slot['startsAtUtc'].toString(),
+                    ).toLocal();
+                    return SizedBox(
+                      width: width,
+                      child: ChoiceChip(
+                        key: Key('booking-slot-${slot['startsAtUtc']}'),
+                        selected: selected,
+                        showCheckmark: false,
+                        selectedColor: GymLinkColors.blue,
+                        disabledColor: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest,
+                        labelStyle: TextStyle(
+                          color: selected
+                              ? Colors.white
+                              : available
+                              ? GymLinkColors.ink
+                              : Theme.of(context).disabledColor,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        label: SizedBox(
+                          width: double.infinity,
+                          child: Text(
+                            DateFormat('HH:mm').format(time),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                        onSelected: available ? (_) => _selectSlot(slot) : null,
+                      ),
+                    );
+                  }).toList(),
+                );
+              },
+            ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _summaryCard(BuildContext context) => Card(
+    key: const Key('booking-summary'),
+    color: GymLinkColors.blue.withValues(alpha: 0.06),
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Odabrani termin',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 14),
+          _summaryRow(
+            'Datum',
+            _selectedDate == null
+                ? '—'
+                : DateFormat('dd.MM.yyyy.').format(_selectedDate!),
+            const Key('booking-summary-date'),
+          ),
+          _summaryRow(
+            'Vrijeme',
+            _slot == null
+                ? '—'
+                : DateFormat('HH:mm').format(
+                    DateTime.parse(_slot!['startsAtUtc'].toString()).toLocal(),
+                  ),
+            const Key('booking-summary-time'),
+          ),
+          _summaryRow(
+            'Trener',
+            widget.trainer['displayName']?.toString() ?? '—',
+            const Key('booking-summary-trainer'),
+          ),
+          _summaryRow(
+            'Usluga',
+            _offering == null
+                ? '—'
+                : '${_offering!['name']} · ${_offering!['durationMinutes']} min',
+            const Key('booking-summary-service'),
+          ),
+          _summaryRow(
+            'Cijena',
+            _offering == null
+                ? '—'
+                : '${_offering!['price']} ${_offering!['currency']}',
+            const Key('booking-summary-price'),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _summaryRow(String label, String value, Key key) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 76,
+          child: Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ),
+        Expanded(
+          child: Text(value, key: key, textAlign: TextAlign.end),
+        ),
+      ],
+    ),
+  );
+
+  static const _months = [
+    'Januar',
+    'Februar',
+    'Mart',
+    'April',
+    'Maj',
+    'Juni',
+    'Juli',
+    'August',
+    'Septembar',
+    'Oktobar',
+    'Novembar',
+    'Decembar',
+  ];
+
+  int _totalSlots(Map<String, dynamic> day) =>
+      (day['totalSlots'] as num?)?.toInt() ?? 0;
+
+  int _availableSlots(Map<String, dynamic> day) =>
+      (day['availableSlots'] as num?)?.toInt() ?? 0;
+
+  String _dateKey(DateTime date) =>
+      '${date.year.toString().padLeft(4, '0')}-'
+      '${date.month.toString().padLeft(2, '0')}-'
+      '${date.day.toString().padLeft(2, '0')}';
+
+  String _initials(String value) {
+    final parts = value
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return 'T';
+    return parts.take(2).map((part) => part[0].toUpperCase()).join();
+  }
 }
 
 class _Legend extends StatelessWidget {
@@ -1073,7 +1576,7 @@ class _Legend extends StatelessWidget {
         ),
       ),
       const SizedBox(width: 5),
-      Text(label),
+      Flexible(child: Text(label)),
     ],
   );
 }

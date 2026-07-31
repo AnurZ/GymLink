@@ -19,6 +19,29 @@ public sealed record PublicAvailabilitySearchRequest : PagedRequest
     public DateTime? ToUtc { get; init; }
 }
 
+public sealed record PublicAvailabilityCalendarRequest
+{
+    public Guid TrainerServiceOfferingId { get; init; }
+    public DateOnly FromLocalDate { get; init; }
+    public DateOnly ToLocalDate { get; init; }
+}
+
+public sealed record PublicAvailabilityCalendarSlotDto(
+    DateTime StartsAtUtc,
+    DateTime EndsAtUtc,
+    bool IsAvailable);
+
+public sealed record PublicAvailabilityCalendarDayDto(
+    DateOnly Date,
+    int TotalSlots,
+    int AvailableSlots,
+    IReadOnlyList<PublicAvailabilityCalendarSlotDto> Slots);
+
+public sealed record PublicAvailabilityCalendarDto(
+    string TimeZoneId,
+    DateOnly BookingHorizonEndsOn,
+    IReadOnlyList<PublicAvailabilityCalendarDayDto> Days);
+
 public sealed record AvailabilityDto(
     Guid? Id,
     Guid TrainerProfileId,
@@ -134,6 +157,7 @@ public interface IAvailabilityService
 {
     Task<PagedResult<AvailabilityDto>> SearchTenantAsync(AvailabilitySearchRequest request, CancellationToken cancellationToken);
     Task<PagedResult<AvailabilityDto>> SearchPublicAsync(Guid trainerId, PublicAvailabilitySearchRequest request, CancellationToken cancellationToken);
+    Task<PublicAvailabilityCalendarDto> GetPublicCalendarAsync(Guid trainerId, PublicAvailabilityCalendarRequest request, CancellationToken cancellationToken);
     Task<AvailabilityDto> CreateAsync(CreateAvailabilityRequest request, CancellationToken cancellationToken);
     Task<AvailabilityDto> UpdateAsync(Guid id, UpdateAvailabilityRequest request, CancellationToken cancellationToken);
     Task<AvailabilityDto> CancelAsync(Guid id, ReservationConcurrencyRequest request, CancellationToken cancellationToken);

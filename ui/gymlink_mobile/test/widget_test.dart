@@ -159,6 +159,19 @@ void main() {
   testWidgets('pay-in-person booking shows a confirmed success state', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(360, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final now = DateTime.now();
+    final bookingDate = DateTime(now.year, now.month + 1);
+    final startsAt = DateTime(
+      bookingDate.year,
+      bookingDate.month,
+      bookingDate.day,
+      10,
+    ).toUtc();
+    final calendarRequests = <String>[];
     final client = MockClient((request) async {
       if (request.method == 'GET' &&
           request.url.path == '/api/trainers/trainer-1/offerings') {
@@ -174,15 +187,49 @@ void main() {
         ]);
       }
       if (request.method == 'GET' &&
-          request.url.path == '/api/trainers/trainer-1/availability') {
-        return _jsonResponse(
-          _page([
-            {
-              'startsAtUtc': '2030-08-01T10:00:00Z',
-              'endsAtUtc': '2030-08-01T11:00:00Z',
-            },
-          ]),
+          request.url.path == '/api/trainers/trainer-1/availability-calendar') {
+        final requestedMonth = DateTime.parse(
+          request.url.queryParameters['fromLocalDate']!,
         );
+        calendarRequests.add(request.url.queryParameters['fromLocalDate']!);
+        final requestedDate = DateTime(
+          requestedMonth.year,
+          requestedMonth.month,
+        );
+        Map<String, Object> day(int offset, int availableSlots) {
+          final date = requestedDate.add(Duration(days: offset));
+          final firstStart =
+              requestedDate.year == bookingDate.year &&
+                  requestedDate.month == bookingDate.month &&
+                  offset == 0
+              ? startsAt
+              : DateTime(date.year, date.month, date.day, 10).toUtc();
+          return {
+            'date': _testDateKey(date),
+            'totalSlots': 4,
+            'availableSlots': availableSlots,
+            'slots': [
+              for (var index = 0; index < 4; index++)
+                {
+                  'startsAtUtc': firstStart
+                      .add(Duration(hours: index))
+                      .toIso8601String(),
+                  'endsAtUtc': firstStart
+                      .add(Duration(hours: index + 1))
+                      .toIso8601String(),
+                  'isAvailable': index < availableSlots,
+                },
+            ],
+          };
+        }
+
+        return _jsonResponse({
+          'timeZoneId': 'Europe/Sarajevo',
+          'bookingHorizonEndsOn': _testDateKey(
+            DateUtils.dateOnly(now.add(const Duration(days: 56))),
+          ),
+          'days': [day(0, 1), day(1, 2), day(2, 0), day(3, 4)],
+        });
       }
       if (request.method == 'GET' &&
           request.url.path == '/api/me/memberships') {
@@ -225,6 +272,9 @@ void main() {
               'id': 'trainer-1',
               'displayName': 'Trener Test',
               'averageRating': 5,
+              'reviewCount': 12,
+              'credentials': 'Personalni trener',
+              'biography': 'Individualni treninzi i funkcionalna priprema.',
             },
             gymId: 'gym-1',
           ),
@@ -233,9 +283,114 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(ChoiceChip));
+    expect(find.text('TT'), findsOneWidget);
+    expect(find.text('5 · 12 recenzija'), findsOneWidget);
+    expect(find.text('Djelimično popunjeno'), findsOneWidget);
+    expect(find.text('Termini popunjeni'), findsOneWidget);
+    expect(find.text('Skoro popunjeno'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    tester.view.physicalSize = const Size(412, 1600);
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+
+    final nextMonth = find.byKey(const Key('booking-calendar-next'));
+    await tester.ensureVisible(nextMonth);
+    await tester.tap(nextMonth);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Rezerviši termin'));
+    expect(calendarRequests.length, 2);
+    final bookingDay = find.byKey(
+      Key('booking-calendar-day-${_testDateKey(bookingDate)}'),
+    );
+    await tester.scrollUntilVisible(
+      bookingDay,
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    final redInk = tester.widget<Ink>(
+      find.descendant(of: bookingDay, matching: find.byType(Ink)),
+    );
+    expect(
+      (redInk.decoration! as BoxDecoration).color,
+      const Color(0xFFFFD7D7),
+    );
+    final partiallyFullDay = find.byKey(
+      Key(
+        'booking-calendar-day-${_testDateKey(bookingDate.add(const Duration(days: 1)))}',
+      ),
+    );
+    final partiallyFullInk = tester.widget<Ink>(
+      find.descendant(of: partiallyFullDay, matching: find.byType(Ink)),
+    );
+    expect(
+      (partiallyFullInk.decoration! as BoxDecoration).color,
+      const Color(0xFFFFF1A8),
+    );
+    final fullDay = find.byKey(
+      Key(
+        'booking-calendar-day-${_testDateKey(bookingDate.add(const Duration(days: 2)))}',
+      ),
+    );
+    expect(tester.widget<InkWell>(fullDay).onTap, isNull);
+    final fullInk = tester.widget<Ink>(
+      find.descendant(of: fullDay, matching: find.byType(Ink)),
+    );
+    expect(
+      (fullInk.decoration! as BoxDecoration).color,
+      const Color(0xFFE5E7EB),
+    );
+    await tester.tap(bookingDay);
+    await tester.pumpAndSettle();
+    final selectedInk = tester.widget<Ink>(
+      find.descendant(of: bookingDay, matching: find.byType(Ink)),
+    );
+    expect(
+      (selectedInk.decoration! as BoxDecoration).color,
+      GymLinkColors.blue,
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('booking-time-slots')),
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    final availableSlot = find.byWidgetPredicate(
+      (widget) => widget is ChoiceChip && widget.onSelected != null,
+    );
+    await tester.scrollUntilVisible(
+      availableSlot,
+      120,
+      scrollable: find.byType(Scrollable).first,
+    );
+    final chips = tester
+        .widgetList<ChoiceChip>(find.byType(ChoiceChip))
+        .toList();
+    expect(chips, hasLength(4));
+    expect(chips.where((chip) => chip.onSelected == null), hasLength(3));
+    expect(
+      tester.widget<Text>(find.byKey(const Key('booking-summary-date'))).data,
+      '${bookingDate.day.toString().padLeft(2, '0')}.'
+      '${bookingDate.month.toString().padLeft(2, '0')}.'
+      '${bookingDate.year}.',
+    );
+    await tester.tap(availableSlot);
+    await tester.pumpAndSettle();
+    final confirmBooking = find.byKey(const Key('booking-confirm'));
+    await tester.scrollUntilVisible(
+      confirmBooking,
+      160,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(
+      tester.widget<Text>(find.byKey(const Key('booking-summary-time'))).data,
+      '10:00',
+    );
+    expect(
+      tester.widget<Text>(find.byKey(const Key('booking-summary-price'))).data,
+      '30 BAM',
+    );
+    expect(tester.widget<FilledButton>(confirmBooking).onPressed, isNotNull);
+    expect(tester.takeException(), isNull);
+    await tester.tap(confirmBooking);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('reservation-payment-in-person')));
     await tester.pump();
@@ -1069,6 +1224,11 @@ Map<String, Object> _page(List<Object> items) => {
   'pageSize': 20,
   'totalCount': items.length,
 };
+
+String _testDateKey(DateTime date) =>
+    '${date.year.toString().padLeft(4, '0')}-'
+    '${date.month.toString().padLeft(2, '0')}-'
+    '${date.day.toString().padLeft(2, '0')}';
 
 const _emptyTestGuid = '00000000-0000-0000-0000-000000000000';
 

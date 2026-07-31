@@ -97,6 +97,31 @@ public sealed class Phase5ReservationApiTests
                     $"&toUtc={Uri.EscapeDataString(start.AddDays(1).ToString("O"))}");
             Assert.NotNull(publicAvailability);
             Assert.Contains(publicAvailability.Items, x => x.StartsAtUtc == start);
+            var localDate = DateOnly.FromDateTime(localDay);
+            var calendarPath =
+                $"/api/trainers/{trainer.Id}/availability-calendar" +
+                $"?trainerServiceOfferingId={offering.Id}" +
+                $"&fromLocalDate={localDate:yyyy-MM-dd}" +
+                $"&toLocalDate={localDate:yyyy-MM-dd}";
+            var openCalendar = await setupClient
+                .GetFromJsonAsync<PublicAvailabilityCalendarDto>(calendarPath);
+            Assert.NotNull(openCalendar);
+            Assert.Equal(TrainerAvailabilitySchedule.SarajevoTimeZoneId, openCalendar.TimeZoneId);
+            var openDay = Assert.Single(openCalendar.Days);
+            Assert.Equal(localDate, openDay.Date);
+            Assert.True(openDay.TotalSlots > 1);
+            Assert.Equal(openDay.TotalSlots, openDay.AvailableSlots);
+            Assert.All(openDay.Slots, slot => Assert.True(slot.IsAvailable));
+
+            var oversizedCalendar = await setupClient.GetAsync(
+                $"/api/trainers/{trainer.Id}/availability-calendar" +
+                $"?trainerServiceOfferingId={offering.Id}" +
+                $"&fromLocalDate={localDate:yyyy-MM-dd}" +
+                $"&toLocalDate={localDate.AddDays(42):yyyy-MM-dd}");
+            Assert.Equal(HttpStatusCode.BadRequest, oversizedCalendar.StatusCode);
+            Assert.Equal(
+                "availability_calendar_range_too_large",
+                await ProblemCodeAsync(oversizedCalendar));
 
             var unique = Guid.NewGuid().ToString("N");
             var registration = await setupClient.PostAsJsonAsync(
@@ -157,6 +182,15 @@ public sealed class Phase5ReservationApiTests
             Assert.Equal(offering.Price, reservation.Price);
             Assert.Equal(ReservationPaymentMethod.Stripe, reservation.PaymentMethod);
             Assert.Equal(ReservationStatus.Pending, reservation.Status);
+
+            var heldCalendar = await setupClient
+                .GetFromJsonAsync<PublicAvailabilityCalendarDto>(calendarPath);
+            var heldDay = Assert.Single(heldCalendar!.Days);
+            Assert.Equal(openDay.TotalSlots, heldDay.TotalSlots);
+            Assert.Equal(openDay.AvailableSlots - 1, heldDay.AvailableSlots);
+            Assert.False(Assert.Single(
+                heldDay.Slots,
+                slot => slot.StartsAtUtc == start).IsAvailable);
 
             Authorize(setupClient, winningSession);
             var pendingMemberReservations =
@@ -222,6 +256,14 @@ public sealed class Phase5ReservationApiTests
             Assert.Equal(ReservationStatus.Confirmed, confirmed.Status);
             Assert.True(confirmed.IsPaid);
             Assert.Equal(ReservationPaymentMethod.Stripe, confirmed.PaymentMethod);
+
+            var confirmedCalendar = await setupClient
+                .GetFromJsonAsync<PublicAvailabilityCalendarDto>(calendarPath);
+            var confirmedDay = Assert.Single(confirmedCalendar!.Days);
+            Assert.Equal(heldDay.AvailableSlots, confirmedDay.AvailableSlots);
+            Assert.False(Assert.Single(
+                confirmedDay.Slots,
+                slot => slot.StartsAtUtc == start).IsAvailable);
 
             var confirmedTenantReservations =
                 await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(

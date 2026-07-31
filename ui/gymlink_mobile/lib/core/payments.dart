@@ -82,7 +82,7 @@ Future<void> showPayInPersonReservationSuccess(BuildContext context) =>
         title: const Text('Termin je potvrđen', textAlign: TextAlign.center),
         content: const Text(
           'Rezervacija je sačuvana u Terminima, a razgovor s trenerom je '
-          'dostupan. Iznos plaćate uživo na treningu.',
+          'spreman. Iznos plaćate uživo na treningu.',
           textAlign: TextAlign.center,
         ),
         actions: [

@@ -102,6 +102,13 @@ public sealed class PublicReservationCatalogController(
         CancellationToken cancellationToken) =>
         Ok(await availability.SearchPublicAsync(trainerId, request, cancellationToken));
 
+    [HttpGet("api/trainers/{trainerId:guid}/availability-calendar")]
+    public async Task<IActionResult> GetAvailabilityCalendar(
+        Guid trainerId,
+        [FromQuery] PublicAvailabilityCalendarRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(await availability.GetPublicCalendarAsync(trainerId, request, cancellationToken));
+
     [HttpGet("api/trainers/{trainerId:guid}/reviews")]
     public async Task<IActionResult> SearchTrainerReviews(
         Guid trainerId,
