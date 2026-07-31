@@ -9,6 +9,7 @@ using GymLink.Application.ReferenceData;
 using GymLink.Application.Registration;
 using GymLink.Application.Reservations;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace GymLink.Application;
 
@@ -38,6 +39,10 @@ public static class DependencyInjection
         services.AddScoped<IReservationService, ReservationService>();
         services.AddScoped<IReviewService, ReviewService>();
         services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<IConversationProvisioner, ConversationProvisioner>();
+        services.TryAddSingleton<
+            IConversationRealtimeNotifier,
+            NullConversationRealtimeNotifier>();
         services.AddScoped<ChatService>();
         services.AddScoped<IChatService>(provider => provider.GetRequiredService<ChatService>());
         services.AddScoped<IChatActorService>(

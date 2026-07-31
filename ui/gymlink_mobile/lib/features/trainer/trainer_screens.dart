@@ -5,12 +5,15 @@ import 'package:provider/provider.dart';
 import '../../core/api.dart';
 import '../../shared/widgets.dart';
 import '../chat/chat_screens.dart';
+import '../reservations/reservation_refresh_controller.dart';
 
 const _reservationStatuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
 const _emptyGuid = '00000000-0000-0000-0000-000000000000';
 
 class TrainerAppointmentsScreen extends StatefulWidget {
-  const TrainerAppointmentsScreen({super.key});
+  const TrainerAppointmentsScreen({this.controller, super.key});
+
+  final ReservationRefreshController? controller;
 
   @override
   State<TrainerAppointmentsScreen> createState() =>
@@ -25,7 +28,24 @@ class _TrainerAppointmentsScreenState extends State<TrainerAppointmentsScreen> {
   @override
   void initState() {
     super.initState();
+    widget.controller?.addListener(_refreshRequested);
     _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant TrainerAppointmentsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller == widget.controller) return;
+    oldWidget.controller?.removeListener(_refreshRequested);
+    widget.controller?.addListener(_refreshRequested);
+  }
+
+  void _refreshRequested() => _load();
+
+  @override
+  void dispose() {
+    widget.controller?.removeListener(_refreshRequested);
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -189,6 +209,11 @@ class _TrainerAppointmentDetailsState extends State<TrainerAppointmentDetails> {
                     ),
                   ),
                   Text('${_item['durationMinutes']} minuta'),
+                  Text(
+                    (_item['paymentMethod'] as num?)?.toInt() == 1
+                        ? 'Plaćanje: uživo'
+                        : 'Plaćanje: Stripe',
+                  ),
                   const SizedBox(height: 12),
                   StatusPill(enumLabel(_item['status'], _reservationStatuses)),
                 ],
@@ -196,17 +221,21 @@ class _TrainerAppointmentDetailsState extends State<TrainerAppointmentDetails> {
             ),
           ),
           const SizedBox(height: 16),
-          if (status == 0)
+          if ((_item['allowedActions'] as List? ?? const []).contains(
+            'confirm',
+          ))
             FilledButton(
               onPressed: _busy ? null : () => _command('confirm'),
               child: const Text('Potvrdi termin'),
             ),
-          if (status == 1)
+          if ((_item['allowedActions'] as List? ?? const []).contains(
+            'complete',
+          ))
             FilledButton(
               onPressed: _busy ? null : () => _command('complete'),
               child: const Text('Označi završenim'),
             ),
-          if (status != 2 && status != 3)
+          if ((_item['allowedActions'] as List? ?? const []).contains('cancel'))
             OutlinedButton(
               onPressed: _busy ? null : _cancel,
               child: const Text('Otkaži uz razlog'),

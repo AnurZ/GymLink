@@ -232,6 +232,11 @@ internal sealed class ChatService(
         return query.ToPagedResultAsync(request, cancellationToken);
     }
 
+    public Task<ConversationDto> GetMineAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken) =>
+        LoadConversationAsync(conversationId, RequireUser(), cancellationToken);
+
     public async Task<MessageHistoryDto> GetMessagesAsync(
         Guid conversationId,
         MessageHistoryRequest request,
@@ -391,34 +396,53 @@ internal sealed class ChatService(
         CancellationToken cancellationToken)
     {
         var userId = RequireActor(actorUserId);
-        var access = await LoadAccessAsync(
-            conversationId,
-            userId,
-            cancellationToken,
-            tracked: true);
-        if (access.Participant.LeftAtUtc.HasValue)
+        return await transaction.ExecuteAsync<ConversationReadDto>(async ct =>
         {
-            throw new ConflictException(
-                "conversation_read_only",
-                "The conversation participation has ended.");
-        }
+            var access = await LoadAccessAsync(
+                conversationId,
+                userId,
+                ct,
+                tracked: true);
+            if (access.Participant.LeftAtUtc.HasValue)
+            {
+                throw new ConflictException(
+                    "conversation_read_only",
+                    "The conversation participation has ended.");
+            }
 
-        var previous = access.Participant.LastReadAtUtc;
-        var unreadCount = await dbContext.Messages
-            .IgnoreQueryFilters()
-            .LongCountAsync(
-                x => x.ConversationId == conversationId &&
-                     x.SenderUserId != userId &&
-                     (!previous.HasValue || x.SentAtUtc > previous.Value),
-                cancellationToken);
-        var now = timeProvider.GetUtcNow().UtcDateTime;
-        using (tenantMutationScope.Begin(access.TenantId))
-        {
-            access.Participant.MarkRead(now);
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
+            var previous = access.Participant.LastReadAtUtc;
+            var unreadCount = await dbContext.Messages
+                .IgnoreQueryFilters()
+                .LongCountAsync(
+                    x => x.ConversationId == conversationId &&
+                         x.SenderUserId != userId &&
+                         (!previous.HasValue || x.SentAtUtc > previous.Value),
+                    ct);
+            var now = timeProvider.GetUtcNow().UtcDateTime;
+            using (tenantMutationScope.Begin(access.TenantId))
+            {
+                access.Participant.MarkRead(now);
+                await dbContext.Notifications
+                    .Where(x =>
+                        x.RecipientUserId == userId &&
+                        x.Type == "chat" &&
+                        x.TargetType == "conversation" &&
+                        x.TargetId == conversationId &&
+                        x.ReadAtUtc == null)
+                    .ExecuteUpdateAsync(
+                        setters => setters
+                            .SetProperty(x => x.ReadAtUtc, now)
+                            .SetProperty(x => x.UpdatedAtUtc, now)
+                            .SetProperty(x => x.UpdatedByUserId, userId),
+                        ct);
+                await dbContext.SaveChangesAsync(ct);
+            }
 
-        return new(unreadCount, access.Participant.LastReadAtUtc!.Value);
+            return new(
+                unreadCount,
+                access.Participant.LastReadAtUtc!.Value,
+                userId);
+        }, cancellationToken);
     }
 
     public async Task EnsureParticipantAsync(

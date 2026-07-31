@@ -1,6 +1,7 @@
 using GymLink.Api.ErrorHandling;
 using GymLink.Api.Hubs;
 using GymLink.Application.Authorization;
+using GymLink.Application.Messaging;
 using GymLink.Domain.Common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.OpenApi;
@@ -93,6 +94,8 @@ public static class DependencyInjection
             options.EnableDetailedErrors =
                 configuration.GetValue<bool>("SignalR:EnableDetailedErrors"));
         services.AddSingleton<ChatDeliveryService>();
+        services.AddSingleton<IConversationRealtimeNotifier>(
+            provider => provider.GetRequiredService<ChatDeliveryService>());
         var origins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
         services.AddCors(options =>
             options.AddPolicy(

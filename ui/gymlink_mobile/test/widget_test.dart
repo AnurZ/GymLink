@@ -6,12 +6,14 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:gymlink_mobile/core/api.dart';
+import 'package:gymlink_mobile/core/payments.dart';
 import 'package:gymlink_mobile/core/theme.dart';
 import 'package:gymlink_mobile/features/auth/auth_screens.dart';
 import 'package:gymlink_mobile/features/member/gym_screens.dart';
 import 'package:gymlink_mobile/features/member/membership_screen.dart';
 import 'package:gymlink_mobile/features/member/reservation_screen.dart';
 import 'package:gymlink_mobile/features/payments/payment_result_screen.dart';
+import 'package:gymlink_mobile/features/reservations/reservation_refresh_controller.dart';
 import 'package:gymlink_mobile/features/trainer/trainer_screens.dart';
 import 'package:gymlink_mobile/shared/widgets.dart';
 import 'package:provider/provider.dart';
@@ -118,6 +120,151 @@ void main() {
     expect(submittedReview, {'rating': 5, 'comment': null});
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('reservation payment sheet explains both payment methods', (
+    tester,
+  ) async {
+    ReservationPaymentMethod? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () async {
+                selected = await chooseReservationPaymentMethod(context);
+              },
+              child: const Text('Rezerviši termin'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Rezerviši termin'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Stripe'), findsOneWidget);
+    expect(find.text('Plati uživo'), findsOneWidget);
+    expect(find.textContaining('vanjski preglednik'), findsOneWidget);
+    expect(find.textContaining('automatski ćete se vratiti'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('reservation-payment-in-person')));
+    await tester.pumpAndSettle();
+
+    expect(selected, ReservationPaymentMethod.payInPerson);
+  });
+
+  testWidgets('Termini refresh shows a newly confirmed pay-in-person booking', (
+    tester,
+  ) async {
+    var reservationLoads = 0;
+    final client = MockClient((request) async {
+      reservationLoads++;
+      final items = reservationLoads == 1
+          ? <Object>[]
+          : <Object>[
+              {
+                'id': 'reservation-in-person',
+                'trainerName': 'Trener Test',
+                'gymName': 'GymLink Centar',
+                'offeringName': 'Individualni trening',
+                'startsAtUtc': '2026-08-01T10:00:00Z',
+                'price': 30,
+                'currency': 'BAM',
+                'status': 1,
+                'paymentMethod': 1,
+              },
+            ];
+      return http.Response(
+        jsonEncode(_page(items)),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
+    final api = ApiClient(
+      _TestTokenSource(),
+      httpClient: client,
+      baseUrlOverride: 'http://test.local',
+    );
+    final controller = ReservationRefreshController();
+    addTearDown(api.close);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: Scaffold(
+            body: MemberReservationsScreen(controller: controller),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Nema rezervacija'), findsOneWidget);
+
+    controller.refresh();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Trener Test · GymLink Centar'), findsOneWidget);
+    expect(find.text('Confirmed'), findsOneWidget);
+    expect(reservationLoads, 2);
+  });
+
+  testWidgets('Trainer Termini refresh shows a newly confirmed booking', (
+    tester,
+  ) async {
+    var reservationLoads = 0;
+    final client = MockClient((request) async {
+      reservationLoads++;
+      final items = reservationLoads == 1
+          ? <Object>[]
+          : <Object>[
+              {
+                'id': 'reservation-in-person',
+                'memberName': 'Član Test',
+                'offeringName': 'Individualni trening',
+                'startsAtUtc': '2026-08-01T10:00:00Z',
+                'status': 1,
+                'paymentMethod': 1,
+              },
+            ];
+      return http.Response(
+        jsonEncode(_page(items)),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
+    final api = ApiClient(
+      _TestTokenSource(),
+      httpClient: client,
+      baseUrlOverride: 'http://test.local',
+    );
+    final controller = ReservationRefreshController();
+    addTearDown(api.close);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: Scaffold(
+            body: TrainerAppointmentsScreen(controller: controller),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Nema termina'), findsOneWidget);
+
+    controller.refresh();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Član Test'), findsOneWidget);
+    expect(find.text('Confirmed'), findsOneWidget);
+    expect(reservationLoads, 2);
+  });
+
   testWidgets('password reset keeps the form open for empty values', (
     tester,
   ) async {
@@ -277,9 +424,7 @@ void main() {
         value: api,
         child: MaterialApp(
           theme: buildGymLinkTheme(),
-          home: const MembershipDetailsScreen(
-            membershipId: 'membership-1',
-          ),
+          home: const MembershipDetailsScreen(membershipId: 'membership-1'),
         ),
       ),
     );
@@ -305,6 +450,8 @@ void main() {
           'id': 'payment-1',
           'status': 2,
           'isPaid': true,
+          'purpose': 1,
+          'targetId': 'reservation-1',
         }),
         200,
         headers: {'content-type': 'application/json; charset=utf-8'},
@@ -316,21 +463,46 @@ void main() {
       baseUrlOverride: 'http://test.local',
     );
     addTearDown(api.close);
+    final reservations = ReservationRefreshController();
+    var reservationRefreshes = 0;
+    reservations.addListener(() => reservationRefreshes++);
+    addTearDown(reservations.dispose);
     await tester.pumpWidget(
-      Provider<ApiClient>.value(
-        value: api,
+      MultiProvider(
+        providers: [
+          Provider<ApiClient>.value(value: api),
+          ChangeNotifierProvider.value(value: reservations),
+        ],
         child: const MaterialApp(
-          home: PaymentResultScreen(
-            outcome: 'success',
-            paymentId: 'payment-1',
-          ),
+          home: PaymentResultScreen(outcome: 'success', paymentId: 'payment-1'),
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Plaćeno'), findsOneWidget);
+    expect(find.text('Plaćanje uspješno'), findsOneWidget);
+    expect(
+      find.text('Termin je potvrđen i razgovor s trenerom je spreman.'),
+      findsOneWidget,
+    );
     expect(find.text('Osvježi status'), findsNothing);
+    expect(find.byKey(const Key('payment-open-chat')), findsOneWidget);
+    expect(reservationRefreshes, 1);
+    expect(find.byKey(const Key('payment-return-home')), findsOneWidget);
+    expect(
+      tester.widget(find.byKey(const Key('payment-return-home'))),
+      isA<OutlinedButton>(),
+    );
+    expect(
+      tester.getSize(find.byKey(const Key('payment-open-chat'))).width,
+      greaterThan(300),
+    );
+    expect(
+      tester.getTopLeft(find.byKey(const Key('payment-return-home'))).dy,
+      greaterThan(
+        tester.getTopLeft(find.byKey(const Key('payment-open-chat'))).dy,
+      ),
+    );
   });
 }
 

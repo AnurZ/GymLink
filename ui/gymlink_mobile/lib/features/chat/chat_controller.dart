@@ -5,19 +5,34 @@ import 'package:flutter/foundation.dart';
 
 import '../../core/api.dart';
 import '../../core/auth.dart';
+import '../notifications/notification_controller.dart';
 import 'chat_models.dart';
 import 'chat_realtime.dart';
 import 'chat_repository.dart';
 
 final class ChatController extends ChangeNotifier {
-  ChatController(this._repository, this._realtime, this._auth) {
+  ChatController(
+    this._repository,
+    this._realtime,
+    this._auth, [
+    this._notifications,
+  ]) {
     _messageSubscription = _realtime.messages.listen(_receive);
+    _availableSubscription = _realtime.conversationAvailable.listen(
+      _conversationAvailable,
+    );
+    _readSubscription = _realtime.conversationReads.listen(_conversationRead);
+    _sessionUserId = currentUserId;
+    _auth.addListener(_authChanged);
   }
 
   final ChatRepositoryGateway _repository;
   final ChatRealtimeGateway _realtime;
   final AuthController _auth;
+  final NotificationController? _notifications;
   late final StreamSubscription<ChatMessageModel> _messageSubscription;
+  late final StreamSubscription<String> _availableSubscription;
+  late final StreamSubscription<ConversationReadEvent> _readSubscription;
   final List<ConversationModel> conversations = [];
   final List<ChatMessageModel> messages = [];
   final Set<String> _seenMessageKeys = {};
@@ -34,6 +49,7 @@ final class ChatController extends ChangeNotifier {
   String? _beforeId;
   String? listError;
   String? detailError;
+  String _sessionUserId = '';
 
   String get currentUserId => _auth.session?.user['id']?.toString() ?? '';
   int get unreadCount => conversations.fold(
@@ -113,6 +129,7 @@ final class ChatController extends ChangeNotifier {
 
   Future<void> openConversation(ConversationModel conversation) async {
     activeConversation = conversation;
+    _notifications?.setActiveConversation(conversation.id);
     messages.clear();
     detailError = null;
     detailLoading = true;
@@ -128,6 +145,7 @@ final class ChatController extends ChangeNotifier {
       await _joinDetailConversation(conversation.id);
       await _repository.markRead(conversation.id);
       _markConversationRead(conversation.id);
+      _notifications?.conversationRead(conversation.id);
     } on ApiProblem catch (error) {
       detailError = error.message;
     } finally {
@@ -147,6 +165,7 @@ final class ChatController extends ChangeNotifier {
     }
     _detailJoinedConversationId = null;
     activeConversation = null;
+    _notifications?.setActiveConversation(null);
   }
 
   Future<void> _joinDetailConversation(String conversationId) async {
@@ -310,6 +329,20 @@ final class ChatController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _conversationAvailable(String conversationId) {
+    if (conversations.any((item) => item.id == conversationId) || listLoading) {
+      return;
+    }
+    unawaited(loadConversations());
+  }
+
+  void _conversationRead(ConversationReadEvent event) {
+    if (event.readerUserId != currentUserId) return;
+    _markConversationRead(event.conversationId);
+    _notifications?.conversationRead(event.conversationId);
+    notifyListeners();
+  }
+
   void _acceptSaved(ChatMessageModel message) {
     _seenMessageKeys.add(_messageKey(message));
     _replace(message);
@@ -392,9 +425,33 @@ final class ChatController extends ChangeNotifier {
         '${hex.substring(20)}';
   }
 
+  void _authChanged() {
+    final nextUserId = currentUserId;
+    if (nextUserId == _sessionUserId) return;
+    _sessionUserId = nextUserId;
+    unawaited(_resetForSession());
+  }
+
+  Future<void> _resetForSession() async {
+    await _releaseRealtimeSubscriptions();
+    conversations.clear();
+    messages.clear();
+    _seenMessageKeys.clear();
+    activeConversation = null;
+    listError = null;
+    detailError = null;
+    notifyListeners();
+    if (_sessionUserId.isNotEmpty) {
+      await initializeList();
+    }
+  }
+
   @override
   void dispose() {
+    _auth.removeListener(_authChanged);
     unawaited(_messageSubscription.cancel());
+    unawaited(_availableSubscription.cancel());
+    unawaited(_readSubscription.cancel());
     unawaited(_releaseRealtimeSubscriptions());
     super.dispose();
   }

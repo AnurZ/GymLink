@@ -6,11 +6,14 @@ import '../../core/api.dart';
 import '../../core/payments.dart';
 import '../../shared/widgets.dart';
 import '../chat/chat_screens.dart';
+import '../reservations/reservation_refresh_controller.dart';
 
 const _reservationStatuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
 
 class MemberReservationsScreen extends StatefulWidget {
-  const MemberReservationsScreen({super.key});
+  const MemberReservationsScreen({this.controller, super.key});
+
+  final ReservationRefreshController? controller;
 
   @override
   State<MemberReservationsScreen> createState() =>
@@ -26,7 +29,24 @@ class _MemberReservationsScreenState extends State<MemberReservationsScreen> {
   @override
   void initState() {
     super.initState();
+    widget.controller?.addListener(_refreshRequested);
     _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant MemberReservationsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller == widget.controller) return;
+    oldWidget.controller?.removeListener(_refreshRequested);
+    widget.controller?.addListener(_refreshRequested);
+  }
+
+  void _refreshRequested() => _load();
+
+  @override
+  void dispose() {
+    widget.controller?.removeListener(_refreshRequested);
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -264,6 +284,11 @@ class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
                         ),
                         Text('${_item!['durationMinutes']} min'),
                         Text('${_item!['price']} ${_item!['currency']}'),
+                        Text(
+                          (_item!['paymentMethod'] as num?)?.toInt() == 1
+                              ? 'Način plaćanja: uživo'
+                              : 'Način plaćanja: Stripe',
+                        ),
                         if (_item!['paymentDueAtUtc'] != null &&
                             _item!['isPaid'] != true)
                           Text(
@@ -301,7 +326,7 @@ class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.payment),
-                    label: const Text('Plati rezervaciju'),
+                    label: const Text('Nastavi Stripe plaćanje'),
                   ),
                 if ((_item!['allowedActions'] as List? ?? const []).contains(
                   'cancel',

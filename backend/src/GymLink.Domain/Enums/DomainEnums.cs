@@ -8,6 +8,7 @@ public enum MembershipStatus { PendingPayment, Active, Expired, Cancelled, Suspe
 public enum AvailabilitySlotStatus { Available, Unavailable, Reserved, Cancelled }
 public enum TrainerShiftPeriod { Morning, Evening }
 public enum ReservationStatus { Pending, Confirmed, Completed, Cancelled }
+public enum ReservationPaymentMethod { Stripe, PayInPerson }
 public enum PaymentStatus { Created, Processing, Succeeded, Failed, PartiallyRefunded, Refunded }
 public enum RefundStatus { Created, Processing, Succeeded, Failed }
 public enum PaymentPurpose { Membership, TrainerReservation }

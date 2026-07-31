@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gymlink_mobile/core/api.dart';
 import 'package:gymlink_mobile/core/auth.dart';
@@ -12,6 +13,8 @@ import 'package:gymlink_mobile/features/chat/chat_realtime.dart';
 import 'package:gymlink_mobile/features/chat/chat_repository.dart';
 import 'package:gymlink_mobile/features/chat/chat_screens.dart';
 import 'package:gymlink_mobile/features/member/member_shell.dart';
+import 'package:gymlink_mobile/features/notifications/notification_controller.dart';
+import 'package:gymlink_mobile/features/reservations/reservation_refresh_controller.dart';
 import 'package:gymlink_mobile/features/trainer/trainer_shell.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -44,6 +47,127 @@ void main() {
     expect(controller.conversations.first.unreadCount, 1);
     expect(controller.conversations.first.lastMessageText, 'Poruka');
   });
+
+  test('conversation availability reloads the authoritative list', () async {
+    final repository = _FakeChatRepository(conversations: []);
+    final realtime = _FakeChatRealtime();
+    final controller = ChatController(repository, realtime, AuthController());
+    addTearDown(controller.dispose);
+    addTearDown(realtime.close);
+
+    await controller.initializeList();
+    expect(controller.conversations, isEmpty);
+
+    repository.conversations.add(_conversation('available-conversation'));
+    realtime.emitAvailable('available-conversation');
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.conversations.single.id, 'available-conversation');
+    expect(realtime.joined, contains('available-conversation'));
+  });
+
+  test('authenticated app scope joins existing conversations', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final auth = AuthController();
+    final api = ApiClient(
+      auth,
+      httpClient: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'accessToken': 'access-token',
+            'refreshToken': 'refresh-token',
+            'user': {
+              'id': 'recipient',
+              'role': 'Member',
+              'displayName': 'Recipient',
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        ),
+      ),
+      baseUrlOverride: 'http://test.local',
+    );
+    auth.attachApi(api);
+    final conversation = _conversation('existing-conversation');
+    final realtime = _FakeChatRealtime();
+    final controller = ChatController(
+      _FakeChatRepository(conversations: [conversation]),
+      realtime,
+      auth,
+    );
+    addTearDown(realtime.close);
+    addTearDown(controller.dispose);
+
+    await auth.login('recipient', 'Test123!');
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.conversations.single.id, conversation.id);
+    expect(realtime.joined, contains(conversation.id));
+  });
+
+  test(
+    'notification badge deduplicates incoming messages and ignores active chat',
+    () async {
+      FlutterSecureStorage.setMockInitialValues({});
+      final auth = AuthController();
+      final client = MockClient((request) async {
+        final body = request.url.path == '/api/auth/login'
+            ? {
+                'accessToken': 'access-token',
+                'refreshToken': 'refresh-token',
+                'user': {
+                  'id': 'recipient',
+                  'role': 'Member',
+                  'displayName': 'Recipient',
+                },
+              }
+            : {'count': 0};
+        return http.Response(
+          jsonEncode(body),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      });
+      final api = ApiClient(
+        auth,
+        httpClient: client,
+        baseUrlOverride: 'http://test.local',
+      );
+      auth.attachApi(api);
+      await auth.login('recipient', 'Test123!');
+      final realtime = _FakeChatRealtime();
+      final notifications = NotificationController(api, auth, realtime);
+      addTearDown(realtime.close);
+      addTearDown(notifications.dispose);
+      notifications.initialize();
+      await Future<void>.delayed(Duration.zero);
+
+      final first = _message(
+        conversationId: 'conversation',
+        clientMessageId: 'message-1',
+        senderUserId: 'counterpart',
+      );
+      realtime.emit(first);
+      realtime.emit(first);
+      await Future<void>.delayed(Duration.zero);
+      expect(notifications.unreadCount, 1);
+
+      notifications.setActiveConversation('conversation');
+      expect(notifications.unreadCount, 0);
+      realtime.emit(
+        _message(
+          conversationId: 'conversation',
+          clientMessageId: 'message-2',
+          senderUserId: 'counterpart',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(notifications.unreadCount, 0);
+    },
+  );
 
   test('failed retry preserves the original client message id', () async {
     final conversation = _conversation('conversation');
@@ -332,11 +456,25 @@ Future<_FakeChatRealtime> _pumpShell(
   );
   final realtime = _FakeChatRealtime();
   addTearDown(realtime.close);
+  final notifications = NotificationController(api, auth, realtime);
+  final reservations = ReservationRefreshController();
+  final chat = ChatController(
+    ChatRepository(api),
+    realtime,
+    auth,
+    notifications,
+  );
+  addTearDown(chat.dispose);
+  addTearDown(notifications.dispose);
+  addTearDown(reservations.dispose);
   auth.attachApi(api);
   await tester.pumpWidget(
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: auth),
+        ChangeNotifierProvider.value(value: notifications),
+        ChangeNotifierProvider.value(value: chat),
+        ChangeNotifierProvider.value(value: reservations),
         Provider.value(value: api),
         Provider<ChatRealtimeGateway>.value(value: realtime),
       ],
@@ -412,6 +550,10 @@ final class _FakeChatRepository implements ChatRepositoryGateway {
       conversations.first;
 
   @override
+  Future<ConversationModel> get(String conversationId) async =>
+      conversations.firstWhere((item) => item.id == conversationId);
+
+  @override
   Future<PagedData> search({int page = 1, String? search}) async => PagedData(
     items: conversations.map(_conversationJson).toList(),
     page: page,
@@ -470,12 +612,20 @@ final class _FakeChatRepository implements ChatRepositoryGateway {
 
 final class _FakeChatRealtime implements ChatRealtimeGateway {
   final _messages = StreamController<ChatMessageModel>.broadcast();
+  final _available = StreamController<String>.broadcast();
+  final _reads = StreamController<ConversationReadEvent>.broadcast();
   bool connected = false;
   final List<String> joined = [];
   final List<String> sentClientIds = [];
 
   @override
   Stream<ChatMessageModel> get messages => _messages.stream;
+
+  @override
+  Stream<String> get conversationAvailable => _available.stream;
+
+  @override
+  Stream<ConversationReadEvent> get conversationReads => _reads.stream;
 
   @override
   bool get isConnected => connected;
@@ -507,5 +657,11 @@ final class _FakeChatRealtime implements ChatRealtimeGateway {
 
   void emit(ChatMessageModel message) => _messages.add(message);
 
-  Future<void> close() => _messages.close();
+  void emitAvailable(String conversationId) => _available.add(conversationId);
+
+  Future<void> close() async {
+    await _messages.close();
+    await _available.close();
+    await _reads.close();
+  }
 }

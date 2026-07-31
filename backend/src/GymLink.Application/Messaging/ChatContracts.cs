@@ -84,7 +84,8 @@ public sealed record MessageHistoryDto(
 
 public sealed record ConversationReadDto(
     long MarkedReadCount,
-    DateTime ReadAtUtc);
+    DateTime ReadAtUtc,
+    Guid ReaderUserId);
 
 public interface IChatService
 {
@@ -94,6 +95,10 @@ public interface IChatService
 
     Task<PagedResult<ConversationDto>> SearchMineAsync(
         ConversationSearchRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ConversationDto> GetMineAsync(
+        Guid conversationId,
         CancellationToken cancellationToken);
 
     Task<MessageHistoryDto> GetMessagesAsync(
@@ -110,6 +115,35 @@ public interface IChatService
         Guid conversationId,
         CancellationToken cancellationToken);
 
+}
+
+public sealed record ConversationProvisioningResult(
+    Guid ConversationId,
+    Guid MemberUserId,
+    Guid TrainerUserId,
+    bool Created);
+
+public interface IConversationProvisioner
+{
+    Task<ConversationProvisioningResult> EnsureForConfirmedReservationAsync(
+        GymLink.Domain.Reservations.AppointmentReservation reservation,
+        CancellationToken cancellationToken);
+}
+
+public interface IConversationPairLock
+{
+    Task AcquireAsync(
+        Guid tenantId,
+        Guid memberUserId,
+        Guid trainerUserId,
+        CancellationToken cancellationToken);
+}
+
+public interface IConversationRealtimeNotifier
+{
+    Task ConversationAvailableAsync(
+        ConversationProvisioningResult conversation,
+        CancellationToken cancellationToken);
 }
 
 public interface IChatActorService

@@ -6,68 +6,31 @@ import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
 import '../../core/theme.dart';
+import '../chat/chat_screens.dart';
+import 'notification_controller.dart';
 
-class NotificationBell extends StatefulWidget {
+class NotificationBell extends StatelessWidget {
   const NotificationBell({super.key});
 
   @override
-  State<NotificationBell> createState() => _NotificationBellState();
-}
-
-class _NotificationBellState extends State<NotificationBell>
-    with WidgetsBindingObserver {
-  Timer? _timer;
-  int _count = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _refresh();
-    _timer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh());
+  Widget build(BuildContext context) {
+    final count = context.watch<NotificationController>().unreadCount;
+    return IconButton(
+      tooltip: 'Obavijesti',
+      onPressed: () async {
+        await context.push('/notifications');
+        if (context.mounted) {
+          await context.read<NotificationController>().refresh();
+        }
+      },
+      icon: Badge(
+        key: const Key('notification-unread'),
+        isLabelVisible: count > 0,
+        label: Text(count > 99 ? '99+' : '$count'),
+        child: const Icon(Icons.notifications_outlined),
+      ),
+    );
   }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refresh();
-  }
-
-  Future<void> _refresh() async {
-    try {
-      final data = Map<String, dynamic>.from(
-        (await context.read<ApiClient>().get(
-              '/api/me/notifications/unread-count',
-            ))!
-            as Map,
-      );
-      if (mounted) {
-        setState(() => _count = (data['count'] as num?)?.toInt() ?? 0);
-      }
-    } on Object {
-      // Keep the last known count while offline.
-    }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => IconButton(
-    tooltip: 'Obavijesti',
-    onPressed: () async {
-      await context.push('/notifications');
-      _refresh();
-    },
-    icon: Badge(
-      isLabelVisible: _count > 0,
-      label: Text(_count > 99 ? '99+' : '$_count'),
-      child: const Icon(Icons.notifications_outlined),
-    ),
-  );
 }
 
 class NotificationScreen extends StatefulWidget {
@@ -146,7 +109,10 @@ class _NotificationScreenState extends State<NotificationScreen>
             ))!
             as Map,
       );
-      if (mounted) setState(() => item.addAll(updated));
+      if (mounted) {
+        setState(() => item.addAll(updated));
+        context.read<NotificationController>().notificationMarkedRead();
+      }
     } on ApiProblem catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -158,6 +124,9 @@ class _NotificationScreenState extends State<NotificationScreen>
 
   Future<void> _markAllRead() async {
     await context.read<ApiClient>().post('/api/me/notifications/read-all');
+    if (mounted) {
+      context.read<NotificationController>().allNotificationsMarkedRead();
+    }
     await _load(reset: true);
   }
 
@@ -214,6 +183,15 @@ class _NotificationScreenState extends State<NotificationScreen>
                 onTap: () async {
                   await _markRead(item);
                   if (!context.mounted) return;
+                  if (item['category'] == 'chat' &&
+                      item['targetType'] == 'conversation' &&
+                      item['targetId'] != null) {
+                    await openChatForConversation(
+                      context,
+                      item['targetId'].toString(),
+                    );
+                    return;
+                  }
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text(

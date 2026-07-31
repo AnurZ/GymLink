@@ -187,6 +187,24 @@ internal sealed class RabbitMqWorkerService(
                 x => x.SourceMessageId == envelope.MessageId,
                 cancellationToken))
         {
+            DateTime? readAtUtc = null;
+            if (envelope.Payload.Category == "chat" &&
+                envelope.Payload.TargetType == "conversation" &&
+                envelope.Payload.TargetId.HasValue)
+            {
+                var lastReadAtUtc = await db.ConversationParticipants
+                    .IgnoreQueryFilters()
+                    .Where(x =>
+                        x.ConversationId == envelope.Payload.TargetId.Value &&
+                        x.UserId == envelope.Payload.RecipientUserId)
+                    .Select(x => x.LastReadAtUtc)
+                    .SingleOrDefaultAsync(cancellationToken);
+                if (lastReadAtUtc >= envelope.OccurredAtUtc)
+                {
+                    readAtUtc = lastReadAtUtc;
+                }
+            }
+
             db.Notifications.Add(new Notification
             {
                 RecipientUserId = envelope.Payload.RecipientUserId,
@@ -199,6 +217,7 @@ internal sealed class RabbitMqWorkerService(
                 CorrelationId = envelope.CorrelationId,
                 SourceMessageId = envelope.MessageId,
                 CreatedAtUtc = now,
+                ReadAtUtc = readAtUtc,
             });
         }
 

@@ -20,6 +20,8 @@ internal sealed class PaymentService(
     ITenantMutationScope tenantMutationScope,
     IOutboxWriter outbox,
     IRequestMetadata requestMetadata,
+    IConversationProvisioner conversationProvisioner,
+    IConversationRealtimeNotifier conversationNotifier,
     TimeProvider timeProvider) : IPaymentService
 {
     private static readonly PaymentStatus[] OpenOrSuccessful =
@@ -404,6 +406,7 @@ internal sealed class PaymentService(
                 "The payment event metadata is invalid.");
         }
 
+        ConversationProvisioningResult? provisionedConversation = null;
         await transaction.ExecuteSerializableAsync(async ct =>
         {
             if (await dbContext.StripeEventReceipts.IgnoreQueryFilters().AnyAsync(
@@ -446,7 +449,8 @@ internal sealed class PaymentService(
                             FromMinorUnits(session.AmountTotal),
                             session.Currency,
                             now);
-                        await ActivateTargetAsync(payment, now, ct);
+                        provisionedConversation =
+                            await ActivateTargetAsync(payment, now, ct);
                         AddPaidNotification(payment, now);
                     }
                 }
@@ -463,9 +467,15 @@ internal sealed class PaymentService(
 
             return true;
         }, cancellationToken);
+        if (provisionedConversation is { Created: true })
+        {
+            await conversationNotifier.ConversationAvailableAsync(
+                provisionedConversation,
+                CancellationToken.None);
+        }
     }
 
-    private async Task ActivateTargetAsync(
+    private async Task<ConversationProvisioningResult?> ActivateTargetAsync(
         Payment payment,
         DateTime now,
         CancellationToken cancellationToken)
@@ -484,7 +494,7 @@ internal sealed class PaymentService(
                 await ActivateMemberAssignmentAsync(payment, now, cancellationToken);
             }
 
-            return;
+            return null;
         }
 
         var reservation = await dbContext.AppointmentReservations.IgnoreQueryFilters()
@@ -496,7 +506,11 @@ internal sealed class PaymentService(
         if (reservation.Status == ReservationStatus.Pending)
         {
             reservation.ConfirmFromPayment(payment.Id, now);
+            return await conversationProvisioner
+                .EnsureForConfirmedReservationAsync(reservation, cancellationToken);
         }
+
+        return null;
     }
 
     private async Task ActivateMemberAssignmentAsync(

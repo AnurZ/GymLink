@@ -44,6 +44,7 @@ public static class DependencyInjection
                 .AddInterceptors(provider.GetRequiredService<TenantAuditSaveChangesInterceptor>()));
         services.AddScoped<IApplicationTransaction, ApplicationTransaction>();
         services.AddScoped<IOutboxWriter, OutboxWriter>();
+        services.AddScoped<IConversationPairLock, ConversationPairLock>();
         return services;
     }
 
@@ -157,6 +158,7 @@ public static class DependencyInjection
         services.AddScoped<IRefreshTokenSettings, RefreshTokenSettings>();
         services.AddScoped<IApplicationTransaction, ApplicationTransaction>();
         services.AddScoped<IOutboxWriter, OutboxWriter>();
+        services.AddScoped<IConversationPairLock, ConversationPairLock>();
         services.AddScoped<IPasswordResetCodeService, PasswordResetCodeService>();
         services.AddOptions<PasswordResetOptions>()
             .Bind(configuration.GetSection(PasswordResetOptions.SectionName))

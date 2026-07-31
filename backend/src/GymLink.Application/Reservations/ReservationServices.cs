@@ -1,6 +1,7 @@
 using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
+using GymLink.Application.Messaging;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Identity;
@@ -723,6 +724,8 @@ internal sealed class ReservationService(
     ITenantContext tenantContext,
     ITenantMutationScope tenantMutationScope,
     IReservationWorkflowEventRecorder eventRecorder,
+    IConversationProvisioner conversationProvisioner,
+    IConversationRealtimeNotifier conversationNotifier,
     TimeProvider timeProvider) : IReservationService
 {
     public async Task<ReservationDto> CreateAsync(
@@ -731,6 +734,13 @@ internal sealed class ReservationService(
     {
         var memberId = RequireUser();
         var now = timeProvider.GetUtcNow().UtcDateTime;
+        if (!Enum.IsDefined(request.PaymentMethod))
+        {
+            throw new ApplicationRuleException(
+                "reservation_payment_method_invalid",
+                "The reservation payment method is invalid.");
+        }
+
         if (request.StartsAtUtc.Kind != DateTimeKind.Utc)
         {
             throw new ApplicationRuleException(
@@ -739,9 +749,10 @@ internal sealed class ReservationService(
         }
 
         AppointmentReservation reservation;
+        ConversationProvisioningResult? provisionedConversation;
         try
         {
-            reservation = await transaction.ExecuteSerializableAsync(async ct =>
+            var result = await transaction.ExecuteSerializableAsync(async ct =>
             {
                 var target = await (
                         from offering in dbContext.TrainerServiceOfferings.IgnoreQueryFilters()
@@ -837,22 +848,38 @@ internal sealed class ReservationService(
                     target.Offering.DurationMinutes,
                     target.Offering.Price,
                     target.Offering.Currency);
-                entity.RequirePayment(now.AddMinutes(15));
+                if (request.PaymentMethod == ReservationPaymentMethod.Stripe)
+                {
+                    entity.RequirePayment(now.AddMinutes(15));
+                }
+                else
+                {
+                    entity.ConfirmForPayInPerson(memberId, now);
+                }
+
                 using (tenantMutationScope.Begin(target.Offering.TenantId))
                 {
                     dbContext.AppointmentReservations.Add(entity);
+                    var conversation =
+                        request.PaymentMethod == ReservationPaymentMethod.PayInPerson
+                            ? await conversationProvisioner
+                                .EnsureForConfirmedReservationAsync(entity, ct)
+                            : null;
                     await eventRecorder.RecordAsync(new(
-                        "reservation.created",
+                        request.PaymentMethod == ReservationPaymentMethod.PayInPerson
+                            ? "reservation.confirmed_pay_in_person"
+                            : "reservation.created",
                         entity.TenantId,
                         memberId,
                         entity.Id,
                         now),
                         ct);
                     await dbContext.SaveChangesAsync(ct);
+                    return (Reservation: entity, Conversation: conversation);
                 }
-
-                return entity;
             }, cancellationToken);
+            reservation = result.Reservation;
+            provisionedConversation = result.Conversation;
         }
         catch (DbUpdateException exception)
         {
@@ -867,6 +894,13 @@ internal sealed class ReservationService(
                 "reservation_conflict",
                 "The selected time became unavailable. Reload availability and try again.",
                 exception);
+        }
+
+        if (provisionedConversation is { Created: true })
+        {
+            await conversationNotifier.ConversationAvailableAsync(
+                provisionedConversation,
+                CancellationToken.None);
         }
 
         return await GetMineAsync(reservation.Id, cancellationToken);
@@ -960,61 +994,79 @@ internal sealed class ReservationService(
     {
         var actor = RequireUser();
         var tenantId = RequireTenant();
-        var entity = await dbContext.AppointmentReservations
-            .SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId, cancellationToken)
-            ?? throw ReservationNotFound();
-        await EnsureStaffOwnershipAsync(entity, action, cancellationToken);
-        EnsureToken(entity.RowVersion, concurrencyToken);
-        if (action == ReservationAction.Cancel &&
-            await HasOpenCheckoutAsync(entity.Id, cancellationToken))
-        {
-            throw new ConflictException(
-                "checkout_in_progress",
-                "The open Checkout must expire before this reservation can be cancelled.");
-        }
-        var now = timeProvider.GetUtcNow().UtcDateTime;
-        if (action == ReservationAction.Confirm)
-        {
-            var stillEligible = await dbContext.Memberships.AnyAsync(
-                    x => x.Id == entity.MembershipId &&
-                         x.Status == MembershipStatus.Active &&
-                         x.StartsAtUtc <= entity.StartsAtUtc &&
-                         x.EndsAtUtc >= entity.EndsAtUtc,
-                    cancellationToken);
-            if (stillEligible && entity.AvailabilitySlotId.HasValue)
+        var provisionedConversation = await transaction.ExecuteSerializableAsync(
+            async ct =>
             {
-                stillEligible = await dbContext.TrainerAvailabilitySlots.AnyAsync(
-                    x => x.Id == entity.AvailabilitySlotId.Value &&
-                         x.Status == AvailabilitySlotStatus.Reserved,
-                    cancellationToken);
-            }
-            if (!stillEligible)
-            {
-                throw new ConflictException(
-                    "reservation_prerequisite_invalid",
-                    "The reservation prerequisites are no longer valid.");
-            }
+                var entity = await dbContext.AppointmentReservations
+                    .SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId, ct)
+                    ?? throw ReservationNotFound();
+                await EnsureStaffOwnershipAsync(entity, action, ct);
+                EnsureToken(entity.RowVersion, concurrencyToken);
+                if (action == ReservationAction.Cancel &&
+                    await HasOpenCheckoutAsync(entity.Id, ct))
+                {
+                    throw new ConflictException(
+                        "checkout_in_progress",
+                        "The open Checkout must expire before this reservation can be cancelled.");
+                }
 
-            entity.Confirm(actor, now);
-        }
-        else if (action == ReservationAction.Complete)
+                var now = timeProvider.GetUtcNow().UtcDateTime;
+                ConversationProvisioningResult? conversation = null;
+                if (action == ReservationAction.Confirm)
+                {
+                    var stillEligible = await dbContext.Memberships.AnyAsync(
+                        x => x.Id == entity.MembershipId &&
+                             x.Status == MembershipStatus.Active &&
+                             x.StartsAtUtc <= entity.StartsAtUtc &&
+                             x.EndsAtUtc >= entity.EndsAtUtc,
+                        ct);
+                    if (stillEligible && entity.AvailabilitySlotId.HasValue)
+                    {
+                        stillEligible = await dbContext.TrainerAvailabilitySlots.AnyAsync(
+                            x => x.Id == entity.AvailabilitySlotId.Value &&
+                                 x.Status == AvailabilitySlotStatus.Reserved,
+                            ct);
+                    }
+                    if (!stillEligible)
+                    {
+                        throw new ConflictException(
+                            "reservation_prerequisite_invalid",
+                            "The reservation prerequisites are no longer valid.");
+                    }
+
+                    entity.Confirm(actor, now);
+                    conversation = await conversationProvisioner
+                        .EnsureForConfirmedReservationAsync(entity, ct);
+                }
+                else if (action == ReservationAction.Complete)
+                {
+                    entity.Complete(actor, now);
+                }
+                else
+                {
+                    entity.CancelByStaff(actor, now, reason ?? string.Empty);
+                    if (entity.AvailabilitySlotId.HasValue)
+                    {
+                        var slot = await dbContext.TrainerAvailabilitySlots.SingleAsync(
+                            x => x.Id == entity.AvailabilitySlotId.Value,
+                            ct);
+                        slot.Release();
+                    }
+                }
+
+                await RecordStatusAsync(entity, actor, ct);
+                await SaveAsync(ct);
+                return conversation;
+            },
+            cancellationToken);
+
+        if (provisionedConversation is { Created: true })
         {
-            entity.Complete(actor, now);
-        }
-        else
-        {
-            entity.CancelByStaff(actor, now, reason ?? string.Empty);
-            if (entity.AvailabilitySlotId.HasValue)
-            {
-                var slot = await dbContext.TrainerAvailabilitySlots.SingleAsync(
-                    x => x.Id == entity.AvailabilitySlotId.Value,
-                    cancellationToken);
-                slot.Release();
-            }
+            await conversationNotifier.ConversationAvailableAsync(
+                provisionedConversation,
+                CancellationToken.None);
         }
 
-        await RecordStatusAsync(entity, actor, cancellationToken);
-        await SaveAsync(cancellationToken);
         return tenantContext.TenantRole == RoleNames.Trainer
             ? await GetTrainerAsync(id, cancellationToken)
             : await GetTenantAsync(id, cancellationToken);
@@ -1149,6 +1201,9 @@ internal sealed class ReservationService(
                 x.Reservation.DurationMinutes,
                 x.Reservation.Price,
                 x.Reservation.Currency,
+                x.Reservation.PaymentDueAtUtc.HasValue
+                    ? ReservationPaymentMethod.Stripe
+                    : ReservationPaymentMethod.PayInPerson,
                 x.Reservation.Status,
                 x.Reservation.PaymentId,
                 dbContext.Payments.IgnoreQueryFilters()

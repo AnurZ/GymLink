@@ -6,6 +6,7 @@ using GymLink.Application.Catalog;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.Memberships;
+using GymLink.Application.Messaging;
 using GymLink.Application.Payments;
 using GymLink.Application.Reservations;
 using GymLink.Domain.Enums;
@@ -154,6 +155,7 @@ public sealed class Phase5ReservationApiTests
             var reservation = await results[winnerIndex].Content.ReadFromJsonAsync<ReservationDto>();
             Assert.NotNull(reservation);
             Assert.Equal(offering.Price, reservation.Price);
+            Assert.Equal(ReservationPaymentMethod.Stripe, reservation.PaymentMethod);
             Assert.Equal(ReservationStatus.Pending, reservation.Status);
 
             Authorize(setupClient, otherAdmin);
@@ -190,6 +192,95 @@ public sealed class Phase5ReservationApiTests
             Assert.NotNull(confirmed);
             Assert.Equal(ReservationStatus.Confirmed, confirmed.Status);
             Assert.True(confirmed.IsPaid);
+            Assert.Equal(ReservationPaymentMethod.Stripe, confirmed.PaymentMethod);
+
+            Authorize(setupClient, winningSession);
+            var stripeConversations =
+                await setupClient.GetFromJsonAsync<PagedResult<ConversationDto>>(
+                    "/api/me/conversations?page=1&pageSize=20");
+            var stripeConversation = Assert.Single(stripeConversations!.Items);
+            Assert.Equal(reservation.Id, stripeConversation.OriginatingReservationId);
+
+            var replay = await setupClient.PostAsync(
+                "/api/webhooks/stripe",
+                new StringContent(providerSessionId));
+            replay.EnsureSuccessStatusCode();
+            await using (var replayVerification = CreateContext(connectionString))
+            {
+                Assert.Single(
+                    await replayVerification.Conversations
+                        .IgnoreQueryFilters()
+                        .Where(x =>
+                            x.MemberUserId == winningSession.User.Id &&
+                            x.TrainerUserId == trainerSession.User.Id)
+                        .ToListAsync());
+            }
+
+            var inPersonSession = winnerIndex == 0 ? secondMember : member;
+            Authorize(setupClient, inPersonSession);
+            var inPersonResponse = await setupClient.PostAsJsonAsync(
+                "/api/reservations",
+                new
+                {
+                    startsAtUtc = start.AddMinutes(offering.DurationMinutes),
+                    trainerServiceOfferingId = offering.Id,
+                    paymentMethod = (int)ReservationPaymentMethod.PayInPerson,
+                });
+            inPersonResponse.EnsureSuccessStatusCode();
+            var inPerson =
+                await inPersonResponse.Content.ReadFromJsonAsync<ReservationDto>();
+            Assert.NotNull(inPerson);
+            Assert.Equal(ReservationStatus.Confirmed, inPerson.Status);
+            Assert.Equal(ReservationPaymentMethod.PayInPerson, inPerson.PaymentMethod);
+            Assert.False(inPerson.IsPaid);
+            Assert.Null(inPerson.PaymentDueAtUtc);
+            Assert.Contains("cancel", inPerson.AllowedActions);
+
+            var ownReservations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    "/api/me/reservations?page=1&pageSize=20");
+            Assert.Contains(
+                ownReservations!.Items,
+                item =>
+                    item.Id == inPerson.Id &&
+                    item.Status == ReservationStatus.Confirmed &&
+                    item.PaymentMethod == ReservationPaymentMethod.PayInPerson);
+
+            var inPersonConversations =
+                await setupClient.GetFromJsonAsync<PagedResult<ConversationDto>>(
+                    "/api/me/conversations?page=1&pageSize=20");
+            Assert.Equal(
+                inPerson.Id,
+                Assert.Single(inPersonConversations!.Items).OriginatingReservationId);
+            var rejectedCheckout = await setupClient.PostAsync(
+                $"/api/payments/reservations/{inPerson.Id}/checkout",
+                null);
+            Assert.Equal(HttpStatusCode.Conflict, rejectedCheckout.StatusCode);
+            Assert.Equal(
+                "reservation_not_awaiting_payment",
+                await ProblemCodeAsync(rejectedCheckout));
+            await using (var notificationVerification = CreateContext(connectionString))
+            {
+                var payloads = await notificationVerification.OutboxMessages
+                    .Where(x => x.MessageType == "notification.requested.v1")
+                    .Select(x => x.Payload)
+                    .ToListAsync();
+                Assert.Contains(
+                    payloads,
+                    payload =>
+                    {
+                        using var document = JsonDocument.Parse(payload);
+                        var notification = document.RootElement.GetProperty("payload");
+                        return notification.GetProperty("recipientUserId").GetGuid() ==
+                                inPersonSession.User.Id &&
+                            notification.GetProperty("category").GetString() ==
+                                "reservation.confirmed_pay_in_person" &&
+                            notification.GetProperty("targetId").GetGuid() ==
+                                inPerson.Id &&
+                            notification.GetProperty("text").GetString() ==
+                                "Termin je potvrđen. Plaćanje se vrši uživo na treningu.";
+                    });
+            }
 
             await using (var elapsed = CreateContext(connectionString))
             {

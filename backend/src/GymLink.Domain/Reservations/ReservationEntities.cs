@@ -80,6 +80,18 @@ public sealed class AppointmentReservation : TenantEntity, IConcurrencyTracked
         ConfirmedAtUtc = occurredAtUtc;
     }
 
+    public void ConfirmForPayInPerson(Guid memberUserId, DateTime occurredAtUtc)
+    {
+        if (memberUserId != MemberUserId)
+        {
+            throw new DomainException(
+                "reservation_owner_required",
+                "Only the owning Member may select payment in person.");
+        }
+
+        Confirm(memberUserId, occurredAtUtc);
+    }
+
     public void RequirePayment(DateTime paymentDueAtUtc)
     {
         EnsureUtc(paymentDueAtUtc);

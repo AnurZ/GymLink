@@ -11,6 +11,12 @@ public sealed class ChatHub(
     IChatActorService chatService,
     ChatDeliveryService delivery) : Hub
 {
+    public override async Task OnConnectedAsync()
+    {
+        delivery.Connect(Context.ConnectionId, RequireUser());
+        await base.OnConnectedAsync();
+    }
+
     [HubMethodName("conversation:join")]
     public async Task JoinConversation(Guid conversationId)
     {
@@ -62,7 +68,12 @@ public sealed class ChatHub(
         await delivery.DeliverAsync(
             conversationId,
             "conversation:read",
-            new { conversationId, result.ReadAtUtc },
+            new
+            {
+                conversationId,
+                result.ReadAtUtc,
+                result.ReaderUserId,
+            },
             Context.ConnectionAborted);
     }
 

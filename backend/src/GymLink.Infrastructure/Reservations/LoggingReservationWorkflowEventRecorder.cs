@@ -94,12 +94,16 @@ internal sealed class LoggingReservationWorkflowEventRecorder(
             ? "Dostupnost trenera"
             : name.StartsWith("review", StringComparison.Ordinal)
                 ? "Nova recenzija"
-                : "Rezervacija";
+                : name == "reservation.confirmed_pay_in_person"
+                    ? "Termin potvrđen"
+                    : "Rezervacija";
 
     private static string Text(string name) =>
         name switch
         {
             "reservation.created" => "Kreirana je nova rezervacija termina.",
+            "reservation.confirmed_pay_in_person" =>
+                "Termin je potvrđen. Plaćanje se vrši uživo na treningu.",
             "reservation.status_changed" => "Status rezervacije je promijenjen.",
             "review.trainer_created" => "Objavljena je nova recenzija trenera.",
             "review.gym_created" => "Objavljena je nova recenzija teretane.",

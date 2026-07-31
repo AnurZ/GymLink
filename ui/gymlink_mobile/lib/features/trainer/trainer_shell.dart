@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../profile/profile_screen.dart';
 import '../notifications/notification_screen.dart';
 import '../chat/chat_screens.dart';
+import '../reservations/reservation_refresh_controller.dart';
 import 'trainer_screens.dart';
 
 class TrainerShell extends StatefulWidget {
@@ -15,13 +17,17 @@ class TrainerShell extends StatefulWidget {
 class _TrainerShellState extends State<TrainerShell> {
   int _index = 0;
   int _chatUnreadCount = 0;
-  late final List<Widget> _pages;
+  ReservationRefreshController? _appointmentsController;
+  late List<Widget> _pages;
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final controller = context.read<ReservationRefreshController>();
+    if (_appointmentsController == controller) return;
+    _appointmentsController = controller;
     _pages = [
-      const TrainerAppointmentsScreen(),
+      TrainerAppointmentsScreen(controller: controller),
       const TrainerAvailabilityScreen(),
       const TrainerOfferingsScreen(),
       const TrainerReviewsScreen(),
@@ -55,7 +61,12 @@ class _TrainerShellState extends State<TrainerShell> {
     body: IndexedStack(index: _index, children: _pages),
     bottomNavigationBar: NavigationBar(
       selectedIndex: _index,
-      onDestinationSelected: (value) => setState(() => _index = value),
+      onDestinationSelected: (value) {
+        if (value == 0) {
+          _appointmentsController?.refresh();
+        }
+        setState(() => _index = value);
+      },
       destinations: [
         const NavigationDestination(
           icon: Icon(Icons.event_note),

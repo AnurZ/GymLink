@@ -5,7 +5,9 @@ using System.Text.Json;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.Messaging;
+using GymLink.Application.Reservations;
 using GymLink.Domain.Common;
+using GymLink.Domain.Engagement;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Memberships;
 using GymLink.Domain.Reservations;
@@ -46,7 +48,8 @@ public sealed class Phase9ChatApiTests
             var member = await LoginAsync(client, "member");
             var trainer = await LoginAsync(client, "trainer");
             var nonParticipant = await LoginAsync(client, "mobile");
-            var reservationId = await SeedConfirmedReservationAsync(
+            var admin = await LoginAsync(client, "desktop");
+            var reservationId = await SeedReservationAsync(
                 connectionString,
                 member.User.Id,
                 trainer.User.Id);
@@ -66,6 +69,9 @@ public sealed class Phase9ChatApiTests
             Assert.NotNull(opened);
             Assert.True(opened.CanSend);
             Assert.Equal(trainer.User.Id, opened.CounterpartUserId);
+            var loaded = await client.GetFromJsonAsync<ConversationDto>(
+                $"/api/me/conversations/{opened.Id}");
+            Assert.Equal(opened.Id, loaded!.Id);
 
             var reopened = await client.PostAsJsonAsync(
                 "/api/me/conversations",
@@ -81,6 +87,10 @@ public sealed class Phase9ChatApiTests
                 (await client.PostAsJsonAsync(
                     "/api/me/conversations",
                     new { reservationId })).StatusCode);
+            Assert.Equal(
+                HttpStatusCode.NotFound,
+                (await client.GetAsync(
+                    $"/api/me/conversations/{opened.Id}")).StatusCode);
             Assert.Equal(
                 HttpStatusCode.NotFound,
                 (await client.GetAsync(
@@ -103,6 +113,27 @@ public sealed class Phase9ChatApiTests
                 sent.Id,
                 (await duplicate.Content.ReadFromJsonAsync<ChatMessageDto>())!.Id);
 
+            await using (var notificationContext = CreateContext(connectionString))
+            {
+                var tenantId = await notificationContext.Conversations
+                    .IgnoreQueryFilters()
+                    .Where(x => x.Id == opened.Id)
+                    .Select(x => x.TenantId)
+                    .SingleAsync();
+                notificationContext.Notifications.Add(new Notification
+                {
+                    RecipientUserId = trainer.User.Id,
+                    TenantId = tenantId,
+                    Type = "chat",
+                    Title = "Nova poruka",
+                    Text = "Imate novu poruku.",
+                    TargetType = "conversation",
+                    TargetId = opened.Id,
+                    CreatedAtUtc = DateTime.UtcNow,
+                });
+                await notificationContext.SaveChangesAsync();
+            }
+
             Authorize(client, trainer);
             var conversations = await client.GetFromJsonAsync<PagedResult<ConversationDto>>(
                 "/api/me/conversations?page=1&pageSize=20");
@@ -120,6 +151,15 @@ public sealed class Phase9ChatApiTests
             Assert.Equal(
                 1,
                 (await read.Content.ReadFromJsonAsync<ConversationReadDto>())!.MarkedReadCount);
+            await using (var readVerification = CreateContext(connectionString))
+            {
+                Assert.NotNull(
+                    (await readVerification.Notifications
+                        .SingleAsync(x =>
+                            x.RecipientUserId == trainer.User.Id &&
+                            x.TargetId == opened.Id))
+                    .ReadAtUtc);
+            }
             conversations = await client.GetFromJsonAsync<PagedResult<ConversationDto>>(
                 "/api/me/conversations?page=1&pageSize=20");
             Assert.Equal(0, Assert.Single(conversations!.Items).UnreadCount);
@@ -153,6 +193,37 @@ public sealed class Phase9ChatApiTests
             realtimeSend.EnsureSuccessStatusCode();
             var delivered = await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal(realtimeMessageId, delivered.ClientMessageId);
+
+            var availableConversation = new TaskCompletionSource<Guid>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            hub.On<JsonElement>(
+                "conversation:available",
+                payload =>
+                    availableConversation.TrySetResult(
+                        payload.GetProperty("conversationId").GetGuid()));
+            var pendingReservationId = await SeedReservationAsync(
+                connectionString,
+                nonParticipant.User.Id,
+                trainer.User.Id,
+                confirmed: false,
+                startInDays: 3);
+            Authorize(client, admin);
+            var pendingReservation = await client.GetFromJsonAsync<ReservationDto>(
+                $"/api/tenant/reservations/{pendingReservationId}");
+            Assert.NotNull(pendingReservation);
+            var confirmation = await client.PostAsJsonAsync(
+                $"/api/tenant/reservations/{pendingReservationId}/confirm",
+                new { concurrencyToken = pendingReservation.ConcurrencyToken });
+            confirmation.EnsureSuccessStatusCode();
+            var availableId = await availableConversation.Task.WaitAsync(
+                TimeSpan.FromSeconds(10));
+            Authorize(client, nonParticipant);
+            var automaticallyAvailable =
+                await client.GetFromJsonAsync<ConversationDto>(
+                    $"/api/me/conversations/{availableId}");
+            Assert.Equal(
+                pendingReservationId,
+                automaticallyAvailable!.OriginatingReservationId);
 
             await using (var tieContext = CreateContext(connectionString))
             {
@@ -247,7 +318,9 @@ public sealed class Phase9ChatApiTests
             Assert.Equal(
                 2,
                 await verification.OutboxMessages
-                    .CountAsync(x => x.MessageType == "notification.requested.v1"));
+                    .CountAsync(x =>
+                        x.MessageType == "notification.requested.v1" &&
+                        x.Payload.Contains("\"category\":\"chat\"")));
             Assert.Single(
                 await verification.Conversations.IgnoreQueryFilters()
                     .Where(x =>
@@ -262,10 +335,80 @@ public sealed class Phase9ChatApiTests
         }
     }
 
-    private static async Task<Guid> SeedConfirmedReservationAsync(
+    [Fact]
+    public async Task Concurrent_confirmations_create_one_pair_conversation()
+    {
+        var connectionString = TestSqlServer.ConnectionString(
+            $"GymLink_Phase9_Concurrent_{Guid.NewGuid():N}");
+        try
+        {
+            await using (var migration = CreateContext(connectionString))
+            {
+                await migration.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var firstClient = factory.CreateClient();
+            using var secondClient = factory.CreateClient();
+            var trainer = await LoginAsync(firstClient, "trainer");
+            var member = await RegisterAsync(firstClient);
+            var firstReservationId = await SeedReservationAsync(
+                connectionString,
+                member.User.Id,
+                trainer.User.Id,
+                confirmed: false,
+                startInDays: 4);
+            var secondReservationId = await SeedReservationAsync(
+                connectionString,
+                member.User.Id,
+                trainer.User.Id,
+                confirmed: false,
+                startInDays: 5);
+            var firstAdmin = await LoginAsync(firstClient, "desktop");
+            var secondAdmin = await LoginAsync(secondClient, "desktop");
+            Authorize(firstClient, firstAdmin);
+            Authorize(secondClient, secondAdmin);
+            var firstReservation = await firstClient
+                .GetFromJsonAsync<ReservationDto>(
+                    $"/api/tenant/reservations/{firstReservationId}");
+            var secondReservation = await secondClient
+                .GetFromJsonAsync<ReservationDto>(
+                    $"/api/tenant/reservations/{secondReservationId}");
+
+            var confirmations = await Task.WhenAll(
+                firstClient.PostAsJsonAsync(
+                    $"/api/tenant/reservations/{firstReservationId}/confirm",
+                    new { concurrencyToken = firstReservation!.ConcurrencyToken }),
+                secondClient.PostAsJsonAsync(
+                    $"/api/tenant/reservations/{secondReservationId}/confirm",
+                    new { concurrencyToken = secondReservation!.ConcurrencyToken }));
+            Assert.All(confirmations, response => response.EnsureSuccessStatusCode());
+
+            await using var verification = CreateContext(connectionString);
+            var conversation = Assert.Single(
+                await verification.Conversations
+                    .IgnoreQueryFilters()
+                    .Where(x =>
+                        x.MemberUserId == member.User.Id &&
+                        x.TrainerUserId == trainer.User.Id)
+                    .ToListAsync());
+            Assert.True(
+                conversation.ReservationId == firstReservationId ||
+                conversation.ReservationId == secondReservationId);
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
+
+    private static async Task<Guid> SeedReservationAsync(
         string connectionString,
         Guid memberUserId,
-        Guid trainerUserId)
+        Guid trainerUserId,
+        bool confirmed = true,
+        int startInDays = 2)
     {
         await using var context = CreateContext(connectionString);
         var trainer = await context.TrainerProfiles.IgnoreQueryFilters()
@@ -277,28 +420,39 @@ public sealed class Phase9ChatApiTests
         var plan = await context.MembershipPlans.IgnoreQueryFilters()
             .FirstAsync(x => x.GymId == gym.Id);
         var now = DateTime.UtcNow;
-        var membershipRequest = new MembershipRequest
+        var membership = await context.Memberships
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(x =>
+                x.TenantId == trainer.TenantId &&
+                x.MemberUserId == memberUserId &&
+                x.GymId == gym.Id);
+        if (membership is null)
         {
-            TenantId = trainer.TenantId,
-            MemberUserId = memberUserId,
-            GymId = gym.Id,
-            MembershipPlanId = plan.Id,
-            RequestedAtUtc = now,
-            CreatedAtUtc = now,
-        };
-        membershipRequest.Approve(trainerUserId, now);
-        var membership = new Membership(
-            trainer.TenantId,
-            memberUserId,
-            gym.Id,
-            plan.Id,
-            membershipRequest.Id,
-            plan.Name,
-            plan.DurationDays,
-            plan.Price,
-            plan.Currency,
-            trainerUserId,
-            now);
+            var membershipRequest = new MembershipRequest
+            {
+                TenantId = trainer.TenantId,
+                MemberUserId = memberUserId,
+                GymId = gym.Id,
+                MembershipPlanId = plan.Id,
+                RequestedAtUtc = now,
+                CreatedAtUtc = now,
+            };
+            membershipRequest.Approve(trainerUserId, now);
+            membership = new Membership(
+                trainer.TenantId,
+                memberUserId,
+                gym.Id,
+                plan.Id,
+                membershipRequest.Id,
+                plan.Name,
+                plan.DurationDays,
+                plan.Price,
+                plan.Currency,
+                trainerUserId,
+                now);
+            context.MembershipRequests.Add(membershipRequest);
+            context.Memberships.Add(membership);
+        }
         var reservation = new AppointmentReservation(
             trainer.TenantId,
             memberUserId,
@@ -306,24 +460,31 @@ public sealed class Phase9ChatApiTests
             offering.Id,
             null,
             membership.Id,
-            now.AddDays(2),
+            now.AddDays(startInDays),
             offering.DurationMinutes,
             offering.Price,
             offering.Currency);
-        reservation.Confirm(trainerUserId, now);
-        context.MembershipRequests.Add(membershipRequest);
-        context.Memberships.Add(membership);
-        context.AppointmentReservations.Add(reservation);
-        context.UserGymAssignments.Add(new UserGymAssignment
+        if (confirmed)
         {
-            TenantId = trainer.TenantId,
-            UserId = memberUserId,
-            Role = RoleNames.Member,
-            Status = AssignmentStatus.Active,
-            StartsAtUtc = now,
-            Reason = "Phase 9 integration test.",
-            CreatedAtUtc = now,
-        });
+            reservation.Confirm(trainerUserId, now);
+        }
+        context.AppointmentReservations.Add(reservation);
+        if (!await context.UserGymAssignments.IgnoreQueryFilters().AnyAsync(x =>
+                x.TenantId == trainer.TenantId &&
+                x.UserId == memberUserId &&
+                x.Role == RoleNames.Member))
+        {
+            context.UserGymAssignments.Add(new UserGymAssignment
+            {
+                TenantId = trainer.TenantId,
+                UserId = memberUserId,
+                Role = RoleNames.Member,
+                Status = AssignmentStatus.Active,
+                StartsAtUtc = now,
+                Reason = "Phase 9 integration test.",
+                CreatedAtUtc = now,
+            });
+        }
         await context.SaveChangesAsync();
         return reservation.Id;
     }
@@ -351,6 +512,23 @@ public sealed class Phase9ChatApiTests
         var response = await client.PostAsJsonAsync(
             "/api/auth/login",
             new { identifier, password = Password });
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<AuthSessionDto>())!;
+    }
+
+    private static async Task<AuthSessionDto> RegisterAsync(HttpClient client)
+    {
+        client.DefaultRequestHeaders.Authorization = null;
+        var suffix = Guid.NewGuid().ToString("N");
+        var response = await client.PostAsJsonAsync(
+            "/api/auth/register",
+            new
+            {
+                username = $"chat-{suffix}",
+                email = $"chat-{suffix}@gymlink.test",
+                displayName = "Concurrent Chat Member",
+                password = Password,
+            });
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<AuthSessionDto>())!;
     }

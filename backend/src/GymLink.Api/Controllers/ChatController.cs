@@ -25,6 +25,12 @@ public sealed class ChatController(
         CancellationToken cancellationToken) =>
         Ok(await chatService.SearchMineAsync(request, cancellationToken));
 
+    [HttpGet("{conversationId:guid}")]
+    public async Task<ActionResult<ConversationDto>> Get(
+        Guid conversationId,
+        CancellationToken cancellationToken) =>
+        Ok(await chatService.GetMineAsync(conversationId, cancellationToken));
+
     [HttpGet("{conversationId:guid}/messages")]
     public async Task<ActionResult<MessageHistoryDto>> Messages(
         Guid conversationId,
@@ -64,7 +70,12 @@ public sealed class ChatController(
         await delivery.DeliverAsync(
             conversationId,
             "conversation:read",
-            new { conversationId, result.ReadAtUtc },
+            new
+            {
+                conversationId,
+                result.ReadAtUtc,
+                result.ReaderUserId,
+            },
             cancellationToken);
         return Ok(result);
     }

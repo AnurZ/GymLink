@@ -376,6 +376,35 @@ public sealed class DomainInvariantTests
     }
 
     [Fact]
+    public void Pay_in_person_reservation_confirms_for_owner_without_payment()
+    {
+        var ids = Enumerable.Range(0, 6).Select(_ => Guid.NewGuid()).ToArray();
+        var now = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var reservation = new AppointmentReservation(
+            ids[0],
+            ids[1],
+            ids[2],
+            ids[3],
+            null,
+            ids[4],
+            now.AddDays(1),
+            60,
+            25,
+            "BAM");
+
+        var forged = Assert.Throws<DomainException>(() =>
+            reservation.ConfirmForPayInPerson(ids[5], now));
+        Assert.Equal("reservation_owner_required", forged.Code);
+
+        reservation.ConfirmForPayInPerson(ids[1], now);
+
+        Assert.Equal(ReservationStatus.Confirmed, reservation.Status);
+        Assert.Equal(ids[1], reservation.ConfirmedByUserId);
+        Assert.Null(reservation.PaymentId);
+        Assert.Null(reservation.PaymentDueAtUtc);
+    }
+
+    [Fact]
     public void Membership_enforces_core_transition_matrix_and_reasons()
     {
         var ids = Enumerable.Range(0, 7).Select(_ => Guid.NewGuid()).ToArray();

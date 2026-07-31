@@ -8,6 +8,7 @@ import '../../core/api.dart';
 import '../../core/payments.dart';
 import '../../core/theme.dart';
 import '../../shared/widgets.dart';
+import '../reservations/reservation_refresh_controller.dart';
 
 class GymDiscoveryScreen extends StatefulWidget {
   const GymDiscoveryScreen({super.key});
@@ -711,15 +712,8 @@ class _BookingScreenState extends State<BookingScreen> {
   Future<void> _book() async {
     if (_offering == null || _slot == null || !_hasCoveringMembership) return;
     final api = context.read<ApiClient>();
-    if (!await confirmAction(
-      context,
-      title: 'Potvrda rezervacije',
-      message:
-          '${widget.trainer['displayName']}\n${DateFormat('dd.MM.yyyy. HH:mm').format(DateTime.parse(_slot!['startsAtUtc'].toString()).toLocal())}\n${_offering!['price']} ${_offering!['currency']}',
-      action: 'Rezerviši',
-    )) {
-      return;
-    }
+    final paymentMethod = await chooseReservationPaymentMethod(context);
+    if (paymentMethod == null) return;
     try {
       setState(() => _booking = true);
       final reservation = Map<String, dynamic>.from(
@@ -728,15 +722,31 @@ class _BookingScreenState extends State<BookingScreen> {
               body: {
                 'trainerServiceOfferingId': _offering!['id'],
                 'startsAtUtc': _slot!['startsAtUtc'],
+                'paymentMethod': paymentMethod.index,
               },
             ))!
             as Map,
       );
-      await openHostedCheckout(
-        api,
-        '/api/payments/reservations/${reservation['id']}/checkout',
-      );
-      if (mounted) Navigator.pop(context);
+      if (paymentMethod == ReservationPaymentMethod.stripe) {
+        await openHostedCheckout(
+          api,
+          '/api/payments/reservations/${reservation['id']}/checkout',
+        );
+      }
+      if (mounted) {
+        context.read<ReservationRefreshController>().refresh();
+        final messenger = ScaffoldMessenger.of(context);
+        Navigator.pop(context, reservation);
+        if (paymentMethod == ReservationPaymentMethod.payInPerson) {
+          messenger.showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Termin je potvrđen. Plaćanje se vrši uživo na treningu.',
+              ),
+            ),
+          );
+        }
+      }
     } on ApiProblem catch (error) {
       if (error.status == 409) {
         final selectedStart = _slot?['startsAtUtc']?.toString();
@@ -939,7 +949,7 @@ class _BookingScreenState extends State<BookingScreen> {
                     dimension: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Text('Plati i rezerviši'),
+                : const Text('Rezerviši termin'),
           ),
         ],
       ),

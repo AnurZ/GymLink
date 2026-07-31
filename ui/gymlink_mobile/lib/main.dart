@@ -9,7 +9,11 @@ import 'core/api.dart';
 import 'core/app_errors.dart';
 import 'core/auth.dart';
 import 'core/payments.dart';
+import 'features/chat/chat_controller.dart';
 import 'features/chat/chat_realtime.dart';
+import 'features/chat/chat_repository.dart';
+import 'features/notifications/notification_controller.dart';
+import 'features/reservations/reservation_refresh_controller.dart';
 
 void main() {
   runZonedGuarded(
@@ -41,6 +45,15 @@ void main() {
       final auth = AuthController();
       final api = ApiClient(auth);
       final chatRealtime = ChatRealtime(auth);
+      final notifications = NotificationController(api, auth, chatRealtime)
+        ..initialize();
+      final chat = ChatController(
+        ChatRepository(api),
+        chatRealtime,
+        auth,
+        notifications,
+      );
+      final reservations = ReservationRefreshController();
       final paymentLinks = PaymentDeepLinks();
       await paymentLinks.initialize();
       auth.attachApi(api);
@@ -52,6 +65,9 @@ void main() {
             ChangeNotifierProvider.value(value: auth),
             Provider.value(value: api),
             Provider<ChatRealtimeGateway>.value(value: chatRealtime),
+            ChangeNotifierProvider.value(value: notifications),
+            ChangeNotifierProvider.value(value: chat),
+            ChangeNotifierProvider.value(value: reservations),
             Provider.value(value: paymentLinks),
           ],
           child: const GymLinkMobileApp(),

@@ -74,6 +74,8 @@ public sealed record CreateReservationRequest
 {
     public Guid TrainerServiceOfferingId { get; init; }
     public DateTime StartsAtUtc { get; init; }
+    public ReservationPaymentMethod PaymentMethod { get; init; } =
+        ReservationPaymentMethod.Stripe;
 }
 
 public record ReservationConcurrencyRequest
@@ -100,6 +102,7 @@ public sealed record ReservationDto(
     int DurationMinutes,
     decimal Price,
     string Currency,
+    ReservationPaymentMethod PaymentMethod,
     ReservationStatus Status,
     Guid? PaymentId,
     PaymentStatus? PaymentStatus,

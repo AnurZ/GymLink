@@ -1,5 +1,17 @@
 enum MessageDeliveryState { pending, sent, failed }
 
+final class ConversationReadEvent {
+  const ConversationReadEvent({
+    required this.conversationId,
+    required this.readerUserId,
+    required this.readAtUtc,
+  });
+
+  final String conversationId;
+  final String readerUserId;
+  final DateTime readAtUtc;
+}
+
 final class ConversationModel {
   const ConversationModel({
     required this.id,

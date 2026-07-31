@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../profile/profile_screen.dart';
 import '../notifications/notification_screen.dart';
 import '../chat/chat_screens.dart';
+import '../reservations/reservation_refresh_controller.dart';
 import 'gym_screens.dart';
 import 'membership_screen.dart';
 import 'reservation_screen.dart';
@@ -17,15 +19,19 @@ class MemberShell extends StatefulWidget {
 class _MemberShellState extends State<MemberShell> {
   int _index = 0;
   int _chatUnreadCount = 0;
-  late final List<Widget> _pages;
+  ReservationRefreshController? _reservationsController;
+  late List<Widget> _pages;
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final controller = context.read<ReservationRefreshController>();
+    if (_reservationsController == controller) return;
+    _reservationsController = controller;
     _pages = [
       const GymDiscoveryScreen(),
       const MembershipScreen(),
-      const MemberReservationsScreen(),
+      MemberReservationsScreen(controller: controller),
       ConversationListScreen(onUnreadChanged: _setChatUnreadCount),
       const ProfileScreen(),
     ];
@@ -55,7 +61,12 @@ class _MemberShellState extends State<MemberShell> {
     body: IndexedStack(index: _index, children: _pages),
     bottomNavigationBar: NavigationBar(
       selectedIndex: _index,
-      onDestinationSelected: (value) => setState(() => _index = value),
+      onDestinationSelected: (value) {
+        if (value == 2) {
+          _reservationsController?.refresh();
+        }
+        setState(() => _index = value);
+      },
       destinations: [
         const NavigationDestination(
           icon: Icon(Icons.fitness_center),

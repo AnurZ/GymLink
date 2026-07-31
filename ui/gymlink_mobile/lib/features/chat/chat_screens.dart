@@ -5,20 +5,12 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
-import '../../core/auth.dart';
 import '../../shared/widgets.dart';
 import 'chat_controller.dart';
 import 'chat_models.dart';
-import 'chat_realtime.dart';
 import 'chat_repository.dart';
 
 final _chatTime = DateFormat('dd.MM. HH:mm');
-
-ChatController _controller(BuildContext context) => ChatController(
-  ChatRepository(context.read<ApiClient>()),
-  context.read<ChatRealtimeGateway>(),
-  context.read<AuthController>(),
-);
 
 Future<void> openChatForReservation(
   BuildContext context,
@@ -29,15 +21,7 @@ Future<void> openChatForReservation(
       context.read<ApiClient>(),
     ).open(reservationId);
     if (!context.mounted) return;
-    await Navigator.push(
-      context,
-      MaterialPageRoute<void>(
-        builder: (routeContext) => ChangeNotifierProvider(
-          create: (_) => _controller(context),
-          child: ChatDetailScreen(conversation: conversation),
-        ),
-      ),
-    );
+    await _openConversation(context, conversation);
   } on ApiProblem catch (error) {
     if (context.mounted) {
       ScaffoldMessenger.of(
@@ -47,16 +31,46 @@ Future<void> openChatForReservation(
   }
 }
 
+Future<void> openChatForConversation(
+  BuildContext context,
+  String conversationId,
+) async {
+  try {
+    final conversation = await ChatRepository(
+      context.read<ApiClient>(),
+    ).get(conversationId);
+    if (!context.mounted) return;
+    await _openConversation(context, conversation);
+  } on ApiProblem catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+}
+
+Future<void> _openConversation(
+  BuildContext context,
+  ConversationModel conversation,
+) => Navigator.push(
+  context,
+  MaterialPageRoute<void>(
+    builder: (_) => ChangeNotifierProvider.value(
+      value: context.read<ChatController>(),
+      child: ChatDetailScreen(conversation: conversation),
+    ),
+  ),
+);
+
 class ConversationListScreen extends StatelessWidget {
   const ConversationListScreen({this.onUnreadChanged, super.key});
 
   final ValueChanged<int>? onUnreadChanged;
 
   @override
-  Widget build(BuildContext context) => ChangeNotifierProvider(
-    create: (_) => _controller(context)..initializeList(),
-    child: _ConversationListBody(onUnreadChanged: onUnreadChanged),
-  );
+  Widget build(BuildContext context) =>
+      _ConversationListBody(onUnreadChanged: onUnreadChanged);
 }
 
 class _ConversationListBody extends StatefulWidget {
@@ -78,6 +92,11 @@ class _ConversationListBodyState extends State<_ConversationListBody>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(context.read<ChatController>().initializeList());
+      }
+    });
   }
 
   @override
@@ -153,7 +172,7 @@ class _ConversationListBodyState extends State<_ConversationListBody>
                 child: EmptyState(
                   title: 'Nema razgovora',
                   message:
-                      'Razgovor možete otvoriti iz potvrđene ili završene rezervacije.',
+                      'Razgovori se pojavljuju nakon potvrđene rezervacije.',
                   icon: Icons.forum_outlined,
                 ),
               )

@@ -3,6 +3,7 @@ import 'chat_models.dart';
 
 abstract interface class ChatRepositoryGateway {
   Future<ConversationModel> open(String reservationId);
+  Future<ConversationModel> get(String conversationId);
   Future<PagedData> search({int page = 1, String? search});
   Future<MessageHistoryModel> messages(
     String conversationId, {
@@ -28,6 +29,12 @@ final class ChatRepository implements ChatRepositoryGateway {
       '/api/me/conversations',
       body: {'reservationId': reservationId},
     );
+    return ConversationModel.fromJson(Map<String, dynamic>.from(json! as Map));
+  }
+
+  @override
+  Future<ConversationModel> get(String conversationId) async {
+    final json = await _api.get('/api/me/conversations/$conversationId');
     return ConversationModel.fromJson(Map<String, dynamic>.from(json! as Map));
   }
 
