@@ -3,12 +3,12 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
-import '../../core/payments.dart';
 import '../../shared/widgets.dart';
 import '../chat/chat_screens.dart';
 import '../reservations/reservation_refresh_controller.dart';
 
 const _reservationStatuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
+const _visibleReservationStatuses = [1, 2, 3];
 
 class MemberReservationsScreen extends StatefulWidget {
   const MemberReservationsScreen({this.controller, super.key});
@@ -73,15 +73,15 @@ class _MemberReservationsScreenState extends State<MemberReservationsScreen> {
       padding: const EdgeInsets.all(16),
       children: [
         DropdownButtonFormField<int?>(
+          key: const Key('reservation-status-filter'),
           initialValue: _status,
           decoration: const InputDecoration(labelText: 'Status'),
           items: [
             const DropdownMenuItem(value: null, child: Text('Svi statusi')),
-            ...List.generate(
-              _reservationStatuses.length,
-              (index) => DropdownMenuItem(
-                value: index,
-                child: Text(_reservationStatuses[index]),
+            ..._visibleReservationStatuses.map(
+              (status) => DropdownMenuItem(
+                value: status,
+                child: Text(_reservationStatuses[status]),
               ),
             ),
           ],
@@ -159,7 +159,6 @@ class ReservationDetailsScreen extends StatefulWidget {
 class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
   Map<String, dynamic>? _item;
   bool _loading = true;
-  bool _paying = false;
   Object? _error;
 
   @override
@@ -208,30 +207,6 @@ class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
     );
     if (result == null) return;
     await _command('/api/reservations/${widget.reservationId}/review', result);
-  }
-
-  Future<void> _pay() async {
-    setState(() => _paying = true);
-    try {
-      await openHostedCheckout(
-        context.read<ApiClient>(),
-        '/api/payments/reservations/${widget.reservationId}/checkout',
-      );
-    } on ApiProblem catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    } on StateError catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    } finally {
-      if (mounted) setState(() => _paying = false);
-    }
   }
 
   Future<void> _command(String path, Map<String, Object?> body) async {
@@ -289,11 +264,6 @@ class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
                               ? 'Način plaćanja: uživo'
                               : 'Način plaćanja: Stripe',
                         ),
-                        if (_item!['paymentDueAtUtc'] != null &&
-                            _item!['isPaid'] != true)
-                          Text(
-                            'Platiti do ${DateFormat('HH:mm').format(DateTime.parse(_item!['paymentDueAtUtc'].toString()).toLocal())}',
-                          ),
                         if (_item!['isPaid'] == true)
                           const Text(
                             'Plaćeno',
@@ -315,19 +285,6 @@ class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                if ((_item!['allowedActions'] as List? ?? const []).contains(
-                  'pay',
-                ))
-                  FilledButton.icon(
-                    onPressed: _paying ? null : _pay,
-                    icon: _paying
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.payment),
-                    label: const Text('Nastavi Stripe plaćanje'),
-                  ),
                 if ((_item!['allowedActions'] as List? ?? const []).contains(
                   'cancel',
                 ))

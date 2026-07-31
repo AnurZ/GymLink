@@ -87,6 +87,33 @@ void main() {
     expect(find.text('Pošalji kod'), findsOneWidget);
   });
 
+  testWidgets('GymAdmin Termini filter omits Pending and keeps enum values', (
+    tester,
+  ) async {
+    final api = _GymAdminReservationsApi();
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: TenantReservationsScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('reservation-status-filter')));
+    await tester.pumpAndSettle();
+    expect(find.text('Pending'), findsNothing);
+    expect(find.text('Confirmed'), findsOneWidget);
+    expect(find.text('Completed'), findsOneWidget);
+    expect(find.text('Cancelled'), findsOneWidget);
+
+    await tester.tap(find.text('Confirmed'));
+    await tester.pumpAndSettle();
+    expect(api.requestedStatuses, [null, 1]);
+  });
+
   testWidgets('gym creation searches locations only after explicit action', (
     tester,
   ) async {
@@ -997,6 +1024,24 @@ class _GymAdminScheduleApi extends ApiClient {
       return {...savedSchedule!, 'concurrencyToken': 'token-2'};
     }
     throw StateError('Unexpected put request: $path');
+  }
+}
+
+class _GymAdminReservationsApi extends ApiClient {
+  _GymAdminReservationsApi() : super(_TestTokens());
+
+  final List<int?> requestedStatuses = [];
+
+  @override
+  Future<PagedData> page(
+    String path, {
+    Map<String, Object?> query = const {},
+  }) async {
+    if (path == '/api/tenant/reservations') {
+      requestedStatuses.add(query['status'] as int?);
+      return const PagedData(items: [], page: 1, pageSize: 20, totalCount: 0);
+    }
+    throw StateError('Unexpected page request: $path');
   }
 }
 

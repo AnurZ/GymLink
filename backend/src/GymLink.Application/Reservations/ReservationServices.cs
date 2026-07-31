@@ -1172,6 +1172,14 @@ internal sealed class ReservationService(
             query = query.Where(x => x.Reservation.TenantId == tenantId);
         }
 
+        if (!reservationId.HasValue)
+        {
+            query = query.Where(x =>
+                x.Reservation.Status != ReservationStatus.Pending &&
+                (!x.Reservation.PaymentDueAtUtc.HasValue ||
+                 x.Reservation.PaymentId.HasValue));
+        }
+
         if (request.Status.HasValue)
         {
             query = query.Where(x => x.Reservation.Status == request.Status);

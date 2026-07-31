@@ -158,6 +158,35 @@ public sealed class Phase5ReservationApiTests
             Assert.Equal(ReservationPaymentMethod.Stripe, reservation.PaymentMethod);
             Assert.Equal(ReservationStatus.Pending, reservation.Status);
 
+            Authorize(setupClient, winningSession);
+            var pendingMemberReservations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    "/api/me/reservations?page=1&pageSize=20");
+            Assert.DoesNotContain(
+                pendingMemberReservations!.Items,
+                item => item.Id == reservation.Id);
+            var explicitlyPendingMemberReservations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    $"/api/me/reservations?status={(int)ReservationStatus.Pending}" +
+                    "&page=1&pageSize=20");
+            Assert.Empty(explicitlyPendingMemberReservations!.Items);
+
+            Authorize(setupClient, trainerSession);
+            var pendingTrainerReservations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    "/api/me/trainer-reservations?page=1&pageSize=20");
+            Assert.DoesNotContain(
+                pendingTrainerReservations!.Items,
+                item => item.Id == reservation.Id);
+
+            Authorize(setupClient, admin);
+            var pendingTenantReservations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    "/api/tenant/reservations?page=1&pageSize=20");
+            Assert.DoesNotContain(
+                pendingTenantReservations!.Items,
+                item => item.Id == reservation.Id);
+
             Authorize(setupClient, otherAdmin);
             Assert.Equal(
                 HttpStatusCode.NotFound,
@@ -194,7 +223,31 @@ public sealed class Phase5ReservationApiTests
             Assert.True(confirmed.IsPaid);
             Assert.Equal(ReservationPaymentMethod.Stripe, confirmed.PaymentMethod);
 
+            var confirmedTenantReservations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    "/api/tenant/reservations?page=1&pageSize=20");
+            Assert.Contains(
+                confirmedTenantReservations!.Items,
+                item => item.Id == reservation.Id &&
+                        item.Status == ReservationStatus.Confirmed);
+
+            Authorize(setupClient, trainerSession);
+            var confirmedTrainerReservations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    "/api/me/trainer-reservations?page=1&pageSize=20");
+            Assert.Contains(
+                confirmedTrainerReservations!.Items,
+                item => item.Id == reservation.Id &&
+                        item.Status == ReservationStatus.Confirmed);
+
             Authorize(setupClient, winningSession);
+            var confirmedMemberReservations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    "/api/me/reservations?page=1&pageSize=20");
+            Assert.Contains(
+                confirmedMemberReservations!.Items,
+                item => item.Id == reservation.Id &&
+                        item.Status == ReservationStatus.Confirmed);
             var stripeConversations =
                 await setupClient.GetFromJsonAsync<PagedResult<ConversationDto>>(
                     "/api/me/conversations?page=1&pageSize=20");
@@ -246,6 +299,25 @@ public sealed class Phase5ReservationApiTests
                     item.Status == ReservationStatus.Confirmed &&
                     item.PaymentMethod == ReservationPaymentMethod.PayInPerson);
 
+            Authorize(setupClient, trainerSession);
+            var trainerInPersonReservations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    "/api/me/trainer-reservations?page=1&pageSize=20");
+            Assert.Contains(
+                trainerInPersonReservations!.Items,
+                item => item.Id == inPerson.Id &&
+                        item.Status == ReservationStatus.Confirmed);
+
+            Authorize(setupClient, admin);
+            var tenantInPersonReservations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    "/api/tenant/reservations?page=1&pageSize=20");
+            Assert.Contains(
+                tenantInPersonReservations!.Items,
+                item => item.Id == inPerson.Id &&
+                        item.Status == ReservationStatus.Confirmed);
+
+            Authorize(setupClient, inPersonSession);
             var inPersonConversations =
                 await setupClient.GetFromJsonAsync<PagedResult<ConversationDto>>(
                     "/api/me/conversations?page=1&pageSize=20");
@@ -281,6 +353,92 @@ public sealed class Phase5ReservationApiTests
                                 "Termin je potvrđen. Plaćanje se vrši uživo na treningu.";
                     });
             }
+
+            var cancelInPerson = await setupClient.PostAsJsonAsync(
+                $"/api/me/reservations/{inPerson.Id}/cancel",
+                new { concurrencyToken = inPerson.ConcurrencyToken });
+            cancelInPerson.EnsureSuccessStatusCode();
+            var cancelledInPerson =
+                await cancelInPerson.Content.ReadFromJsonAsync<ReservationDto>();
+            Assert.NotNull(cancelledInPerson);
+            Assert.Equal(ReservationStatus.Cancelled, cancelledInPerson.Status);
+            var visibleMemberCancellations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    $"/api/me/reservations?status={(int)ReservationStatus.Cancelled}" +
+                    "&page=1&pageSize=20");
+            Assert.Contains(
+                visibleMemberCancellations!.Items,
+                item => item.Id == inPerson.Id);
+
+            Authorize(setupClient, trainerSession);
+            var visibleTrainerCancellations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    $"/api/me/trainer-reservations?status={(int)ReservationStatus.Cancelled}" +
+                    "&page=1&pageSize=20");
+            Assert.Contains(
+                visibleTrainerCancellations!.Items,
+                item => item.Id == inPerson.Id);
+
+            Authorize(setupClient, admin);
+            var visibleTenantCancellations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    $"/api/tenant/reservations?status={(int)ReservationStatus.Cancelled}" +
+                    "&page=1&pageSize=20");
+            Assert.Contains(
+                visibleTenantCancellations!.Items,
+                item => item.Id == inPerson.Id);
+
+            Authorize(setupClient, inPersonSession);
+            var expiringStripeResponse = await setupClient.PostAsJsonAsync(
+                "/api/reservations",
+                new
+                {
+                    startsAtUtc = start.AddMinutes(offering.DurationMinutes * 2),
+                    trainerServiceOfferingId = offering.Id,
+                });
+            expiringStripeResponse.EnsureSuccessStatusCode();
+            var expiringStripe =
+                await expiringStripeResponse.Content.ReadFromJsonAsync<ReservationDto>();
+            Assert.NotNull(expiringStripe);
+            await using (var expiration = CreateContext(connectionString))
+            {
+                var expiredAt = DateTime.UtcNow.AddMinutes(-1);
+                await expiration.Database.ExecuteSqlInterpolatedAsync(
+                    $"""
+                    UPDATE [AppointmentReservations]
+                    SET [Status] = {ReservationStatus.Cancelled.ToString()},
+                        [PaymentDueAtUtc] = {expiredAt.AddMinutes(-1)},
+                        [CancelledAtUtc] = {expiredAt},
+                        [CancellationReason] = {"Payment window expired."}
+                    WHERE [Id] = {expiringStripe.Id}
+                    """);
+            }
+
+            var cancelledMemberReservations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    $"/api/me/reservations?status={(int)ReservationStatus.Cancelled}" +
+                    "&page=1&pageSize=20");
+            Assert.DoesNotContain(
+                cancelledMemberReservations!.Items,
+                item => item.Id == expiringStripe.Id);
+
+            Authorize(setupClient, trainerSession);
+            var cancelledTrainerReservations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    $"/api/me/trainer-reservations?status={(int)ReservationStatus.Cancelled}" +
+                    "&page=1&pageSize=20");
+            Assert.DoesNotContain(
+                cancelledTrainerReservations!.Items,
+                item => item.Id == expiringStripe.Id);
+
+            Authorize(setupClient, admin);
+            var cancelledTenantReservations =
+                await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
+                    $"/api/tenant/reservations?status={(int)ReservationStatus.Cancelled}" +
+                    "&page=1&pageSize=20");
+            Assert.DoesNotContain(
+                cancelledTenantReservations!.Items,
+                item => item.Id == expiringStripe.Id);
 
             await using (var elapsed = CreateContext(connectionString))
             {

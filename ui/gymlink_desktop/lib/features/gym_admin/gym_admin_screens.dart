@@ -14,6 +14,7 @@ const _membershipStatuses = [
   'Suspended',
 ];
 const _reservationStatuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
+const _visibleReservationStatuses = [1, 2, 3];
 
 class GymDashboardScreen extends StatefulWidget {
   const GymDashboardScreen({super.key});
@@ -710,10 +711,7 @@ class _TenantAvailabilityScreenState extends State<TenantAvailabilityScreen> {
               body: {
                 'trainerProfileId': _trainerId,
                 'shifts': _selected
-                    .map((item) => {
-                      'dayOfWeek': item.$1,
-                      'period': item.$2,
-                    })
+                    .map((item) => {'dayOfWeek': item.$1, 'period': item.$2})
                     .toList(),
                 'concurrencyToken': _concurrencyToken,
               },
@@ -791,13 +789,12 @@ class _TenantAvailabilityScreenState extends State<TenantAvailabilityScreen> {
           child: _trainerId == null
               ? const EmptyState('Nema aktivnih trenera.')
               : GridView.builder(
-                  gridDelegate:
-                      const SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent: 330,
-                        mainAxisExtent: 170,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                      ),
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 330,
+                    mainAxisExtent: 170,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                  ),
                   itemCount: _days.length,
                   itemBuilder: (context, index) {
                     final day = (index + 1) % 7;
@@ -930,15 +927,15 @@ class _TenantReservationsScreenState extends State<TenantReservationsScreen> {
         child: SizedBox(
           width: 300,
           child: DropdownButtonFormField<int?>(
+            key: const Key('reservation-status-filter'),
             initialValue: _status,
             decoration: const InputDecoration(labelText: 'Status'),
             items: [
               const DropdownMenuItem(value: null, child: Text('Svi statusi')),
-              ...List.generate(
-                _reservationStatuses.length,
-                (index) => DropdownMenuItem(
-                  value: index,
-                  child: Text(_reservationStatuses[index]),
+              ..._visibleReservationStatuses.map(
+                (status) => DropdownMenuItem(
+                  value: status,
+                  child: Text(_reservationStatuses[status]),
                 ),
               ),
             ],
