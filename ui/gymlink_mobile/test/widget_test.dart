@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
@@ -16,6 +17,7 @@ import 'package:gymlink_mobile/features/payments/payment_result_screen.dart';
 import 'package:gymlink_mobile/features/reservations/reservation_refresh_controller.dart';
 import 'package:gymlink_mobile/features/trainer/trainer_screens.dart';
 import 'package:gymlink_mobile/shared/widgets.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 void main() {
@@ -152,6 +154,160 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(selected, ReservationPaymentMethod.payInPerson);
+  });
+
+  testWidgets('pay-in-person booking shows a confirmed success state', (
+    tester,
+  ) async {
+    final client = MockClient((request) async {
+      if (request.method == 'GET' &&
+          request.url.path == '/api/trainers/trainer-1/offerings') {
+        return _jsonResponse([
+          {
+            'id': 'offering-1',
+            'name': 'Individualni trening',
+            'durationMinutes': 60,
+            'price': 30,
+            'currency': 'BAM',
+            'isActive': true,
+          },
+        ]);
+      }
+      if (request.method == 'GET' &&
+          request.url.path == '/api/trainers/trainer-1/availability') {
+        return _jsonResponse(
+          _page([
+            {
+              'startsAtUtc': '2030-08-01T10:00:00Z',
+              'endsAtUtc': '2030-08-01T11:00:00Z',
+            },
+          ]),
+        );
+      }
+      if (request.method == 'GET' &&
+          request.url.path == '/api/me/memberships') {
+        return _jsonResponse(
+          _page([
+            {'id': 'membership-1'},
+          ]),
+        );
+      }
+      if (request.method == 'POST' && request.url.path == '/api/reservations') {
+        return _jsonResponse({
+          'id': 'reservation-in-person',
+          'status': 1,
+          'paymentMethod': 1,
+        });
+      }
+      return _jsonResponse(const <Object>[]);
+    });
+    final api = ApiClient(
+      _TestTokenSource(),
+      httpClient: client,
+      baseUrlOverride: 'http://test.local',
+    );
+    final reservations = ReservationRefreshController();
+    var refreshPublished = false;
+    reservations.addListener(() => refreshPublished = true);
+    addTearDown(api.close);
+    addTearDown(reservations.dispose);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<ApiClient>.value(value: api),
+          ChangeNotifierProvider.value(value: reservations),
+        ],
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: BookingScreen(
+            trainer: const {
+              'id': 'trainer-1',
+              'displayName': 'Trener Test',
+              'averageRating': 5,
+            },
+            gymId: 'gym-1',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(ChoiceChip));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rezerviši termin'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('reservation-payment-in-person')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(
+      find.byKey(const Key('pay-in-person-success-dialog')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('pay-in-person-success-check')),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.check_circle), findsOneWidget);
+    expect(find.text('Termin je potvrđen'), findsOneWidget);
+    expect(find.textContaining('sačuvana u Terminima'), findsOneWidget);
+    expect(
+      find.textContaining('razgovor s trenerom je spreman'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('plaćate uživo'), findsOneWidget);
+    expect(refreshPublished, isTrue);
+  });
+
+  testWidgets('reservation cancellation uses appropriate confirmation copy', (
+    tester,
+  ) async {
+    final api = ApiClient(
+      _TestTokenSource(),
+      httpClient: MockClient(
+        (_) async => _jsonResponse({
+          'id': 'reservation-in-person',
+          'trainerName': 'Trener Test',
+          'gymName': 'GymLink Centar',
+          'offeringName': 'Individualni trening',
+          'startsAtUtc': '2030-08-01T10:00:00Z',
+          'durationMinutes': 60,
+          'price': 30,
+          'currency': 'BAM',
+          'paymentMethod': 1,
+          'isPaid': false,
+          'status': 1,
+          'cancellationReason': null,
+          'allowedActions': ['cancel'],
+          'concurrencyToken': 'token-1',
+        }),
+      ),
+      baseUrlOverride: 'http://test.local',
+    );
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: const MaterialApp(
+          home: ReservationDetailsScreen(
+            reservationId: 'reservation-in-person',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Otkaži rezervaciju'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Rezervacija će biti otkazana. Ovu radnju nije moguće poništiti.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('ponovo postati dostupan'), findsNothing);
   });
 
   testWidgets('Termini refresh shows a newly confirmed pay-in-person booking', (
@@ -355,6 +511,315 @@ void main() {
     expect(find.text('Član Test'), findsOneWidget);
     expect(find.text('Confirmed'), findsOneWidget);
     expect(reservationLoads, 2);
+  });
+
+  testWidgets(
+    'Trainer availability is compact and responsive on a narrow phone',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 720);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _scheduleApi(
+        shifts: const [
+          {'dayOfWeek': 1, 'period': 0},
+          {'dayOfWeek': 2, 'period': 1},
+        ],
+      );
+      addTearDown(api.close);
+
+      await tester.pumpWidget(_availabilityHarness(api));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('availability-day-1')), findsOneWidget);
+      expect(find.byKey(const Key('availability-day-0')), findsOneWidget);
+      final today = DateUtils.dateOnly(DateTime.now());
+      final saturday = today.add(
+        Duration(days: (DateTime.saturday - today.weekday + 7) % 7),
+      );
+      expect(
+        find.text(
+          'Subota - ${saturday.day.toString().padLeft(2, '0')}.${saturday.month.toString().padLeft(2, '0')}.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('2 aktivna dana · 2 odabrane smjene'), findsOneWidget);
+      expect(find.text('Jutarnja'), findsNWidgets(7));
+      expect(find.text('Večernja'), findsNWidgets(7));
+      expect(find.text('Raspored je sačuvan'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'Trainer availability preserves edits, resets, and saves payload',
+    (tester) async {
+      tester.view.physicalSize = const Size(412, 915);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var putCount = 0;
+      final submittedBodies = <Map<String, dynamic>>[];
+      final client = MockClient((request) async {
+        if (request.method == 'GET') {
+          return _jsonResponse({
+            'concurrencyToken': 'token-1',
+            'shifts': [
+              {'dayOfWeek': 1, 'period': 0},
+            ],
+          });
+        }
+        putCount++;
+        final body = Map<String, dynamic>.from(jsonDecode(request.body) as Map);
+        submittedBodies.add(body);
+        if (putCount == 1) {
+          return _jsonResponse(
+            {
+              'title': 'schedule_save_failed',
+              'detail': 'Raspored trenutno nije moguće sačuvati.',
+            },
+            statusCode: 503,
+            contentType: 'application/problem+json; charset=utf-8',
+          );
+        }
+        return _jsonResponse({
+          'concurrencyToken': 'token-2',
+          'shifts': body['shifts'],
+        });
+      });
+      final api = ApiClient(
+        _TestTokenSource(),
+        httpClient: client,
+        baseUrlOverride: 'http://test.local',
+      );
+      addTearDown(api.close);
+      await tester.pumpWidget(_availabilityHarness(api));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('availability-shift-1-1')));
+      await tester.pumpAndSettle();
+      expect(find.text('Nesačuvane izmjene'), findsOneWidget);
+      expect(find.text('1 aktivan dan · 2 odabrane smjene'), findsOneWidget);
+      expect(find.byKey(const Key('availability-reset')), findsOneWidget);
+
+      await tester.drag(
+        find.byKey(const Key('trainer-availability-scroll')),
+        const Offset(0, 320),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('Odbaciti izmjene?'), findsOneWidget);
+      await tester.tap(find.text('Odustani'));
+      await tester.pumpAndSettle();
+      expect(find.text('Nesačuvane izmjene'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('availability-save')));
+      await tester.pumpAndSettle();
+      expect(find.text('Nesačuvane izmjene'), findsOneWidget);
+      expect(
+        find.textContaining('Usluga trenutno nije dostupna'),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('availability-save')));
+      await tester.pumpAndSettle();
+      expect(find.text('Raspored je sačuvan'), findsOneWidget);
+      expect(find.byKey(const Key('availability-reset')), findsNothing);
+      expect(putCount, 2);
+      expect(submittedBodies.last['trainerProfileId'], _emptyTestGuid);
+      expect(submittedBodies.last['concurrencyToken'], 'token-1');
+      expect(submittedBodies.last['shifts'], [
+        {'dayOfWeek': 1, 'period': 0},
+        {'dayOfWeek': 1, 'period': 1},
+      ]);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'Trainer availability conflict refreshes baseline but keeps edits',
+    (tester) async {
+      var getCount = 0;
+      final client = MockClient((request) async {
+        if (request.method == 'GET') {
+          getCount++;
+          return _jsonResponse({
+            'concurrencyToken': getCount == 1 ? 'token-1' : 'token-2',
+            'shifts': getCount == 1
+                ? [
+                    {'dayOfWeek': 1, 'period': 0},
+                  ]
+                : [
+                    {'dayOfWeek': 5, 'period': 1},
+                  ],
+          });
+        }
+        return _jsonResponse(
+          {
+            'title': 'concurrency_conflict',
+            'detail': 'Raspored je promijenjen na drugom uređaju.',
+          },
+          statusCode: 409,
+          contentType: 'application/problem+json; charset=utf-8',
+        );
+      });
+      final api = ApiClient(
+        _TestTokenSource(),
+        httpClient: client,
+        baseUrlOverride: 'http://test.local',
+      );
+      addTearDown(api.close);
+      await tester.pumpWidget(_availabilityHarness(api));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('availability-shift-2-0')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('availability-save')));
+      await tester.pumpAndSettle();
+
+      expect(getCount, 2);
+      expect(find.textContaining('Vaše izmjene su zadržane'), findsOneWidget);
+      expect(find.text('2 aktivna dana · 2 odabrane smjene'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('availability-shift-2-0')),
+          matching: find.byIcon(Icons.check_circle),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('availability-reset')));
+      await tester.pumpAndSettle();
+      expect(find.text('1 aktivan dan · 1 odabrana smjena'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('availability-shift-5-1')),
+          matching: find.byIcon(Icons.check_circle),
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('Mobile gym map controls zoom, recenter, and preserve markers', (
+    tester,
+  ) async {
+    final gymQueries = <String?>[];
+    final navigatorObserver = _RecordingNavigatorObserver();
+    final client = MockClient((request) async {
+      if (request.url.path == '/api/gyms') {
+        gymQueries.add(request.url.queryParameters['query']);
+        final mostar = request.url.queryParameters['query'] == 'Mostar';
+        final noLocation =
+            request.url.queryParameters['query'] == 'Bez lokacije';
+        return _jsonResponse(
+          _page([
+            {
+              'id': noLocation
+                  ? 'gym-without-location'
+                  : mostar
+                  ? 'gym-mostar'
+                  : 'gym-sarajevo',
+              'name': noLocation
+                  ? 'Gym bez lokacije'
+                  : mostar
+                  ? 'Gym Mostar'
+                  : 'Gym Sarajevo',
+              'latitude': noLocation ? null : (mostar ? 43.3438 : 43.8563),
+              'longitude': noLocation ? null : (mostar ? 17.8078 : 18.4131),
+            },
+          ]),
+        );
+      }
+      return _jsonResponse(const <Object>[]);
+    });
+    final api = ApiClient(
+      _TestTokenSource(),
+      httpClient: client,
+      baseUrlOverride: 'http://test.local',
+    );
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          navigatorObservers: [navigatorObserver],
+          home: const Scaffold(body: GymDiscoveryScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('gym-discovery-map-controls')), findsOneWidget);
+    expect(find.byKey(const Key('gym-discovery-map-zoom-in')), findsOneWidget);
+    expect(find.byKey(const Key('gym-discovery-map-zoom-out')), findsOneWidget);
+    expect(find.byKey(const Key('gym-discovery-map-center')), findsOneWidget);
+    expect(
+      find.byKey(const Key('gym-map-marker-gym-sarajevo')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('gym-map-marker-gym-sarajevo')));
+    await tester.pump();
+    expect(navigatorObserver.pushCount, 2);
+    navigatorObserver.navigator!.pop();
+    await tester.pumpAndSettle();
+
+    final map = tester.widget<FlutterMap>(find.byType(FlutterMap));
+    final controller = map.mapController!;
+    expect(controller.camera.zoom, 13);
+    await tester.tap(find.byKey(const Key('gym-discovery-map-zoom-in')));
+    await tester.pump();
+    expect(controller.camera.zoom, 14);
+    controller.move(controller.camera.center, 19);
+    await tester.tap(find.byKey(const Key('gym-discovery-map-zoom-in')));
+    await tester.pump();
+    expect(controller.camera.zoom, 19);
+    controller.move(controller.camera.center, 6);
+    await tester.tap(find.byKey(const Key('gym-discovery-map-zoom-out')));
+    await tester.pump();
+    expect(controller.camera.zoom, 6);
+
+    controller.move(const LatLng(42, 16), 17);
+    await tester.tap(find.byKey(const Key('gym-discovery-map-center')));
+    await tester.pump();
+    expect(controller.camera.zoom, 13);
+    expect(controller.camera.center.latitude, closeTo(43.8563, 0.0001));
+    expect(controller.camera.center.longitude, closeTo(18.4131, 0.0001));
+
+    await tester.enterText(find.byKey(const Key('gym-search-field')), 'Mostar');
+    await tester.tap(find.byKey(const Key('gym-search-submit')));
+    await tester.pumpAndSettle();
+    expect(gymQueries, [null, 'Mostar']);
+    final updatedMap = tester.widget<FlutterMap>(find.byType(FlutterMap));
+    final updatedController = updatedMap.mapController!;
+    expect(updatedController.camera.center.latitude, closeTo(43.3438, 0.0001));
+    expect(updatedController.camera.center.longitude, closeTo(17.8078, 0.0001));
+    expect(
+      find.byKey(const Key('gym-map-marker-gym-mostar'), skipOffstage: false),
+      findsOneWidget,
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('gym-search-field')),
+      'Bez lokacije',
+    );
+    await tester.tap(find.byKey(const Key('gym-search-submit')));
+    await tester.pumpAndSettle();
+    expect(gymQueries, [null, 'Mostar', 'Bez lokacije']);
+    final fallbackMap = tester.widget<FlutterMap>(find.byType(FlutterMap));
+    expect(fallbackMap.mapController!.camera.zoom, 13);
+    expect(
+      fallbackMap.mapController!.camera.center.latitude,
+      closeTo(43.8563, 0.0001),
+    );
+    expect(
+      fallbackMap.mapController!.camera.center.longitude,
+      closeTo(18.4131, 0.0001),
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('password reset keeps the form open for empty values', (
@@ -605,6 +1070,38 @@ Map<String, Object> _page(List<Object> items) => {
   'totalCount': items.length,
 };
 
+const _emptyTestGuid = '00000000-0000-0000-0000-000000000000';
+
+ApiClient _scheduleApi({required List<Map<String, Object>> shifts}) {
+  final client = MockClient(
+    (_) async =>
+        _jsonResponse({'concurrencyToken': 'token-1', 'shifts': shifts}),
+  );
+  return ApiClient(
+    _TestTokenSource(),
+    httpClient: client,
+    baseUrlOverride: 'http://test.local',
+  );
+}
+
+Widget _availabilityHarness(ApiClient api) => Provider<ApiClient>.value(
+  value: api,
+  child: MaterialApp(
+    theme: buildGymLinkTheme(),
+    home: const Scaffold(body: TrainerAvailabilityScreen()),
+  ),
+);
+
+http.Response _jsonResponse(
+  Object body, {
+  int statusCode = 200,
+  String contentType = 'application/json; charset=utf-8',
+}) => http.Response(
+  jsonEncode(body),
+  statusCode,
+  headers: {'content-type': contentType},
+);
+
 class _TestTokenSource implements AuthTokenSource {
   @override
   String? get accessToken => 'test-token';
@@ -614,4 +1111,14 @@ class _TestTokenSource implements AuthTokenSource {
 
   @override
   Future<bool> refresh() async => false;
+}
+
+class _RecordingNavigatorObserver extends NavigatorObserver {
+  int pushCount = 0;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    pushCount++;
+    super.didPush(route, previousRoute);
+  }
 }

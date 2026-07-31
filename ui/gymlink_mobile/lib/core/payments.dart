@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'api.dart';
+import 'theme.dart';
 
 enum ReservationPaymentMethod { stripe, payInPerson }
 
@@ -57,6 +58,46 @@ Future<ReservationPaymentMethod?> chooseReservationPaymentMethod(
     ),
   ),
 );
+
+Future<void> showPayInPersonReservationSuccess(BuildContext context) =>
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        key: const Key('pay-in-person-success-dialog'),
+        icon: Container(
+          key: const Key('pay-in-person-success-check'),
+          width: 68,
+          height: 68,
+          decoration: const BoxDecoration(
+            color: Color(0xFFE8F7EC),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.check_circle,
+            size: 44,
+            color: GymLinkColors.success,
+          ),
+        ),
+        title: const Text('Termin je potvrđen', textAlign: TextAlign.center),
+        content: const Text(
+          'Rezervacija je sačuvana u Terminima, a razgovor s trenerom je '
+          'dostupan. Iznos plaćate uživo na treningu.',
+          textAlign: TextAlign.center,
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              key: const Key('pay-in-person-success-done'),
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.calendar_today_outlined),
+              label: const Text('U redu'),
+            ),
+          ),
+        ],
+      ),
+    );
 
 final class PaymentDeepLinks {
   final AppLinks _links = AppLinks();

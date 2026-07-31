@@ -64,6 +64,7 @@ class _GymDiscoveryScreenState extends State<GymDiscoveryScreen> {
           children: [
             Expanded(
               child: TextField(
+                key: const Key('gym-search-field'),
                 controller: _search,
                 textInputAction: TextInputAction.search,
                 onSubmitted: (_) => _load(),
@@ -75,6 +76,7 @@ class _GymDiscoveryScreenState extends State<GymDiscoveryScreen> {
             ),
             const SizedBox(width: 10),
             IconButton.filledTonal(
+              key: const Key('gym-search-submit'),
               tooltip: 'Primijeni pretragu',
               onPressed: _load,
               icon: const Icon(Icons.tune),
@@ -149,17 +151,25 @@ class _GymDiscoveryScreenState extends State<GymDiscoveryScreen> {
   );
 }
 
-class _GymMap extends StatelessWidget {
+class _GymMap extends StatefulWidget {
   const _GymMap({required this.gyms, required this.onOpen});
   final List<Map<String, dynamic>> gyms;
   final ValueChanged<Map<String, dynamic>> onOpen;
 
   @override
-  Widget build(BuildContext context) {
-    final valid = gyms
-        .where((gym) => gym['latitude'] is num && gym['longitude'] is num)
-        .toList();
-    final center = valid.isEmpty
+  State<_GymMap> createState() => _GymMapState();
+}
+
+class _GymMapState extends State<_GymMap> {
+  final _mapController = MapController();
+
+  List<Map<String, dynamic>> get _validGyms => widget.gyms
+      .where((gym) => gym['latitude'] is num && gym['longitude'] is num)
+      .toList();
+
+  LatLng get _resultCenter {
+    final valid = _validGyms;
+    return valid.isEmpty
         ? const LatLng(43.8563, 18.4131)
         : LatLng(
             valid
@@ -171,14 +181,67 @@ class _GymMap extends StatelessWidget {
                     .reduce((a, b) => a + b) /
                 valid.length,
           );
+  }
+
+  @override
+  void didUpdateWidget(covariant _GymMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.gyms, widget.gyms)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _centerMap();
+    });
+  }
+
+  @override
+  void dispose() {
+    _mapController.dispose();
+    super.dispose();
+  }
+
+  void _changeZoom(double delta) {
+    final camera = _mapController.camera;
+    _mapController.move(camera.center, (camera.zoom + delta).clamp(6.0, 19.0));
+  }
+
+  void _centerMap() => _mapController.move(_resultCenter, 13);
+
+  Widget _mapControlButton({
+    required Key key,
+    required String tooltip,
+    required VoidCallback onPressed,
+    required IconData icon,
+  }) => SizedBox.square(
+    dimension: 40,
+    child: IconButton(
+      key: key,
+      tooltip: tooltip,
+      padding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+      iconSize: 20,
+      onPressed: onPressed,
+      icon: Icon(icon),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final valid = _validGyms;
     return SizedBox(
+      key: const Key('gym-discovery-map'),
       height: 560,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(18),
         child: Stack(
           children: [
             FlutterMap(
-              options: MapOptions(initialCenter: center, initialZoom: 13),
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: _resultCenter,
+                initialZoom: 13,
+                minZoom: 6,
+                maxZoom: 19,
+              ),
               children: [
                 TileLayer(
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -195,10 +258,11 @@ class _GymMap extends StatelessWidget {
                           width: 62,
                           height: 62,
                           child: Semantics(
+                            key: Key('gym-map-marker-${gym['id']}'),
                             button: true,
                             label: gym['name'].toString(),
                             child: GestureDetector(
-                              onTap: () => onOpen(gym),
+                              onTap: () => widget.onOpen(gym),
                               child: Container(
                                 decoration: BoxDecoration(
                                   color: Colors.white,
@@ -226,6 +290,48 @@ class _GymMap extends StatelessWidget {
                       .toList(),
                 ),
               ],
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Material(
+                key: const Key('gym-discovery-map-controls'),
+                color: Colors.white.withValues(alpha: 0.94),
+                elevation: 2,
+                borderRadius: BorderRadius.circular(6),
+                clipBehavior: Clip.antiAlias,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _mapControlButton(
+                      key: const Key('gym-discovery-map-zoom-in'),
+                      tooltip: 'Uvećaj mapu',
+                      onPressed: () => _changeZoom(1),
+                      icon: Icons.add,
+                    ),
+                    const SizedBox(
+                      height: 22,
+                      child: VerticalDivider(width: 1),
+                    ),
+                    _mapControlButton(
+                      key: const Key('gym-discovery-map-zoom-out'),
+                      tooltip: 'Umanji mapu',
+                      onPressed: () => _changeZoom(-1),
+                      icon: Icons.remove,
+                    ),
+                    const SizedBox(
+                      height: 22,
+                      child: VerticalDivider(width: 1),
+                    ),
+                    _mapControlButton(
+                      key: const Key('gym-discovery-map-center'),
+                      tooltip: 'Centriraj mapu',
+                      onPressed: _centerMap,
+                      icon: Icons.center_focus_strong,
+                    ),
+                  ],
+                ),
+              ),
             ),
             const Positioned(
               right: 8,
@@ -735,17 +841,10 @@ class _BookingScreenState extends State<BookingScreen> {
       }
       if (mounted) {
         context.read<ReservationRefreshController>().refresh();
-        final messenger = ScaffoldMessenger.of(context);
-        Navigator.pop(context, reservation);
         if (paymentMethod == ReservationPaymentMethod.payInPerson) {
-          messenger.showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Termin je potvrđen. Plaćanje se vrši uživo na treningu.',
-              ),
-            ),
-          );
+          await showPayInPersonReservationSuccess(context);
         }
+        if (mounted) Navigator.pop(context, reservation);
       }
     } on ApiProblem catch (error) {
       if (error.status == 409) {

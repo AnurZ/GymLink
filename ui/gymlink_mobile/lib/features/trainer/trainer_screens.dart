@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
+import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../chat/chat_screens.dart';
 import '../reservations/reservation_refresh_controller.dart';
@@ -324,10 +325,29 @@ class _TrainerAvailabilityScreenState extends State<TrainerAvailabilityScreen> {
     'Nedjelja',
   ];
   final Set<(int, int)> _selected = {};
+  final Set<(int, int)> _savedSelection = {};
   String? _concurrencyToken;
   bool _loading = true;
   bool _saving = false;
   Object? _error;
+
+  bool get _hasUnsavedChanges =>
+      _selected.length != _savedSelection.length ||
+      !_selected.containsAll(_savedSelection);
+
+  int get _activeDays => _selected.map((item) => item.$1).toSet().length;
+
+  String get _activeDaysLabel => switch (_activeDays) {
+    1 => '1 aktivan dan',
+    2 || 3 || 4 => '$_activeDays aktivna dana',
+    _ => '$_activeDays aktivnih dana',
+  };
+
+  String get _selectedShiftsLabel => switch (_selected.length) {
+    1 => '1 odabrana smjena',
+    2 || 3 || 4 => '${_selected.length} odabrane smjene',
+    _ => '${_selected.length} odabranih smjena',
+  };
 
   @override
   void initState() {
@@ -335,7 +355,8 @@ class _TrainerAvailabilityScreenState extends State<TrainerAvailabilityScreen> {
     _load();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool preserveEdits = false}) async {
+    final edits = Set<(int, int)>.of(_selected);
     setState(() {
       _loading = true;
       _error = null;
@@ -349,16 +370,13 @@ class _TrainerAvailabilityScreenState extends State<TrainerAvailabilityScreen> {
             as Map,
       );
       _concurrencyToken = schedule['concurrencyToken']?.toString();
+      final serverSelection = _selectionFrom(schedule);
+      _savedSelection
+        ..clear()
+        ..addAll(serverSelection);
       _selected
         ..clear()
-        ..addAll(
-          (schedule['shifts'] as List? ?? const []).whereType<Map>().map(
-            (item) => (
-              (item['dayOfWeek'] as num).toInt(),
-              (item['period'] as num).toInt(),
-            ),
-          ),
-        );
+        ..addAll(preserveEdits ? edits : serverSelection);
     } catch (error) {
       _error = error;
     } finally {
@@ -367,6 +385,13 @@ class _TrainerAvailabilityScreenState extends State<TrainerAvailabilityScreen> {
   }
 
   Future<void> _save() async {
+    if (!_hasUnsavedChanges || _saving) return;
+    final submitted = Set<(int, int)>.of(_selected);
+    final shifts = submitted.toList()
+      ..sort((left, right) {
+        final dayComparison = left.$1.compareTo(right.$1);
+        return dayComparison != 0 ? dayComparison : left.$2.compareTo(right.$2);
+      });
     setState(() => _saving = true);
     try {
       final schedule = Map<String, dynamic>.from(
@@ -374,7 +399,7 @@ class _TrainerAvailabilityScreenState extends State<TrainerAvailabilityScreen> {
               '/api/tenant/trainer-availability/schedule',
               body: {
                 'trainerProfileId': _emptyGuid,
-                'shifts': _selected
+                'shifts': shifts
                     .map((item) => {'dayOfWeek': item.$1, 'period': item.$2})
                     .toList(),
                 'concurrencyToken': _concurrencyToken,
@@ -383,102 +408,342 @@ class _TrainerAvailabilityScreenState extends State<TrainerAvailabilityScreen> {
             as Map,
       );
       _concurrencyToken = schedule['concurrencyToken']?.toString();
+      final savedSelection = schedule['shifts'] is List
+          ? _selectionFrom(schedule)
+          : submitted;
+      _savedSelection
+        ..clear()
+        ..addAll(savedSelection);
+      _selected
+        ..clear()
+        ..addAll(savedSelection);
       if (mounted) {
+        setState(() {});
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Sedmični raspored je sačuvan.')),
         );
       }
     } on ApiProblem catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+      if (error.status == 409) {
+        await _load(preserveEdits: true);
       }
-      if (error.status == 409) await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error.status == 409
+                  ? '${error.message} Vaše izmjene su zadržane; pregledajte ih i pokušajte ponovo.'
+                  : error.message,
+            ),
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
+  Future<void> _refresh() async {
+    if (_hasUnsavedChanges &&
+        !await confirmAction(
+          context,
+          title: 'Odbaciti izmjene?',
+          message: 'Nesačuvane izmjene rasporeda će biti izgubljene.',
+          action: 'Odbaci',
+        )) {
+      return;
+    }
+    await _load();
+  }
+
   @override
-  Widget build(BuildContext context) => RefreshIndicator(
-    onRefresh: _load,
-    child: ListView(
+  Widget build(BuildContext context) => Column(
+    children: [
+      Expanded(
+        child: RefreshIndicator(
+          onRefresh: _refresh,
+          child: ListView(
+            key: const Key('trainer-availability-scroll'),
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            children: [
+              AsyncPanel(
+                loading: _loading,
+                error: _error,
+                onRetry: _load,
+                child: Column(
+                  children: [
+                    _summaryCard(context),
+                    const SizedBox(height: 12),
+                    _weekEditor(context),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      _saveBar(context),
+    ],
+  );
+
+  Widget _summaryCard(BuildContext context) => Card(
+    child: Padding(
       padding: const EdgeInsets.all(16),
-      children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(18),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: GymLinkColors.blue.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: const Icon(
+              Icons.calendar_month_outlined,
+              color: GymLinkColors.blue,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Sedmične smjene',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                  'Sedmični raspored',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Raspored se ponavlja u vremenskoj zoni Sarajevo, a termini su dostupni osam sedmica unaprijed.',
+                const SizedBox(height: 3),
+                Text(
+                  _selected.isEmpty
+                      ? 'Nema odabranih smjena'
+                      : '$_activeDaysLabel · $_selectedShiftsLabel',
+                  key: const Key('availability-summary-count'),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  'Europe/Sarajevo · termini 8 sedmica unaprijed',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 14),
-        AsyncPanel(
-          loading: _loading,
-          error: _error,
-          onRetry: _load,
-          child: Column(
+        ],
+      ),
+    ),
+  );
+
+  Widget _weekEditor(BuildContext context) => Card(
+    child: Column(
+      children: [
+        for (var index = 0; index < _days.length; index++) ...[
+          _dayRow(context, index),
+          if (index != _days.length - 1) const Divider(height: 1),
+        ],
+      ],
+    ),
+  );
+
+  Widget _dayRow(BuildContext context, int index) {
+    final day = (index + 1) % 7;
+    return Padding(
+      key: Key('availability-day-$day'),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${_days[index]} - ${DateFormat('dd.MM.').format(_nextOccurrence(day))}',
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 9),
+          Row(
             children: [
-              for (var index = 0; index < _days.length; index++)
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _days[index],
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        CheckboxListTile(
-                          contentPadding: EdgeInsets.zero,
-                          value: _selected.contains(((index + 1) % 7, 0)),
-                          onChanged: (value) =>
-                              _toggle((index + 1) % 7, 0, value ?? false),
-                          title: const Text('Smjena 1 · 08:00–15:00'),
-                        ),
-                        CheckboxListTile(
-                          contentPadding: EdgeInsets.zero,
-                          value: _selected.contains(((index + 1) % 7, 1)),
-                          onChanged: (value) =>
-                              _toggle((index + 1) % 7, 1, value ?? false),
-                          title: const Text('Smjena 2 · 15:00–22:00'),
-                        ),
-                      ],
+              Expanded(
+                child: _shiftToggle(
+                  context,
+                  day: day,
+                  period: 0,
+                  label: 'Jutarnja',
+                  time: '08:00–15:00',
+                  icon: Icons.light_mode_outlined,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _shiftToggle(
+                  context,
+                  day: day,
+                  period: 1,
+                  label: 'Večernja',
+                  time: '15:00–22:00',
+                  icon: Icons.dark_mode_outlined,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _shiftToggle(
+    BuildContext context, {
+    required int day,
+    required int period,
+    required String label,
+    required String time,
+    required IconData icon,
+  }) {
+    final selected = _selected.contains((day, period));
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '$label smjena $time',
+      child: InkWell(
+        key: Key('availability-shift-$day-$period'),
+        onTap: _saving ? null : () => _toggle(day, period, !selected),
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          decoration: BoxDecoration(
+            color: selected
+                ? colors.primaryContainer
+                : colors.surfaceContainerHighest.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? colors.primary : Colors.transparent,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                selected ? Icons.check_circle : icon,
+                size: 18,
+                color: selected ? colors.primary : colors.onSurfaceVariant,
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
+                    Text(
+                      time,
+                      maxLines: 1,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _saveBar(BuildContext context) => Material(
+    color: Colors.white,
+    elevation: 8,
+    child: SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  _hasUnsavedChanges
+                      ? Icons.edit_calendar_outlined
+                      : Icons.check_circle_outline,
+                  size: 18,
+                  color: _hasUnsavedChanges
+                      ? Theme.of(context).colorScheme.primary
+                      : GymLinkColors.success,
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    _hasUnsavedChanges
+                        ? 'Nesačuvane izmjene'
+                        : 'Raspored je sačuvan',
+                    key: const Key('availability-save-state'),
+                    style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
-              const SizedBox(height: 10),
-              FilledButton.icon(
-                onPressed: _saving ? null : _save,
+                if (_hasUnsavedChanges)
+                  TextButton(
+                    key: const Key('availability-reset'),
+                    onPressed: _saving ? null : _reset,
+                    child: const Text('Poništi'),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                key: const Key('availability-save'),
+                onPressed:
+                    _loading || _error != null || !_hasUnsavedChanges || _saving
+                    ? null
+                    : _save,
                 icon: _saving
                     ? const SizedBox.square(
                         dimension: 18,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.save_outlined),
-                label: const Text('Sačuvaj raspored'),
+                label: Text(_saving ? 'Čuvanje…' : 'Sačuvaj raspored'),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
-      ],
+      ),
     ),
   );
+
+  Set<(int, int)> _selectionFrom(Map<String, dynamic> schedule) =>
+      (schedule['shifts'] as List? ?? const [])
+          .whereType<Map>()
+          .map(
+            (item) => (
+              (item['dayOfWeek'] as num).toInt(),
+              (item['period'] as num).toInt(),
+            ),
+          )
+          .toSet();
+
+  DateTime _nextOccurrence(int day) {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final weekday = day == 0 ? DateTime.sunday : day;
+    final daysUntil = (weekday - today.weekday + 7) % 7;
+    return today.add(Duration(days: daysUntil));
+  }
+
+  void _reset() {
+    setState(() {
+      _selected
+        ..clear()
+        ..addAll(_savedSelection);
+    });
+  }
 
   void _toggle(int day, int period, bool selected) {
     setState(() {

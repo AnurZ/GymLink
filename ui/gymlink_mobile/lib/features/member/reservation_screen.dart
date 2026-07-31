@@ -190,7 +190,8 @@ class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
     if (!await confirmAction(
       context,
       title: 'Otkaži rezervaciju',
-      message: 'Termin će ponovo postati dostupan.',
+      message:
+          'Rezervacija će biti otkazana. Ovu radnju nije moguće poništiti.',
       action: 'Otkaži',
     )) {
       return;
