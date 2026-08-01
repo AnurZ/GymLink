@@ -57,6 +57,9 @@ Seed__Enabled=true
 ```
 
 The seed is idempotent and runs only in `Development`. Startup rejects development seeding in every other environment.
+Each of the six evaluation gyms has two ordered Unsplash stock-photo URLs; the
+first is the primary cover. These development-only external images are not
+downloaded into application storage.
 
 ## Start the API
 
@@ -207,7 +210,8 @@ Monday–Friday.
 
 The stable seeded workflow contains:
 
-- 23 accounts, 6 gyms, 30 active user/gym assignments, 42 working-hour rows,
+- 23 accounts, 6 gyms with 12 ordered gallery images, 30 active user/gym
+  assignments, 42 working-hour rows,
   12 plans, 12 trainer schedules, 120 recurring shifts, and 36 trainer offerings.
 - 12 approved membership requests, 12 paid active 90-day memberships, and 12
   corresponding Member tenant assignments.

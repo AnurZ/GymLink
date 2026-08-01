@@ -462,30 +462,30 @@ internal sealed class DevelopmentDataSeeder(
         gym.PhoneNumber = definition.PhoneNumber;
         gym.IsPubliclyVisible = true;
 
-        var image = await dbContext.GymImages.IgnoreQueryFilters()
-            .Where(x => x.GymId == gym.Id && x.StorageKey.StartsWith("seed/"))
-            .OrderBy(x => x.SortOrder)
-            .FirstOrDefaultAsync(cancellationToken);
-        if (image is null && !await dbContext.GymImages.IgnoreQueryFilters()
-                .AnyAsync(x => x.GymId == gym.Id, cancellationToken))
+        for (var index = 0; index < definition.ImageUrls.Length; index++)
         {
-            image = new GymImage
+            var storageKey = index == 0
+                ? $"seed/{definition.Slug}/primary"
+                : $"seed/{definition.Slug}/gallery-{index + 1}";
+            var image = await dbContext.GymImages.IgnoreQueryFilters()
+                .SingleOrDefaultAsync(
+                    x => x.GymId == gym.Id && x.StorageKey == storageKey,
+                    cancellationToken);
+            if (image is null)
             {
-                TenantId = tenantId,
-                GymId = gym.Id,
-                StorageKey = $"seed/{definition.Slug}/primary",
-                SortOrder = 0,
-                IsPrimary = true,
-            };
-            dbContext.GymImages.Add(image);
-        }
+                image = new GymImage
+                {
+                    TenantId = tenantId,
+                    GymId = gym.Id,
+                    StorageKey = storageKey,
+                };
+                dbContext.GymImages.Add(image);
+            }
 
-        if (image is not null)
-        {
-            image.PublicUrl = definition.ImageUrl;
-            image.AltText = definition.Name;
-            image.SortOrder = 0;
-            image.IsPrimary = true;
+            image.PublicUrl = definition.ImageUrls[index];
+            image.AltText = $"{definition.Name} - fotografija {index + 1}";
+            image.SortOrder = index;
+            image.IsPrimary = index == 0;
         }
 
         return gym;

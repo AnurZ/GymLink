@@ -290,6 +290,7 @@ public sealed class SeededIdentityApiTests
                 .CountAsync(x => x.Status == ReservationStatus.Confirmed));
             Assert.Equal(24, await verificationContext.Reviews.IgnoreQueryFilters().CountAsync());
             Assert.Equal(12, await verificationContext.GymReviews.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(12, await verificationContext.GymImages.IgnoreQueryFilters().CountAsync());
             Assert.Equal(8, await verificationContext.UserPreferences.CountAsync());
             Assert.Equal(184, await verificationContext.ActivityHistory.CountAsync());
             Assert.Equal(72, await verificationContext.Recommendations.CountAsync());
@@ -340,7 +341,20 @@ public sealed class SeededIdentityApiTests
                 Assert.Contains(tenants, tenant =>
                     tenant.Id == gym.TenantId && tenant.Status == TenantStatus.Active);
                 Assert.Equal(7, hours.Count(x => x.GymId == gym.Id));
-                Assert.Single(images, x => x.GymId == gym.Id && x.IsPrimary);
+                var gymImages = images
+                    .Where(x => x.GymId == gym.Id)
+                    .OrderBy(x => x.SortOrder)
+                    .ToList();
+                Assert.Equal(2, gymImages.Count);
+                Assert.True(gymImages[0].IsPrimary);
+                Assert.False(gymImages[1].IsPrimary);
+                Assert.Equal([0, 1], gymImages.Select(x => x.SortOrder).ToArray());
+                Assert.All(gymImages, image =>
+                    Assert.StartsWith(
+                        "https://images.unsplash.com/",
+                        image.PublicUrl,
+                        StringComparison.Ordinal));
+                Assert.Equal(2, gymImages.Select(x => x.PublicUrl).Distinct().Count());
                 Assert.Equal(2, plans.Count(x => x.TenantId == gym.TenantId && x.IsActive));
                 Assert.Contains(gymEquipment, x =>
                     x.GymId == gym.Id && x.Quantity > 0 && !string.IsNullOrWhiteSpace(x.Notes));

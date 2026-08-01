@@ -44,9 +44,14 @@ public sealed class Phase94GymImageGalleryApiTests
 
             Authorize(client, admin);
             var initial = await GetGalleryAsync(client);
-            var external = Assert.Single(initial.Images);
+            Assert.Equal(2, initial.Images.Count);
+            var external = initial.Images[0];
             Assert.Null(external.ContentType);
             Assert.True(external.IsPrimary);
+            Assert.False(initial.Images[1].IsPrimary);
+            initial = await RemoveAsync(client, initial.Images[1]);
+            Assert.Single(initial.Images);
+            external = initial.Images[0];
 
             var maximumJpeg = JpegBytes(5 * 1024 * 1024);
             var gallery = await UploadAsync(
@@ -263,7 +268,7 @@ public sealed class Phase94GymImageGalleryApiTests
                 .ToListAsync();
             Assert.Contains("gym_image.replaced", actions);
             Assert.Equal(4, actions.Count(x => x == "gym_image.uploaded"));
-            Assert.Equal(5, actions.Count(x => x == "gym_image.removed"));
+            Assert.Equal(6, actions.Count(x => x == "gym_image.removed"));
             Assert.Contains("gym_image.reordered", actions);
             Assert.Contains("gym_image.primary_changed", actions);
         }
