@@ -36,10 +36,10 @@ public sealed class Phase94GymImageGalleryApiTests
 
             await using var factory = CreateFactory(connectionString, storageRoot);
             using var client = factory.CreateClient();
-            var admin = await LoginAsync(client, "desktop");
-            var otherAdmin = await LoginAsync(client, "gymadmin");
-            var member = await LoginAsync(client, "member");
-            var trainer = await LoginAsync(client, "trainer");
+            var admin = await LoginAsync(client, "admin.respect");
+            var otherAdmin = await LoginAsync(client, "admin.arena");
+            var member = await LoginAsync(client, "mobile2");
+            var trainer = await LoginAsync(client, "respecttrainer1");
             var centralAdmin = await LoginAsync(client, "centraladmin");
 
             Authorize(client, admin);
@@ -256,7 +256,7 @@ public sealed class Phase94GymImageGalleryApiTests
 
             await using var verification = CreateContext(connectionString);
             var gym = await verification.Gyms.IgnoreQueryFilters()
-                .SingleAsync(x => x.Name == "GymLink Sarajevo");
+                .SingleAsync(x => x.Name == "Sportska Akademija Respect");
             var actions = await verification.SecurityAuditRecords
                 .Where(x => x.TargetId == gym.Id && x.Action.StartsWith("gym_image."))
                 .Select(x => x.Action)

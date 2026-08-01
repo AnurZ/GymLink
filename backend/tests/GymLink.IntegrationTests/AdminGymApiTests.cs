@@ -41,9 +41,9 @@ public sealed class AdminGymApiTests
             await using var factory = CreateFactory(connectionString);
             using var client = factory.CreateClient();
             Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+            var member = await RegisterAsync(client, "Role Test Member");
+            var secondMember = await RegisterAsync(client, "Secondary Candidate");
             var centralAdmin = await LoginAsync(client, "centraladmin");
-            var member = await LoginAsync(client, "member");
-            var secondMember = await LoginAsync(client, "mobile");
 
             Authorize(client, centralAdmin);
             var countries = await client.GetFromJsonAsync<PagedResult<CountryDto>>(
@@ -194,8 +194,10 @@ public sealed class AdminGymApiTests
 
             await using var factory = CreateFactory(connectionString);
             using var setupClient = factory.CreateClient();
+            var firstCandidate = await RegisterAsync(
+                setupClient,
+                "Concurrent Gym Candidate");
             var centralAdmin = await LoginAsync(setupClient, "centraladmin");
-            var firstCandidate = await LoginAsync(setupClient, "member");
             Authorize(setupClient, centralAdmin);
 
             var countries = await setupClient.GetFromJsonAsync<PagedResult<CountryDto>>(
@@ -388,7 +390,7 @@ public sealed class AdminGymApiTests
             await using var factory = CreateFactory(connectionString, handler);
             using var client = factory.CreateClient();
             var centralAdmin = await LoginAsync(client, "centraladmin");
-            var member = await LoginAsync(client, "member");
+            var member = await LoginAsync(client, "mobile2");
 
             Authorize(client, member);
             Assert.Equal(
@@ -466,7 +468,7 @@ public sealed class AdminGymApiTests
             await using var factory = CreateFactory(connectionString, handler);
             using var client = factory.CreateClient();
             var centralAdmin = await LoginAsync(client, "centraladmin");
-            var member = await LoginAsync(client, "member");
+            var member = await LoginAsync(client, "mobile2");
 
             Authorize(client, member);
             Assert.Equal(
@@ -605,6 +607,26 @@ public sealed class AdminGymApiTests
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<AuthSessionDto>()
             ?? throw new InvalidOperationException("Login returned no session.");
+    }
+
+    private static async Task<AuthSessionDto> RegisterAsync(
+        HttpClient client,
+        string displayName)
+    {
+        client.DefaultRequestHeaders.Authorization = null;
+        var suffix = Guid.NewGuid().ToString("N");
+        var response = await client.PostAsJsonAsync(
+            "/api/auth/register",
+            new
+            {
+                username = $"admin-gym-{suffix}",
+                email = $"admin-gym-{suffix}@gymlink.local",
+                displayName,
+                password = Password,
+            });
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<AuthSessionDto>()
+            ?? throw new InvalidOperationException("Registration returned no session.");
     }
 
     private static void Authorize(HttpClient client, AuthSessionDto session) =>

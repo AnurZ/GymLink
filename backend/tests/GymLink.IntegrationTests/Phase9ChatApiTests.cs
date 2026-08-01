@@ -45,10 +45,10 @@ public sealed class Phase9ChatApiTests
 
             await using var factory = CreateFactory(connectionString);
             using var client = factory.CreateClient();
-            var member = await LoginAsync(client, "member");
-            var trainer = await LoginAsync(client, "trainer");
-            var nonParticipant = await LoginAsync(client, "mobile");
-            var admin = await LoginAsync(client, "desktop");
+            var member = await LoginAsync(client, "mobile2");
+            var trainer = await LoginAsync(client, "respecttrainer1");
+            var nonParticipant = await LoginAsync(client, "mobile1");
+            var admin = await LoginAsync(client, "admin.respect");
             var reservationId = await SeedReservationAsync(
                 connectionString,
                 member.User.Id,
@@ -350,7 +350,7 @@ public sealed class Phase9ChatApiTests
             await using var factory = CreateFactory(connectionString);
             using var firstClient = factory.CreateClient();
             using var secondClient = factory.CreateClient();
-            var trainer = await LoginAsync(firstClient, "trainer");
+            var trainer = await LoginAsync(firstClient, "respecttrainer1");
             var member = await RegisterAsync(firstClient);
             var firstReservationId = await SeedReservationAsync(
                 connectionString,
@@ -364,8 +364,8 @@ public sealed class Phase9ChatApiTests
                 trainer.User.Id,
                 confirmed: false,
                 startInDays: 5);
-            var firstAdmin = await LoginAsync(firstClient, "desktop");
-            var secondAdmin = await LoginAsync(secondClient, "desktop");
+            var firstAdmin = await LoginAsync(firstClient, "admin.respect");
+            var secondAdmin = await LoginAsync(secondClient, "admin.respect");
             Authorize(firstClient, firstAdmin);
             Authorize(secondClient, secondAdmin);
             var firstReservation = await firstClient

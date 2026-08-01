@@ -37,18 +37,18 @@ public sealed class Phase7NotificationApiTests
 
             await using var factory = CreateFactory(connectionString);
             using var client = factory.CreateClient();
-            var member = await LoginAsync(client, "member", OriginalPassword);
-            var mobile = await LoginAsync(client, "mobile", OriginalPassword);
+            var member = await LoginAsync(client, "mobile2", OriginalPassword);
+            var mobile = await LoginAsync(client, "mobile1", OriginalPassword);
             Guid memberId;
             Guid mobileId;
             await using (var seeded = CreateContext(connectionString))
             {
                 memberId = await seeded.Set<GymLinkIdentityUser>()
-                    .Where(x => x.UserName == "member")
+                    .Where(x => x.UserName == "mobile2")
                     .Select(x => x.Id)
                     .SingleAsync();
                 mobileId = await seeded.Set<GymLinkIdentityUser>()
-                    .Where(x => x.UserName == "mobile")
+                    .Where(x => x.UserName == "mobile1")
                     .Select(x => x.Id)
                     .SingleAsync();
                 Assert.True(await seeded.UserProfiles.AnyAsync(
@@ -87,8 +87,8 @@ public sealed class Phase7NotificationApiTests
                 HttpStatusCode.Unauthorized,
                 (await client.PostAsJsonAsync(
                     "/api/auth/login",
-                    new { identifier = "member", password = OriginalPassword })).StatusCode);
-            member = await LoginAsync(client, "member", NewPassword);
+                    new { identifier = "mobile2", password = OriginalPassword })).StatusCode);
+            member = await LoginAsync(client, "mobile2", NewPassword);
 
             Guid memberNotificationId;
             Guid mobileNotificationId;

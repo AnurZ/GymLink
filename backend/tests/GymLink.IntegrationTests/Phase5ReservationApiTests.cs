@@ -41,26 +41,49 @@ public sealed class Phase5ReservationApiTests
             await using var factory = CreateFactory(connectionString);
             using var setupClient = factory.CreateClient();
             Assert.Equal(HttpStatusCode.OK, (await setupClient.GetAsync("/health")).StatusCode);
-            var member = await LoginAsync(setupClient, "member");
-            var secondMember = await LoginAsync(setupClient, "mobile");
-            var admin = await LoginAsync(setupClient, "desktop");
-            var otherAdmin = await LoginAsync(setupClient, "gymadmin");
-            var trainerSession = await LoginAsync(setupClient, "trainer");
+            var member = await RegisterAsync(setupClient, "Reservation Test Member");
+            var secondMember = await RegisterAsync(setupClient, "Second Reservation Member");
+            var admin = await LoginAsync(setupClient, "admin.respect");
+            var otherAdmin = await LoginAsync(setupClient, "admin.arena");
+            var trainerSession = await LoginAsync(setupClient, "respecttrainer1");
 
-            var gymId = await FindGymAsync(setupClient, "GymLink Sarajevo");
+            var gymId = await FindGymAsync(setupClient, "Sportska Akademija Respect");
             var plans = await setupClient.GetFromJsonAsync<IReadOnlyList<MembershipPlanDto>>(
                 $"/api/gyms/{gymId}/membership-plans");
             var trainers = await setupClient.GetFromJsonAsync<IReadOnlyList<TrainerDto>>(
                 $"/api/gyms/{gymId}/trainers");
             Assert.NotNull(plans);
             Assert.NotNull(trainers);
-            var trainer = Assert.Single(trainers);
+            var trainer = Assert.Single(trainers, x => x.DisplayName == "Emir Hadžić");
             var offerings = await setupClient.GetFromJsonAsync<IReadOnlyList<TrainerOfferingDto>>(
                 $"/api/trainers/{trainer.Id}/offerings");
-            var offering = Assert.Single(offerings!);
+            var offering = Assert.Single(
+                offerings!,
+                x => x.Name == "Personalni trening 60 min");
+            var plan = Assert.Single(plans, x => x.Name == "Mjesečna članarina");
 
-            await ActivateMembershipAsync(setupClient, member, admin, Assert.Single(plans).Id);
-            await ActivateMembershipAsync(setupClient, secondMember, admin, Assert.Single(plans).Id);
+            await ActivateMembershipAsync(setupClient, member, admin, plan.Id);
+            await ActivateMembershipAsync(setupClient, secondMember, admin, plan.Id);
+
+            decimal initialGymRating;
+            int initialGymReviewCount;
+            decimal initialTrainerRating;
+            int initialTrainerReviewCount;
+            await using (var baseline = CreateContext(connectionString))
+            {
+                var gymBaseline = await baseline.Gyms.IgnoreQueryFilters()
+                    .Where(x => x.Id == gymId)
+                    .Select(x => new { x.AverageRating, x.ReviewCount })
+                    .SingleAsync();
+                initialGymRating = gymBaseline.AverageRating;
+                initialGymReviewCount = gymBaseline.ReviewCount;
+                var trainerBaseline = await baseline.TrainerProfiles.IgnoreQueryFilters()
+                    .Where(x => x.Id == trainer.Id)
+                    .Select(x => new { x.AverageRating, x.ReviewCount })
+                    .SingleAsync();
+                initialTrainerRating = trainerBaseline.AverageRating;
+                initialTrainerReviewCount = trainerBaseline.ReviewCount;
+            }
 
             var timeZone = TimeZoneInfo.FindSystemTimeZoneById(
                 TrainerAvailabilitySchedule.SarajevoTimeZoneId);
@@ -70,6 +93,9 @@ public sealed class Phase5ReservationApiTests
                 DateTimeKind.Unspecified);
             var start = TimeZoneInfo.ConvertTimeToUtc(localDay, timeZone);
             Authorize(setupClient, admin);
+            var existingSchedule = await setupClient.GetFromJsonAsync<TrainerScheduleDto>(
+                $"/api/tenant/trainer-availability/schedule?trainerProfileId={trainer.Id}");
+            Assert.NotNull(existingSchedule);
             var scheduleResponse = await setupClient.PutAsJsonAsync(
                 "/api/tenant/trainer-availability/schedule",
                 new
@@ -83,7 +109,7 @@ public sealed class Phase5ReservationApiTests
                             period = (int)TrainerShiftPeriod.Morning,
                         },
                     },
-                    concurrencyToken = (string?)null,
+                    concurrencyToken = existingSchedule.ConcurrencyToken,
                 });
             scheduleResponse.EnsureSuccessStatusCode();
             var schedule = await scheduleResponse.Content.ReadFromJsonAsync<TrainerScheduleDto>();
@@ -528,8 +554,14 @@ public sealed class Phase5ReservationApiTests
             var ratedGym = await setupClient.GetFromJsonAsync<GymDetailsDto>(
                 $"/api/gyms/{gymId}");
             Assert.NotNull(ratedGym);
-            Assert.Equal(5, ratedGym.AverageRating);
-            Assert.Equal(1, ratedGym.ReviewCount);
+            Assert.Equal(
+                decimal.Round(
+                    ((initialGymRating * initialGymReviewCount) + 5) /
+                    (initialGymReviewCount + 1),
+                    2,
+                    MidpointRounding.AwayFromZero),
+                ratedGym.AverageRating);
+            Assert.Equal(initialGymReviewCount + 1, ratedGym.ReviewCount);
 
             await using var verification = CreateContext(connectionString);
             Assert.Single(await verification.AppointmentReservations.IgnoreQueryFilters()
@@ -538,13 +570,20 @@ public sealed class Phase5ReservationApiTests
             Assert.True(await verification.SecurityAuditRecords.AnyAsync(
                 x => x.Action == "availability.schedule.replaced" &&
                      x.TargetTenantId == admin.User.Tenant!.Id));
-            Assert.Single(await verification.GymReviews.IgnoreQueryFilters()
-                .Where(x => x.GymId == gymId)
-                .ToListAsync());
+            Assert.Equal(
+                initialGymReviewCount + 1,
+                await verification.GymReviews.IgnoreQueryFilters()
+                    .CountAsync(x => x.GymId == gymId));
             var ratedTrainer = await verification.TrainerProfiles.IgnoreQueryFilters()
                 .SingleAsync(x => x.Id == trainer.Id);
-            Assert.Equal(4, ratedTrainer.AverageRating);
-            Assert.Equal(1, ratedTrainer.ReviewCount);
+            Assert.Equal(
+                decimal.Round(
+                    ((initialTrainerRating * initialTrainerReviewCount) + 4) /
+                    (initialTrainerReviewCount + 1),
+                    2,
+                    MidpointRounding.AwayFromZero),
+                ratedTrainer.AverageRating);
+            Assert.Equal(initialTrainerReviewCount + 1, ratedTrainer.ReviewCount);
             Assert.Single(await verification.Reviews.IgnoreQueryFilters()
                 .Where(x => x.ReservationId == reservation.Id)
                 .ToListAsync());
@@ -616,6 +655,26 @@ public sealed class Phase5ReservationApiTests
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<AuthSessionDto>()
             ?? throw new InvalidOperationException("Login returned no session.");
+    }
+
+    private static async Task<AuthSessionDto> RegisterAsync(
+        HttpClient client,
+        string displayName)
+    {
+        client.DefaultRequestHeaders.Authorization = null;
+        var suffix = Guid.NewGuid().ToString("N");
+        var response = await client.PostAsJsonAsync(
+            "/api/auth/register",
+            new
+            {
+                username = $"reservation-{suffix}",
+                email = $"reservation-{suffix}@gymlink.local",
+                displayName,
+                password = Password,
+            });
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<AuthSessionDto>()
+            ?? throw new InvalidOperationException("Registration returned no session.");
     }
 
     private static void Authorize(HttpClient client, AuthSessionDto session) =>

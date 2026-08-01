@@ -148,27 +148,82 @@ through `launchSettings.json`.
 
 ## Evaluation credentials
 
-These credentials are intentionally public development/evaluation fixtures. They must never be enabled or reused in a production deployment.
+The development seed is enabled only when the environment is `Development` and
+`Seed__Enabled=true`. It is idempotent, so restarting the API converges the same
+semantic records instead of duplicating them. Every account below uses the shared
+development password `Test123!`; login accepts either username or email.
 
-| Context | Username | Password |
-|---|---|---|
-| Desktop version | `desktop` | `Test123!` |
-| Mobile version | `mobile` | `Test123!` |
-| Multiple user roles | Use the role account below | `Test123!` |
-
-### Role accounts
+### Accounts
 
 | Username | Email | Role | Gym assignment | Password |
 |---|---|---|---|---|
 | `centraladmin` | `centraladmin@gymlink.local` | CentralAdmin | None | `Test123!` |
-| `desktop` | `desktop@gymlink.local` | GymAdmin | GymLink Sarajevo | `Test123!` |
-| `gymadmin` | `gymadmin@gymlink.local` | GymAdmin | GymLink Mostar | `Test123!` |
-| `trainer` | `trainer@gymlink.local` | Trainer | GymLink Sarajevo | `Test123!` |
-| `trainer2` | `trainer2@gymlink.local` | Trainer | GymLink Mostar | `Test123!` |
-| `mobile` | `mobile@gymlink.local` | Member | None | `Test123!` |
-| `member` | `member@gymlink.local` | Member | None | `Test123!` |
+| `admin.arena` | `admin.arena@gymlink.local` | GymAdmin | Arena Sport Centar | `Test123!` |
+| `admin.perfectfit` | `admin.perfectfit@gymlink.local` | GymAdmin | Perfect Fit | `Test123!` |
+| `admin.respect` | `admin.respect@gymlink.local` | GymAdmin | Sportska Akademija Respect | `Test123!` |
+| `admin.oxide` | `admin.oxide@gymlink.local` | GymAdmin | Oxide Gym | `Test123!` |
+| `admin.fitfactory` | `admin.fitfactory@gymlink.local` | GymAdmin | Fit Factory | `Test123!` |
+| `admin.iskra` | `admin.iskra@gymlink.local` | GymAdmin | Fitness Club Iskra | `Test123!` |
+| `arenatrainer1` | `arenatrainer1@gymlink.local` | Trainer | Arena Sport Centar | `Test123!` |
+| `arenatrainer2` | `arenatrainer2@gymlink.local` | Trainer | Arena Sport Centar | `Test123!` |
+| `perfectfittrainer1` | `perfectfittrainer1@gymlink.local` | Trainer | Perfect Fit | `Test123!` |
+| `perfectfittrainer2` | `perfectfittrainer2@gymlink.local` | Trainer | Perfect Fit | `Test123!` |
+| `respecttrainer1` | `respecttrainer1@gymlink.local` | Trainer | Sportska Akademija Respect | `Test123!` |
+| `respecttrainer2` | `respecttrainer2@gymlink.local` | Trainer | Sportska Akademija Respect | `Test123!` |
+| `oxidetrainer1` | `oxidetrainer1@gymlink.local` | Trainer | Oxide Gym | `Test123!` |
+| `oxidetrainer2` | `oxidetrainer2@gymlink.local` | Trainer | Oxide Gym | `Test123!` |
+| `fitfactorytrainer1` | `fitfactorytrainer1@gymlink.local` | Trainer | Fit Factory | `Test123!` |
+| `fitfactorytrainer2` | `fitfactorytrainer2@gymlink.local` | Trainer | Fit Factory | `Test123!` |
+| `iskratrainer1` | `iskratrainer1@gymlink.local` | Trainer | Fitness Club Iskra | `Test123!` |
+| `iskratrainer2` | `iskratrainer2@gymlink.local` | Trainer | Fitness Club Iskra | `Test123!` |
+| `mobile1` | `mobile1@gymlink.local` | Member | Arena, Respect, Fit Factory | `Test123!` |
+| `mobile2` | `mobile2@gymlink.local` | Member | Arena, Oxide, Iskra | `Test123!` |
+| `mobile3` | `mobile3@gymlink.local` | Member | Perfect Fit, Respect, Iskra | `Test123!` |
+| `mobile4` | `mobile4@gymlink.local` | Member | Perfect Fit, Oxide, Fit Factory | `Test123!` |
 
-Login accepts either the username or email. Staff access tokens automatically contain the account's single active gym assignment; Member and CentralAdmin tokens do not contain tenant claims.
+Staff access tokens contain the account's single active gym assignment. Member
+and CentralAdmin tokens intentionally have no tenant claim.
+
+### Gym and trainer roster
+
+| City | Gym | GymAdmin | Trainers |
+|---|---|---|---|
+| Mostar | Arena Sport Centar | `admin.arena` | Marko Dogan (`arenatrainer1`), Ana Marić (`arenatrainer2`) |
+| Mostar | Perfect Fit | `admin.perfectfit` | Ivan Kraljević (`perfectfittrainer1`), Petra Bošnjak (`perfectfittrainer2`) |
+| Sarajevo | Sportska Akademija Respect | `admin.respect` | Emir Hadžić (`respecttrainer1`), Lejla Bećirović (`respecttrainer2`) |
+| Sarajevo | Oxide Gym | `admin.oxide` | Amar Kovačević (`oxidetrainer1`), Selma Delić (`oxidetrainer2`) |
+| Bihać | Fit Factory | `admin.fitfactory` | Adnan Mujić (`fitfactorytrainer1`), Emina Alagić (`fitfactorytrainer2`) |
+| Bugojno | Fitness Club Iskra | `admin.iskra` | Haris Mehić (`iskratrainer1`), Ivana Vuković (`iskratrainer2`) |
+
+### Evaluation and recommender fixtures
+
+The six public, active gyms have seven-day hours, a primary image, verified
+public contact/location details, two active membership plans, varied equipment
+with quantities and notes, and varied training types. Each of the 12 trainers
+has two specializations, three offerings (personal 60 minutes, personal 90
+minutes, and a gym-appropriate 60-minute specialty), plus recurring Morning and
+Evening shifts Monday–Friday.
+
+The stable seeded workflow contains:
+
+- 23 accounts, 6 gyms, 30 active user/gym assignments, 42 working-hour rows,
+  12 plans, 12 trainer schedules, 120 recurring shifts, and 36 trainer offerings.
+- 12 approved membership requests, 12 paid active 90-day memberships, and 12
+  corresponding Member tenant assignments.
+- 48 non-overlapping reservations: 24 `Completed` from 3–14 August 2026 and 24
+  `Confirmed` from 24 August–25 September 2026. Every trainer has two of each.
+- 24 trainer reviews and 12 gym reviews. Ratings are reproducible integers from
+  3–5 using RNG seed `230038`; gym/trainer aggregates are maintained idempotently.
+- 8 weighted preferences spanning different city and training-type combinations.
+- 184 linked activity signals covering gym/trainer views, searches, filters,
+  membership requests/activations, reservation creation/completion, reviews,
+  and preference changes. These support the future explainable content-based +
+  popularity-based recommender. Generated `Recommendation` rows are not seeded.
+
+Gym organization names and public contact/location details identify real
+organizations for evaluation context. People, memberships, bookings, prices,
+reviews, ratings, preferences, and activity histories are fictional demo data
+and do not claim affiliation with or endorsement by those organizations.
 
 ### Add a new gym and owner
 
@@ -205,7 +260,8 @@ flutter test ui/gymlink_desktop
 git diff --check
 ```
 
-The public catalog endpoint is `GET /api/gyms`. With the development seed enabled it returns the Sarajevo and Mostar gyms.
+The public catalog endpoint is `GET /api/gyms`. With the development seed enabled
+it returns all six evaluation gyms in Mostar, Sarajevo, Bihać, and Bugojno.
 
 ## Troubleshooting
 

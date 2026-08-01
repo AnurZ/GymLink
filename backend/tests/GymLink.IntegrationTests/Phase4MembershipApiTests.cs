@@ -38,8 +38,8 @@ public sealed class Phase4MembershipApiTests
 
             await using var factory = CreateFactory(connectionString);
             using var client = factory.CreateClient();
-            var member = await LoginAsync(client, "member");
-            var planId = await FindPlanAsync(client, "GymLink Sarajevo");
+            var member = await RegisterAsync(client);
+            var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
             Authorize(client, member);
 
             var checkout = await client.PostAsJsonAsync(
@@ -93,10 +93,10 @@ public sealed class Phase4MembershipApiTests
 
             await using var factory = CreateFactory(connectionString);
             using var client = factory.CreateClient();
-            var member = await LoginAsync(client, "member");
-            var sarajevoAdmin = await LoginAsync(client, "desktop");
-            var mostarAdmin = await LoginAsync(client, "gymadmin");
-            var planId = await FindPlanAsync(client, "GymLink Sarajevo");
+            var member = await RegisterAsync(client, "Role Test Member");
+            var sarajevoAdmin = await LoginAsync(client, "admin.respect");
+            var mostarAdmin = await LoginAsync(client, "admin.arena");
+            var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
 
             Authorize(client, member);
             var request = await CreateRequestAsync(client, planId);
@@ -112,7 +112,7 @@ public sealed class Phase4MembershipApiTests
                 await client.GetFromJsonAsync<PagedResult<TrainerCandidateDto>>(
                     "/api/tenant/trainer-candidates?page=1&pageSize=10");
             Assert.NotNull(isolatedCandidates);
-            Assert.Empty(isolatedCandidates.Items);
+            Assert.DoesNotContain(isolatedCandidates.Items, x => x.UserId == member.User.Id);
 
             Authorize(client, sarajevoAdmin);
             var candidates =
@@ -147,9 +147,9 @@ public sealed class Phase4MembershipApiTests
             Assert.Equal(
                 HttpStatusCode.Unauthorized,
                 (await client.GetAsync("/api/profile")).StatusCode);
-            var trainerSession = await LoginAsync(client, "member");
+            var trainerSession = await LoginAsync(client, member.User.Username);
             Assert.Equal(RoleNames.Trainer, trainerSession.User.Role);
-            Assert.Equal("GymLink Sarajevo", trainerSession.User.Tenant?.Name);
+            Assert.Equal("Sportska Akademija Respect", trainerSession.User.Tenant?.Name);
 
             await using var verification = CreateContext(connectionString);
             Assert.True(await verification.Memberships.IgnoreQueryFilters().AnyAsync(
@@ -197,15 +197,15 @@ public sealed class Phase4MembershipApiTests
             using var client = factory.CreateClient();
             Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
 
-            var member = await LoginAsync(client, "member");
-            var sarajevoAdmin = await LoginAsync(client, "desktop");
-            var mostarAdmin = await LoginAsync(client, "gymadmin");
-            var sarajevoPlanId = await FindPlanAsync(client, "GymLink Sarajevo");
-            var mostarPlanId = await FindPlanAsync(client, "GymLink Mostar");
+            var member = await RegisterAsync(client);
+            var sarajevoAdmin = await LoginAsync(client, "admin.respect");
+            var mostarAdmin = await LoginAsync(client, "admin.arena");
+            var sarajevoPlanId = await FindPlanAsync(client, "Sportska Akademija Respect");
+            var mostarPlanId = await FindPlanAsync(client, "Arena Sport Centar");
 
             Authorize(client, member);
             var sarajevoRequest = await CreateRequestAsync(client, sarajevoPlanId);
-            Assert.Equal("GymLink Sarajevo", sarajevoRequest.GymName);
+            Assert.Equal("Sportska Akademija Respect", sarajevoRequest.GymName);
             var duplicate = await client.PostAsJsonAsync(
                 "/api/membership-requests",
                 new { membershipPlanId = sarajevoPlanId });
@@ -318,8 +318,10 @@ public sealed class Phase4MembershipApiTests
             var tenantSearch = await client.GetFromJsonAsync<PagedResult<MembershipDto>>(
                 "/api/tenant/memberships?status=Active&page=1&pageSize=10");
             Assert.NotNull(tenantSearch);
-            Assert.Equal(1, tenantSearch.TotalCount);
-            Assert.Equal("GymLink Mostar", tenantSearch.Items[0].GymName);
+            Assert.Contains(
+                tenantSearch.Items,
+                x => x.GymName == "Arena Sport Centar" &&
+                     x.MemberDisplayName == member.User.DisplayName);
 
             await using var verification = CreateContext(connectionString);
             var memberId = member.User.Id;
@@ -359,9 +361,9 @@ public sealed class Phase4MembershipApiTests
             await using var factory = CreateFactory(connectionString);
             using var client = factory.CreateClient();
             Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
-            var member = await LoginAsync(client, "member");
-            var admin = await LoginAsync(client, "desktop");
-            var planId = await FindPlanAsync(client, "GymLink Sarajevo");
+            var member = await RegisterAsync(client);
+            var admin = await LoginAsync(client, "admin.respect");
+            var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
 
             Authorize(client, member);
             var request = await CreateRequestAsync(client, planId);
@@ -434,6 +436,26 @@ public sealed class Phase4MembershipApiTests
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<AuthSessionDto>()
             ?? throw new InvalidOperationException("Login returned no session.");
+    }
+
+    private static async Task<AuthSessionDto> RegisterAsync(
+        HttpClient client,
+        string displayName = "Workflow Test Member")
+    {
+        client.DefaultRequestHeaders.Authorization = null;
+        var suffix = Guid.NewGuid().ToString("N");
+        var response = await client.PostAsJsonAsync(
+            "/api/auth/register",
+            new
+            {
+                username = $"workflow-{suffix}",
+                email = $"workflow-{suffix}@gymlink.local",
+                displayName,
+                password = Password,
+            });
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<AuthSessionDto>()
+            ?? throw new InvalidOperationException("Registration returned no session.");
     }
 
     private static void Authorize(HttpClient client, AuthSessionDto session) =>

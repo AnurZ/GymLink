@@ -35,11 +35,11 @@ public sealed class Phase93TrainerImageApiTests
 
             await using var factory = CreateFactory(connectionString, storageRoot);
             using var client = factory.CreateClient();
-            var trainerSession = await LoginAsync(client, "trainer");
-            var adminSession = await LoginAsync(client, "desktop");
-            var otherAdminSession = await LoginAsync(client, "gymadmin");
-            var memberSession = await LoginAsync(client, "member");
-            var otherTrainerSession = await LoginAsync(client, "trainer2");
+            var trainerSession = await LoginAsync(client, "respecttrainer1");
+            var adminSession = await LoginAsync(client, "admin.respect");
+            var otherAdminSession = await LoginAsync(client, "admin.arena");
+            var memberSession = await LoginAsync(client, "mobile2");
+            var otherTrainerSession = await LoginAsync(client, "arenatrainer1");
             var centralAdminSession = await LoginAsync(client, "centraladmin");
 
             Authorize(client, trainerSession);
@@ -67,10 +67,12 @@ public sealed class Phase93TrainerImageApiTests
             Assert.Equal("image/jpeg", storedImage.Content.Headers.ContentType?.MediaType);
             Assert.Equal(maximumJpeg.LongLength, storedImage.Content.Headers.ContentLength);
 
-            var gymId = await FindGymAsync(client, "GymLink Sarajevo");
+            var gymId = await FindGymAsync(client, "Sportska Akademija Respect");
             var publicTrainers = await client.GetFromJsonAsync<IReadOnlyList<TrainerDto>>(
                 $"/api/gyms/{gymId}/trainers");
-            var publicTrainer = Assert.Single(publicTrainers!);
+            var publicTrainer = Assert.Single(
+                publicTrainers!,
+                x => x.DisplayName == "Emir Hadžić");
             Assert.Equal(uploaded.ImageUrl, publicTrainer.ImageUrl);
             Assert.Null(publicTrainer.ManagementImage);
 

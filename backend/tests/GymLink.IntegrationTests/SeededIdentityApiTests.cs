@@ -24,7 +24,7 @@ public sealed class SeededIdentityApiTests
     private const string SigningKey = "integration-test-signing-key-at-least-32-bytes";
 
     [Fact]
-    public async Task CentralAdmin_user_search_handles_members_with_multiple_active_gym_assignments()
+    public async Task CentralAdmin_user_search_handles_seeded_members_with_multiple_active_gym_assignments()
     {
         var databaseName = $"GymLink_AdminUsers_{Guid.NewGuid():N}";
         var connectionString = TestSqlServer.ConnectionString(databaseName);
@@ -41,36 +41,10 @@ public sealed class SeededIdentityApiTests
             Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
             var centralAdmin = await LoginAsync(client, "centraladmin");
 
-            await using (var setup = CreateContext(connectionString))
-            {
-                var memberId = await setup.Users
-                    .Where(x => x.UserName == "mobile")
-                    .Select(x => x.Id)
-                    .SingleAsync();
-                var tenantIds = await setup.Tenants
-                    .OrderBy(x => x.Name)
-                    .Select(x => x.Id)
-                    .Take(2)
-                    .ToListAsync();
-                Assert.Equal(2, tenantIds.Count);
-
-                setup.UserGymAssignments.AddRange(tenantIds.Select(tenantId =>
-                    new UserGymAssignment
-                    {
-                        TenantId = tenantId,
-                        UserId = memberId,
-                        Role = RoleNames.Member,
-                        Status = AssignmentStatus.Active,
-                        StartsAtUtc = DateTime.UtcNow,
-                        Reason = "Regression setup for multiple memberships.",
-                    }));
-                await setup.SaveChangesAsync();
-            }
-
             client.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue("Bearer", centralAdmin.AccessToken);
             var users = await client.GetFromJsonAsync<PagedResult<AdminUserDto>>(
-                "/api/admin/users?query=mobile&page=1&pageSize=10");
+                "/api/admin/users?query=mobile1&page=1&pageSize=10");
             var member = Assert.Single(users!.Items);
             Assert.Equal(RoleNames.Member, member.Role);
             Assert.Null(member.Assignment);
@@ -122,13 +96,29 @@ public sealed class SeededIdentityApiTests
 
             var accounts = new[]
             {
-                new ExpectedAccount("desktop", RoleNames.GymAdmin, "GymLink Sarajevo"),
-                new ExpectedAccount("mobile", RoleNames.Member, null),
                 new ExpectedAccount("centraladmin", RoleNames.CentralAdmin, null),
-                new ExpectedAccount("gymadmin", RoleNames.GymAdmin, "GymLink Mostar"),
-                new ExpectedAccount("trainer", RoleNames.Trainer, "GymLink Sarajevo"),
-                new ExpectedAccount("member", RoleNames.Member, null),
-                new ExpectedAccount("trainer2", RoleNames.Trainer, "GymLink Mostar"),
+                new ExpectedAccount("admin.arena", RoleNames.GymAdmin, "Arena Sport Centar"),
+                new ExpectedAccount("admin.perfectfit", RoleNames.GymAdmin, "Perfect Fit"),
+                new ExpectedAccount("admin.respect", RoleNames.GymAdmin, "Sportska Akademija Respect"),
+                new ExpectedAccount("admin.oxide", RoleNames.GymAdmin, "Oxide Gym"),
+                new ExpectedAccount("admin.fitfactory", RoleNames.GymAdmin, "Fit Factory"),
+                new ExpectedAccount("admin.iskra", RoleNames.GymAdmin, "Fitness Club Iskra"),
+                new ExpectedAccount("arenatrainer1", RoleNames.Trainer, "Arena Sport Centar"),
+                new ExpectedAccount("arenatrainer2", RoleNames.Trainer, "Arena Sport Centar"),
+                new ExpectedAccount("perfectfittrainer1", RoleNames.Trainer, "Perfect Fit"),
+                new ExpectedAccount("perfectfittrainer2", RoleNames.Trainer, "Perfect Fit"),
+                new ExpectedAccount("respecttrainer1", RoleNames.Trainer, "Sportska Akademija Respect"),
+                new ExpectedAccount("respecttrainer2", RoleNames.Trainer, "Sportska Akademija Respect"),
+                new ExpectedAccount("oxidetrainer1", RoleNames.Trainer, "Oxide Gym"),
+                new ExpectedAccount("oxidetrainer2", RoleNames.Trainer, "Oxide Gym"),
+                new ExpectedAccount("fitfactorytrainer1", RoleNames.Trainer, "Fit Factory"),
+                new ExpectedAccount("fitfactorytrainer2", RoleNames.Trainer, "Fit Factory"),
+                new ExpectedAccount("iskratrainer1", RoleNames.Trainer, "Fitness Club Iskra"),
+                new ExpectedAccount("iskratrainer2", RoleNames.Trainer, "Fitness Club Iskra"),
+                new ExpectedAccount("mobile1", RoleNames.Member, null),
+                new ExpectedAccount("mobile2", RoleNames.Member, null),
+                new ExpectedAccount("mobile3", RoleNames.Member, null),
+                new ExpectedAccount("mobile4", RoleNames.Member, null),
             };
 
             var sessions = new Dictionary<string, AuthSessionDto>(StringComparer.Ordinal);
@@ -145,13 +135,13 @@ public sealed class SeededIdentityApiTests
             }
 
             client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", sessions["desktop"].AccessToken);
+                new AuthenticationHeaderValue("Bearer", sessions["admin.respect"].AccessToken);
             Assert.Equal(
                 HttpStatusCode.OK,
                 (await client.GetAsync("/api/tenant/gym")).StatusCode);
 
             client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", sessions["mobile"].AccessToken);
+                new AuthenticationHeaderValue("Bearer", sessions["mobile1"].AccessToken);
             Assert.Equal(
                 HttpStatusCode.Forbidden,
                 (await client.GetAsync("/api/tenant/gym")).StatusCode);
@@ -165,7 +155,7 @@ public sealed class SeededIdentityApiTests
                 "/api/admin/users/roles/assign",
                 new
                 {
-                    identifier = "member",
+                    identifier = "mobile2",
                     role = RoleNames.CentralAdmin,
                     reason = "Not permitted",
                 });
@@ -189,10 +179,15 @@ public sealed class SeededIdentityApiTests
                 .EnumerateArray()
                 .Select(x => x.GetProperty("name").GetString())
                 .ToArray();
-            Assert.Contains("GymLink Sarajevo", names);
-            Assert.Contains("GymLink Mostar", names);
+            Assert.Equal(6, names.Length);
+            Assert.Contains("Arena Sport Centar", names);
+            Assert.Contains("Perfect Fit", names);
+            Assert.Contains("Sportska Akademija Respect", names);
+            Assert.Contains("Oxide Gym", names);
+            Assert.Contains("Fit Factory", names);
+            Assert.Contains("Fitness Club Iskra", names);
 
-            var original = sessions["member"];
+            var original = sessions["mobile2"];
             var refreshResponse = await client.PostAsJsonAsync(
                 "/api/auth/refresh",
                 new { refreshToken = original.RefreshToken });
@@ -216,13 +211,199 @@ public sealed class SeededIdentityApiTests
             Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/profile")).StatusCode);
 
             await using var verificationContext = CreateContext(connectionString);
-            Assert.Equal(7, await verificationContext.UserProfiles.CountAsync());
-            Assert.Equal(2, await verificationContext.Gyms.IgnoreQueryFilters().CountAsync());
-            Assert.Equal(4, await verificationContext.UserGymAssignments.IgnoreQueryFilters().CountAsync());
-            Assert.Equal(2, await verificationContext.TrainerProfiles.IgnoreQueryFilters().CountAsync());
-            Assert.Equal(14, await verificationContext.GymWorkingHours.IgnoreQueryFilters().CountAsync());
-            Assert.Equal(2, await verificationContext.MembershipPlans.IgnoreQueryFilters().CountAsync());
-            Assert.Equal(2, await verificationContext.TrainerServiceOfferings.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(23, await verificationContext.UserProfiles.CountAsync());
+            Assert.Equal(6, await verificationContext.Gyms.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(30, await verificationContext.UserGymAssignments.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(12, await verificationContext.TrainerProfiles.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(42, await verificationContext.GymWorkingHours.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(12, await verificationContext.MembershipPlans.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(36, await verificationContext.TrainerServiceOfferings.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(12, await verificationContext.TrainerAvailabilitySchedules.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(120, await verificationContext.TrainerWeeklyShifts.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(12, await verificationContext.MembershipRequests.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(12, await verificationContext.Memberships.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(48, await verificationContext.AppointmentReservations.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(24, await verificationContext.AppointmentReservations.IgnoreQueryFilters()
+                .CountAsync(x => x.Status == ReservationStatus.Completed));
+            Assert.Equal(24, await verificationContext.AppointmentReservations.IgnoreQueryFilters()
+                .CountAsync(x => x.Status == ReservationStatus.Confirmed));
+            Assert.Equal(24, await verificationContext.Reviews.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(12, await verificationContext.GymReviews.IgnoreQueryFilters().CountAsync());
+            Assert.Equal(8, await verificationContext.UserPreferences.CountAsync());
+            Assert.Equal(184, await verificationContext.ActivityHistory.CountAsync());
+            Assert.Empty(await verificationContext.Recommendations.ToListAsync());
+
+            var gyms = await verificationContext.Gyms.IgnoreQueryFilters().ToListAsync();
+            var tenants = await verificationContext.Tenants.ToListAsync();
+            var gymIds = gyms.Select(x => x.Id).ToHashSet();
+            var trainerProfiles = await verificationContext.TrainerProfiles
+                .IgnoreQueryFilters()
+                .ToListAsync();
+            var trainerIds = trainerProfiles.Select(x => x.Id).ToHashSet();
+            var hours = await verificationContext.GymWorkingHours
+                .IgnoreQueryFilters()
+                .ToListAsync();
+            var images = await verificationContext.GymImages
+                .IgnoreQueryFilters()
+                .ToListAsync();
+            var plans = await verificationContext.MembershipPlans
+                .IgnoreQueryFilters()
+                .ToListAsync();
+            var gymEquipment = await verificationContext.GymEquipment
+                .IgnoreQueryFilters()
+                .ToListAsync();
+            var gymTrainingTypes = await verificationContext.GymTrainingTypes
+                .IgnoreQueryFilters()
+                .ToListAsync();
+            var assignments = await verificationContext.UserGymAssignments
+                .IgnoreQueryFilters()
+                .ToListAsync();
+            var specializations = await verificationContext.TrainerTrainingTypes
+                .IgnoreQueryFilters()
+                .ToListAsync();
+            var offerings = await verificationContext.TrainerServiceOfferings
+                .IgnoreQueryFilters()
+                .ToListAsync();
+            var schedules = await verificationContext.TrainerAvailabilitySchedules
+                .IgnoreQueryFilters()
+                .ToListAsync();
+            var shifts = await verificationContext.TrainerWeeklyShifts
+                .IgnoreQueryFilters()
+                .ToListAsync();
+
+            Assert.All(gyms, gym =>
+            {
+                Assert.True(gym.IsPubliclyVisible);
+                Assert.False(string.IsNullOrWhiteSpace(gym.Address));
+                Assert.False(string.IsNullOrWhiteSpace(gym.PhoneNumber));
+                Assert.Contains(tenants, tenant =>
+                    tenant.Id == gym.TenantId && tenant.Status == TenantStatus.Active);
+                Assert.Equal(7, hours.Count(x => x.GymId == gym.Id));
+                Assert.Single(images, x => x.GymId == gym.Id && x.IsPrimary);
+                Assert.Equal(2, plans.Count(x => x.TenantId == gym.TenantId && x.IsActive));
+                Assert.Contains(gymEquipment, x =>
+                    x.GymId == gym.Id && x.Quantity > 0 && !string.IsNullOrWhiteSpace(x.Notes));
+                Assert.Contains(gymTrainingTypes, x => x.GymId == gym.Id);
+                Assert.Single(assignments, x =>
+                    x.TenantId == gym.TenantId &&
+                    x.Role == RoleNames.GymAdmin &&
+                    x.Status == AssignmentStatus.Active);
+                Assert.Equal(2, trainerProfiles.Count(x => x.TenantId == gym.TenantId));
+            });
+
+            Assert.All(trainerProfiles, trainer =>
+            {
+                Assert.Equal(2, specializations.Count(x => x.TrainerProfileId == trainer.Id));
+                var trainerOfferings = offerings.Where(x => x.TrainerProfileId == trainer.Id).ToList();
+                Assert.Equal(3, trainerOfferings.Count);
+                Assert.Contains(trainerOfferings, x =>
+                    x.Name == "Personalni trening 60 min" && x.DurationMinutes == 60);
+                Assert.Contains(trainerOfferings, x =>
+                    x.Name == "Personalni trening 90 min" && x.DurationMinutes == 90);
+                Assert.Equal(1, trainerOfferings.Count(x =>
+                    !x.Name.StartsWith("Personalni trening", StringComparison.Ordinal) &&
+                    x.DurationMinutes == 60));
+                var schedule = Assert.Single(schedules, x => x.TrainerProfileId == trainer.Id);
+                var trainerShifts = shifts.Where(x =>
+                    x.TrainerAvailabilityScheduleId == schedule.Id).ToList();
+                Assert.Equal(10, trainerShifts.Count);
+                Assert.All(trainerShifts, x => Assert.InRange(x.DayOfWeek, DayOfWeek.Monday, DayOfWeek.Friday));
+                Assert.Equal(5, trainerShifts.Count(x => x.Period == TrainerShiftPeriod.Morning));
+                Assert.Equal(5, trainerShifts.Count(x => x.Period == TrainerShiftPeriod.Evening));
+            });
+
+            var membershipRequests = await verificationContext.MembershipRequests
+                .IgnoreQueryFilters()
+                .ToListAsync();
+            var memberships = await verificationContext.Memberships
+                .IgnoreQueryFilters()
+                .ToListAsync();
+            foreach (var memberUsername in new[] { "mobile1", "mobile2", "mobile3", "mobile4" })
+            {
+                var memberId = sessions[memberUsername].User.Id;
+                Assert.Equal(3, memberships.Count(x => x.MemberUserId == memberId));
+                Assert.Equal(3, assignments.Count(x =>
+                    x.UserId == memberId &&
+                    x.Role == RoleNames.Member &&
+                    x.Status == AssignmentStatus.Active));
+            }
+
+            Assert.All(membershipRequests, request =>
+                Assert.Equal(MembershipRequestStatus.Approved, request.Status));
+            Assert.All(memberships, membership =>
+            {
+                Assert.Equal(MembershipStatus.Active, membership.Status);
+                Assert.NotNull(membership.StartsAtUtc);
+                Assert.NotNull(membership.EndsAtUtc);
+                Assert.Equal(90, (membership.EndsAtUtc!.Value - membership.StartsAtUtc!.Value).TotalDays);
+                Assert.Contains(membershipRequests, request =>
+                    request.Id == membership.MembershipRequestId &&
+                    request.MemberUserId == membership.MemberUserId &&
+                    request.TenantId == membership.TenantId);
+            });
+
+            var reservations = await verificationContext.AppointmentReservations
+                .IgnoreQueryFilters()
+                .OrderBy(x => x.StartsAtUtc)
+                .ToListAsync();
+            var completed = reservations.Where(x => x.Status == ReservationStatus.Completed).ToList();
+            var confirmed = reservations.Where(x => x.Status == ReservationStatus.Confirmed).ToList();
+            Assert.Equal(new DateTime(2026, 8, 3, 7, 0, 0, DateTimeKind.Utc), completed[0].StartsAtUtc);
+            Assert.Equal(new DateTime(2026, 8, 14, 9, 0, 0, DateTimeKind.Utc), completed[^1].StartsAtUtc);
+            Assert.Equal(new DateTime(2026, 8, 24, 14, 0, 0, DateTimeKind.Utc), confirmed[0].StartsAtUtc);
+            Assert.Equal(new DateTime(2026, 9, 25, 16, 0, 0, DateTimeKind.Utc), confirmed[^1].StartsAtUtc);
+            foreach (var trainerId in trainerIds)
+            {
+                var trainerReservations = reservations
+                    .Where(x => x.TrainerProfileId == trainerId)
+                    .OrderBy(x => x.StartsAtUtc)
+                    .ToList();
+                Assert.Equal(2, trainerReservations.Count(x => x.Status == ReservationStatus.Completed));
+                Assert.Equal(2, trainerReservations.Count(x => x.Status == ReservationStatus.Confirmed));
+                for (var index = 1; index < trainerReservations.Count; index++)
+                {
+                    Assert.True(trainerReservations[index - 1].EndsAtUtc <= trainerReservations[index].StartsAtUtc);
+                }
+            }
+
+            var trainerReviews = await verificationContext.Reviews.IgnoreQueryFilters().ToListAsync();
+            var gymReviews = await verificationContext.GymReviews.IgnoreQueryFilters().ToListAsync();
+            Assert.All(trainerReviews, review => Assert.InRange(review.Rating, 3, 5));
+            Assert.All(gymReviews, review => Assert.InRange(review.Rating, 3, 5));
+            Assert.All(trainerProfiles, trainer =>
+            {
+                var ratings = trainerReviews.Where(x => x.TrainerProfileId == trainer.Id).ToList();
+                Assert.Equal(ratings.Count, trainer.ReviewCount);
+                Assert.Equal(
+                    decimal.Round(ratings.Average(x => (decimal)x.Rating), 2),
+                    trainer.AverageRating);
+            });
+            Assert.All(gyms, gym =>
+            {
+                var ratings = gymReviews.Where(x => x.GymId == gym.Id).ToList();
+                Assert.Equal(ratings.Count, gym.ReviewCount);
+                Assert.Equal(
+                    decimal.Round(ratings.Average(x => (decimal)x.Rating), 2),
+                    gym.AverageRating);
+            });
+
+            var activities = await verificationContext.ActivityHistory.ToListAsync();
+            Assert.All(activities.Where(x => x.TargetType == RecommendationTargetType.Gym), activity =>
+            {
+                Assert.NotNull(activity.TargetId);
+                Assert.Contains(activity.TargetId.Value, gymIds);
+                Assert.Equal(
+                    gyms.Single(x => x.Id == activity.TargetId.Value).TenantId,
+                    activity.TargetTenantId);
+            });
+            Assert.All(activities.Where(x => x.TargetType == RecommendationTargetType.Trainer), activity =>
+            {
+                Assert.NotNull(activity.TargetId);
+                Assert.Contains(activity.TargetId.Value, trainerIds);
+                Assert.Equal(
+                    trainerProfiles.Single(x => x.Id == activity.TargetId.Value).TenantId,
+                    activity.TargetTenantId);
+            });
         }
         finally
         {
