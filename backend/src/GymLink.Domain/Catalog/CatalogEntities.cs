@@ -35,14 +35,77 @@ public sealed class Gym : TenantEntity, IConcurrencyTracked
     }
 }
 
-public sealed class GymImage : TenantEntity
+public sealed class GymImage : TenantEntity, IConcurrencyTracked
 {
+    public const int MaximumGalleryImages = 5;
+    public const long MaximumFileSizeBytes = 5 * 1024 * 1024;
+
+    private static readonly HashSet<string> AllowedContentTypes =
+        new(StringComparer.Ordinal)
+        {
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+        };
+
     public Guid GymId { get; set; }
     public string StorageKey { get; set; } = string.Empty;
     public string? PublicUrl { get; set; }
     public string AltText { get; set; } = string.Empty;
     public int SortOrder { get; set; }
     public bool IsPrimary { get; set; }
+    public string? ContentType { get; private set; }
+    public long? FileSizeBytes { get; private set; }
+    public byte[] RowVersion { get; set; } = [];
+
+    public void SetManagedContent(
+        string storageKey,
+        string publicUrl,
+        string contentType,
+        long fileSizeBytes)
+    {
+        if (string.IsNullOrWhiteSpace(storageKey) || storageKey.Length > 512 ||
+            Path.IsPathRooted(storageKey) || storageKey.Contains("..", StringComparison.Ordinal) ||
+            storageKey.Contains('\\'))
+        {
+            throw InvalidImage("The image storage key is invalid.");
+        }
+
+        if (string.IsNullOrWhiteSpace(publicUrl) || publicUrl.Length > 2048 ||
+            publicUrl[0] != '/' || Uri.TryCreate(publicUrl, UriKind.Absolute, out _))
+        {
+            throw InvalidImage("The image URL must be an API-relative path.");
+        }
+
+        if (!AllowedContentTypes.Contains(contentType))
+        {
+            throw InvalidImage("The image content type is not supported.");
+        }
+
+        if (fileSizeBytes is <= 0 or > MaximumFileSizeBytes)
+        {
+            throw InvalidImage("The image file size is invalid.");
+        }
+
+        StorageKey = storageKey;
+        PublicUrl = publicUrl;
+        ContentType = contentType;
+        FileSizeBytes = fileSizeBytes;
+    }
+
+    public void SetGalleryPosition(int sortOrder, bool isPrimary)
+    {
+        if (sortOrder < 0 || isPrimary != (sortOrder == 0))
+        {
+            throw InvalidImage("The gallery position is invalid.");
+        }
+
+        SortOrder = sortOrder;
+        IsPrimary = isPrimary;
+    }
+
+    private static DomainException InvalidImage(string message) =>
+        new("invalid_gym_image", message);
 }
 
 public sealed class GymWorkingHours : TenantEntity

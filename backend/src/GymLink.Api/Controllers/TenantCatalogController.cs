@@ -1,6 +1,8 @@
 using GymLink.Application.Authorization;
 using GymLink.Application.Catalog;
 using GymLink.Application.TrainerImages;
+using GymLink.Application.GymImages;
+using GymLink.Domain.Catalog;
 using GymLink.Domain.Trainers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,7 +16,8 @@ public sealed class TenantCatalogController(
     IGymCatalogService gyms,
     ITrainerCatalogService trainers,
     IMembershipPlanService plans,
-    ITrainerImageService trainerImages) : ControllerBase
+    ITrainerImageService trainerImages,
+    IGymImageService gymImages) : ControllerBase
 {
     [HttpGet("gym")]
     public async Task<IActionResult> GetGym(CancellationToken cancellationToken) =>
@@ -25,6 +28,43 @@ public sealed class TenantCatalogController(
         UpdateGymRequest request,
         CancellationToken cancellationToken) =>
         Ok(await gyms.UpdateCurrentTenantGymAsync(request, cancellationToken));
+
+    [HttpPost("gym/images")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(GymImage.MaximumFileSizeBytes + 65536)]
+    [RequestFormLimits(MultipartBodyLengthLimit = GymImage.MaximumFileSizeBytes + 65536)]
+    public async Task<ActionResult<GymImageGalleryDto>> AddGymImage(
+        [FromForm] GymImageUploadForm form,
+        CancellationToken cancellationToken) =>
+        Ok(await gymImages.AddAsync(
+            await form.ToUploadAsync(cancellationToken),
+            cancellationToken));
+
+    [HttpPost("gym/images/{imageId:guid}/content")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(GymImage.MaximumFileSizeBytes + 65536)]
+    [RequestFormLimits(MultipartBodyLengthLimit = GymImage.MaximumFileSizeBytes + 65536)]
+    public async Task<ActionResult<GymImageGalleryDto>> ReplaceGymImage(
+        Guid imageId,
+        [FromForm] GymImageUploadForm form,
+        CancellationToken cancellationToken) =>
+        Ok(await gymImages.ReplaceAsync(
+            imageId,
+            await form.ToUploadAsync(cancellationToken),
+            cancellationToken));
+
+    [HttpDelete("gym/images/{imageId:guid}")]
+    public async Task<ActionResult<GymImageGalleryDto>> RemoveGymImage(
+        Guid imageId,
+        GymImageMutationRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(await gymImages.RemoveAsync(imageId, request, cancellationToken));
+
+    [HttpPut("gym/images/order")]
+    public async Task<ActionResult<GymImageGalleryDto>> ReorderGymImages(
+        GymImageOrderRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(await gymImages.ReorderAsync(request, cancellationToken));
 
     [HttpGet("trainers")]
     public async Task<IActionResult> SearchTrainers(

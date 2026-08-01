@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:intl/intl.dart';
@@ -360,72 +361,155 @@ class _GymCard extends StatelessWidget {
   final VoidCallback onOpen;
 
   @override
-  Widget build(BuildContext context) => Card(
-    clipBehavior: Clip.antiAlias,
-    child: InkWell(
-      onTap: onOpen,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: SizedBox.square(
-                dimension: 82,
-                child: gym['primaryImageUrl'] == null
-                    ? const ColoredBox(
-                        color: Color(0xFFE8EDF7),
-                        child: Icon(
-                          Icons.fitness_center,
-                          color: GymLinkColors.blue,
-                        ),
-                      )
-                    : Image.network(
-                        gym['primaryImageUrl'].toString(),
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => const ColoredBox(
+  Widget build(BuildContext context) {
+    final imageUrl = context.read<ApiClient>().mediaUrl(gym['primaryImageUrl']);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onOpen,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: SizedBox.square(
+                  dimension: 82,
+                  child: imageUrl == null
+                      ? const ColoredBox(
                           color: Color(0xFFE8EDF7),
-                          child: Icon(Icons.broken_image_outlined),
-                        ),
-                      ),
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    gym['name'].toString(),
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text('${gym['address']}, ${gym['city']}'),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      const Icon(Icons.star, color: Colors.amber, size: 20),
-                      Text(' ${gym['averageRating']} (${gym['reviewCount']})'),
-                      const Spacer(),
-                      if (gym['startingMembershipPrice'] != null)
-                        Text(
-                          '${gym['startingMembershipPrice']} ${gym['currency']}',
-                          style: const TextStyle(
+                          child: Icon(
+                            Icons.fitness_center,
                             color: GymLinkColors.blue,
-                            fontWeight: FontWeight.w700,
+                          ),
+                        )
+                      : Image.network(
+                          imageUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => const ColoredBox(
+                            color: Color(0xFFE8EDF7),
+                            child: Icon(Icons.broken_image_outlined),
                           ),
                         ),
-                    ],
-                  ),
-                ],
+                ),
               ),
-            ),
-          ],
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      gym['name'].toString(),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text('${gym['address']}, ${gym['city']}'),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Icon(Icons.star, color: Colors.amber, size: 20),
+                        Text(
+                          ' ${gym['averageRating']} (${gym['reviewCount']})',
+                        ),
+                        const Spacer(),
+                        if (gym['startingMembershipPrice'] != null)
+                          Text(
+                            '${gym['startingMembershipPrice']} ${gym['currency']}',
+                            style: const TextStyle(
+                              color: GymLinkColors.blue,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-    ),
+    );
+  }
+}
+
+class _GymPhotoCarousel extends StatefulWidget {
+  const _GymPhotoCarousel({required this.imageUrls});
+
+  final List<String> imageUrls;
+
+  @override
+  State<_GymPhotoCarousel> createState() => _GymPhotoCarouselState();
+}
+
+class _GymPhotoCarouselState extends State<_GymPhotoCarousel> {
+  int _current = 0;
+
+  @override
+  void didUpdateWidget(covariant _GymPhotoCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!listEquals(oldWidget.imageUrls, widget.imageUrls)) {
+      _current = 0;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: SizedBox(
+          height: 210,
+          width: double.infinity,
+          child: widget.imageUrls.isEmpty
+              ? const ColoredBox(
+                  color: Color(0xFFE8EDF7),
+                  child: Icon(
+                    Icons.fitness_center,
+                    size: 54,
+                    color: GymLinkColors.blue,
+                  ),
+                )
+              : PageView.builder(
+                  key: const Key('gym-image-carousel'),
+                  itemCount: widget.imageUrls.length,
+                  onPageChanged: (value) => setState(() => _current = value),
+                  itemBuilder: (_, index) => Image.network(
+                    widget.imageUrls[index],
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => const ColoredBox(
+                      color: Color(0xFFE8EDF7),
+                      child: Icon(Icons.broken_image_outlined),
+                    ),
+                  ),
+                ),
+        ),
+      ),
+      if (widget.imageUrls.length > 1) ...[
+        const SizedBox(height: 9),
+        Row(
+          key: const Key('gym-image-dots'),
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(
+            widget.imageUrls.length,
+            (index) => AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: index == _current ? 20 : 8,
+              height: 8,
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              decoration: BoxDecoration(
+                color: index == _current
+                    ? GymLinkColors.blue
+                    : const Color(0xFFCCD4E3),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ),
+        ),
+      ],
+    ],
   );
 }
 
@@ -567,16 +651,12 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                if ((_gym!['imageUrls'] as List? ?? const []).isNotEmpty)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: Image.network(
-                      (_gym!['imageUrls'] as List).first.toString(),
-                      height: 210,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                    ),
-                  ),
+                _GymPhotoCarousel(
+                  imageUrls: (_gym!['imageUrls'] as List? ?? const [])
+                      .map(context.read<ApiClient>().mediaUrl)
+                      .whereType<String>()
+                      .toList(),
+                ),
                 const SizedBox(height: 14),
                 Card(
                   child: Padding(

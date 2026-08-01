@@ -92,6 +92,72 @@ public sealed class DomainInvariantTests
     }
 
     [Fact]
+    public void Gym_image_managed_metadata_and_gallery_position_are_bounded()
+    {
+        var image = new GymImage();
+
+        image.SetManagedContent(
+            "opaque.webp",
+            "/uploads/gym-images/opaque.webp",
+            "image/webp",
+            GymImage.MaximumFileSizeBytes);
+        image.SetGalleryPosition(0, isPrimary: true);
+
+        Assert.Equal(5, GymImage.MaximumGalleryImages);
+        Assert.Equal("opaque.webp", image.StorageKey);
+        Assert.Equal("/uploads/gym-images/opaque.webp", image.PublicUrl);
+        Assert.Equal("image/webp", image.ContentType);
+        Assert.Equal(GymImage.MaximumFileSizeBytes, image.FileSizeBytes);
+        Assert.Equal(0, image.SortOrder);
+        Assert.True(image.IsPrimary);
+    }
+
+    [Fact]
+    public void Gym_image_preserves_legacy_external_metadata_shape()
+    {
+        var image = new GymImage
+        {
+            StorageKey = "seed/gym/primary",
+            PublicUrl = "https://images.example.test/gym.jpg",
+            AltText = "Legacy gym image",
+            SortOrder = 0,
+            IsPrimary = true,
+        };
+
+        Assert.Null(image.ContentType);
+        Assert.Null(image.FileSizeBytes);
+    }
+
+    [Theory]
+    [InlineData("../escape.jpg", "/uploads/gym-images/image.jpg", "image/jpeg", 10)]
+    [InlineData("image.jpg", "https://example.test/image.jpg", "image/jpeg", 10)]
+    [InlineData("image.gif", "/uploads/gym-images/image.gif", "image/gif", 10)]
+    [InlineData("image.jpg", "/uploads/gym-images/image.jpg", "image/jpeg", 0)]
+    public void Gym_image_rejects_invalid_managed_metadata(
+        string storageKey,
+        string publicUrl,
+        string contentType,
+        long size)
+    {
+        var error = Assert.Throws<DomainException>(() =>
+            new GymImage().SetManagedContent(storageKey, publicUrl, contentType, size));
+
+        Assert.Equal("invalid_gym_image", error.Code);
+    }
+
+    [Theory]
+    [InlineData(-1, false)]
+    [InlineData(0, false)]
+    [InlineData(1, true)]
+    public void Gym_image_rejects_invalid_gallery_position(int sortOrder, bool isPrimary)
+    {
+        var error = Assert.Throws<DomainException>(() =>
+            new GymImage().SetGalleryPosition(sortOrder, isPrimary));
+
+        Assert.Equal("invalid_gym_image", error.Code);
+    }
+
+    [Fact]
     public void Reservation_copies_authoritative_duration_and_price()
     {
         var ids = Enumerable.Range(0, 6).Select(_ => Guid.NewGuid()).ToArray();

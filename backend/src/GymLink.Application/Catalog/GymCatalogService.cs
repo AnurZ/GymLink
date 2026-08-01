@@ -2,6 +2,7 @@ using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
 using GymLink.Domain.Catalog;
 using GymLink.Domain.Enums;
+using GymLink.Application.GymImages;
 using Microsoft.EntityFrameworkCore;
 
 namespace GymLink.Application.Catalog;
@@ -218,10 +219,10 @@ public sealed class GymCatalogService(
                 x.ClosesAt,
                 x.IsClosed))
             .ToArray();
-        var imageUrls = await images.Where(x => x.GymId == id && x.PublicUrl != null)
+        var imageEntities = await images.Where(x => x.GymId == id && x.PublicUrl != null)
             .OrderBy(x => x.SortOrder)
-            .Select(x => x.PublicUrl!)
             .ToListAsync(cancellationToken);
+        var imageUrls = imageEntities.Select(x => x.PublicUrl!).ToArray();
 
         return new GymDetailsDto(
             core.Gym.Id,
@@ -240,7 +241,8 @@ public sealed class GymCatalogService(
             trainingTypes.Select(x => x.Id).ToArray(),
             trainingTypes.Select(x => x.Name).ToArray(),
             hours,
-            imageUrls);
+            imageUrls,
+            ignoreTenantFilter ? null : GymImageService.ToGallery(imageEntities));
     }
 
     private void RequireTenant()

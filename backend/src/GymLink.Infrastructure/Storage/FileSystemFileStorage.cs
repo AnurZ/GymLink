@@ -6,23 +6,32 @@ namespace GymLink.Infrastructure.Storage;
 
 internal sealed class FileSystemFileStorage : IFileStorage
 {
-    private readonly string rootPath;
-    private readonly string requestPath;
+    private readonly IReadOnlyDictionary<FileStorageArea, StorageAreaSettings> areas;
 
     public FileSystemFileStorage(
         IOptions<FileStorageOptions> options,
         IHostEnvironment environment)
     {
         var settings = options.Value;
-        rootPath = Path.GetFullPath(
-            Path.IsPathRooted(settings.RootPath)
-                ? settings.RootPath
-                : Path.Combine(environment.ContentRootPath, settings.RootPath));
-        requestPath = settings.RequestPath.TrimEnd('/');
-        Directory.CreateDirectory(rootPath);
+        areas = new Dictionary<FileStorageArea, StorageAreaSettings>
+        {
+            [FileStorageArea.TrainerImages] = CreateSettings(
+                settings.RootPath,
+                settings.RequestPath,
+                environment.ContentRootPath),
+            [FileStorageArea.GymImages] = CreateSettings(
+                settings.GymRootPath,
+                settings.GymRequestPath,
+                environment.ContentRootPath),
+        };
+        foreach (var area in areas.Values)
+        {
+            Directory.CreateDirectory(area.RootPath);
+        }
     }
 
     public async Task<FileStorageResult> SaveAsync(
+        FileStorageArea area,
         Stream content,
         string contentType,
         string fileName,
@@ -30,8 +39,9 @@ internal sealed class FileSystemFileStorage : IFileStorage
     {
         ArgumentNullException.ThrowIfNull(content);
         _ = fileName;
+        var settings = GetArea(area);
         var storageKey = $"{Guid.NewGuid():N}{ExtensionFor(contentType)}";
-        var destination = ResolveStorageKey(storageKey);
+        var destination = ResolveStorageKey(settings.RootPath, storageKey);
 
         await using var output = new FileStream(
             destination,
@@ -41,13 +51,18 @@ internal sealed class FileSystemFileStorage : IFileStorage
             bufferSize: 81920,
             useAsync: true);
         await content.CopyToAsync(output, cancellationToken);
-        return new FileStorageResult(storageKey, $"{requestPath}/{storageKey}");
+        return new FileStorageResult(
+            storageKey,
+            $"{settings.RequestPath}/{storageKey}");
     }
 
-    public Task DeleteAsync(string storageKey, CancellationToken cancellationToken)
+    public Task DeleteAsync(
+        FileStorageArea area,
+        string storageKey,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var path = ResolveStorageKey(storageKey);
+        var path = ResolveStorageKey(GetArea(area).RootPath, storageKey);
         if (File.Exists(path))
         {
             File.Delete(path);
@@ -56,7 +71,7 @@ internal sealed class FileSystemFileStorage : IFileStorage
         return Task.CompletedTask;
     }
 
-    private string ResolveStorageKey(string storageKey)
+    private static string ResolveStorageKey(string rootPath, string storageKey)
     {
         if (string.IsNullOrWhiteSpace(storageKey) ||
             !string.Equals(storageKey, Path.GetFileName(storageKey), StringComparison.Ordinal) ||
@@ -77,6 +92,22 @@ internal sealed class FileSystemFileStorage : IFileStorage
         return path;
     }
 
+    private StorageAreaSettings GetArea(FileStorageArea area) =>
+        areas.TryGetValue(area, out var settings)
+            ? settings
+            : throw new ArgumentOutOfRangeException(nameof(area));
+
+    private static StorageAreaSettings CreateSettings(
+        string configuredRootPath,
+        string configuredRequestPath,
+        string contentRootPath) =>
+        new(
+            Path.GetFullPath(
+                Path.IsPathRooted(configuredRootPath)
+                    ? configuredRootPath
+                    : Path.Combine(contentRootPath, configuredRootPath)),
+            configuredRequestPath.TrimEnd('/'));
+
     private static string ExtensionFor(string contentType) => contentType switch
     {
         "image/jpeg" => ".jpg",
@@ -84,4 +115,6 @@ internal sealed class FileSystemFileStorage : IFileStorage
         "image/webp" => ".webp",
         _ => throw new ArgumentException("The content type is not supported.", nameof(contentType)),
     };
+
+    private sealed record StorageAreaSettings(string RootPath, string RequestPath);
 }

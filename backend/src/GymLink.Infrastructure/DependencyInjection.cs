@@ -83,8 +83,15 @@ public static class DependencyInjection
             .Validate(
                 options => !string.IsNullOrWhiteSpace(options.RootPath) &&
                     options.RequestPath.StartsWith('/') &&
-                    !options.RequestPath.EndsWith('/'),
-                "FileStorage__RootPath and a valid FileStorage__RequestPath are required.")
+                    !options.RequestPath.EndsWith('/') &&
+                    !string.IsNullOrWhiteSpace(options.GymRootPath) &&
+                    options.GymRequestPath.StartsWith('/') &&
+                    !options.GymRequestPath.EndsWith('/') &&
+                    !string.Equals(
+                        options.RequestPath,
+                        options.GymRequestPath,
+                        StringComparison.OrdinalIgnoreCase),
+                "Valid and distinct Trainer/Gym file storage paths are required.")
             .ValidateOnStart();
         services.AddScoped<IFileStorage, FileSystemFileStorage>();
         AddStripePayments(services, configuration);

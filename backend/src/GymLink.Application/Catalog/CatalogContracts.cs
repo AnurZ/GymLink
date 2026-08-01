@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using GymLink.Application.Common;
 using GymLink.Application.TrainerImages;
+using GymLink.Application.GymImages;
 
 namespace GymLink.Application.Catalog;
 
@@ -42,7 +43,8 @@ public sealed record GymDetailsDto(
     IReadOnlyList<Guid> TrainingTypeIds,
     IReadOnlyList<string> TrainingTypes,
     IReadOnlyList<WorkingHoursDto> WorkingHours,
-    IReadOnlyList<string> ImageUrls);
+    IReadOnlyList<string> ImageUrls,
+    GymImageGalleryDto? ImageGallery);
 
 public sealed record WorkingHoursDto(
     int DayOfWeek,

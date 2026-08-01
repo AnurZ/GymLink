@@ -1,9 +1,12 @@
+import 'dart:typed_data';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
+import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 
 const _requestStatuses = ['Pending', 'Approved', 'Rejected', 'Cancelled'];
@@ -432,6 +435,7 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
     )) {
       return;
     }
+    if (!mounted) return;
     try {
       await api.delete('/api/tenant/trainers/${item['id']}');
       await _load();
@@ -1173,7 +1177,21 @@ class _GymCatalogScreenState extends State<GymCatalogScreen> {
   Map<String, dynamic>? _lookups;
   List<Map<String, dynamic>> _plans = const [];
   bool _loading = true;
+  bool _galleryBusy = false;
+  Uint8List? _galleryPreview;
+  String? _galleryPreviewImageId;
   Object? _error;
+
+  List<Map<String, dynamic>> get _galleryImages {
+    final gallery = _gym?['imageGallery'];
+    if (gallery is! Map) return const [];
+    return (gallery['images'] as List? ?? const [])
+        .map((value) => Map<String, dynamic>.from(value as Map))
+        .toList();
+  }
+
+  int get _maximumGalleryImages =>
+      ((_gym?['imageGallery'] as Map?)?['maximumImages'] as num?)?.toInt() ?? 5;
 
   @override
   void initState() {
@@ -1239,6 +1257,152 @@ class _GymCatalogScreenState extends State<GymCatalogScreen> {
     }
   }
 
+  Future<void> _pickGymImage([Map<String, dynamic>? existing]) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
+      withData: true,
+    );
+    final file = result?.files.singleOrNull;
+    if (file == null || !mounted) return;
+    final bytes = file.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      _showGalleryMessage('Odabranu sliku nije moguće pročitati.');
+      return;
+    }
+    if (bytes.length > 5 * 1024 * 1024) {
+      _showGalleryMessage('Slika mora biti manja ili jednaka 5 MiB.');
+      return;
+    }
+    final contentType = switch (file.extension?.toLowerCase()) {
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'png' => 'image/png',
+      'webp' => 'image/webp',
+      _ => null,
+    };
+    if (contentType == null) {
+      _showGalleryMessage('Dozvoljene su JPG, PNG i WebP slike.');
+      return;
+    }
+    if (existing == null && _galleryImages.length >= _maximumGalleryImages) {
+      _showGalleryMessage('Galerija može sadržavati najviše 5 slika.');
+      return;
+    }
+
+    final imageId = existing?['id']?.toString();
+    final token = existing?['concurrencyToken']?.toString();
+    if (existing != null && (token == null || token.isEmpty)) {
+      _showGalleryMessage('Osvježite galeriju prije zamjene slike.');
+      return;
+    }
+    setState(() {
+      _galleryBusy = true;
+      _galleryPreview = bytes;
+      _galleryPreviewImageId = imageId;
+    });
+    try {
+      final response = await context.read<ApiClient>().postMultipart(
+        existing == null
+            ? '/api/tenant/gym/images'
+            : '/api/tenant/gym/images/$imageId/content',
+        bytes: bytes,
+        fileName: file.name,
+        contentType: contentType,
+        fields: token == null ? const {} : {'concurrencyToken': token},
+      );
+      _applyGallery(response);
+      _showGalleryMessage(
+        existing == null
+            ? 'Slika je dodana u galeriju.'
+            : 'Slika je zamijenjena.',
+      );
+    } on ApiProblem catch (error) {
+      _showGalleryMessage(error.message);
+      if (error.status == 409) await _load();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _galleryBusy = false;
+          _galleryPreview = null;
+          _galleryPreviewImageId = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _removeGymImage(Map<String, dynamic> image) async {
+    if (!await confirmAction(
+      context,
+      title: 'Ukloni sliku',
+      message: image['isPrimary'] == true
+          ? 'Sljedeća slika postat će naslovna slika teretane.'
+          : 'Slika će biti uklonjena iz galerije.',
+    )) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _galleryBusy = true);
+    try {
+      final response = await context.read<ApiClient>().delete(
+        '/api/tenant/gym/images/${image['id']}',
+        body: {'concurrencyToken': image['concurrencyToken']},
+      );
+      _applyGallery(response);
+    } on ApiProblem catch (error) {
+      _showGalleryMessage(error.message);
+      if (error.status == 409) await _load();
+    } finally {
+      if (mounted) setState(() => _galleryBusy = false);
+    }
+  }
+
+  Future<void> _moveGymImage(int from, int to) async {
+    final images = _galleryImages;
+    if (from == to || to < 0 || to >= images.length) return;
+    final moved = images.removeAt(from);
+    images.insert(to, moved);
+    setState(() => _galleryBusy = true);
+    try {
+      final response = await context.read<ApiClient>().put(
+        '/api/tenant/gym/images/order',
+        body: {
+          'images': images
+              .map(
+                (image) => {
+                  'imageId': image['id'],
+                  'concurrencyToken': image['concurrencyToken'],
+                },
+              )
+              .toList(),
+        },
+      );
+      _applyGallery(response);
+    } on ApiProblem catch (error) {
+      _showGalleryMessage(error.message);
+      await _load();
+    } finally {
+      if (mounted) setState(() => _galleryBusy = false);
+    }
+  }
+
+  void _applyGallery(Object? response) {
+    if (!mounted || response is! Map || _gym == null) return;
+    setState(() {
+      _gym!['imageGallery'] = Map<String, dynamic>.from(response);
+      _gym!['imageUrls'] = _galleryImages
+          .map((image) => image['imageUrl'])
+          .whereType<String>()
+          .toList();
+    });
+  }
+
+  void _showGalleryMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _deactivatePlan(Map<String, dynamic> item) async {
     final api = context.read<ApiClient>();
     if (!await confirmAction(
@@ -1280,6 +1444,18 @@ class _GymCatalogScreenState extends State<GymCatalogScreen> {
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
+                  ),
+                  const SizedBox(height: 18),
+                  _GymGalleryManager(
+                    images: _galleryImages,
+                    maximumImages: _maximumGalleryImages,
+                    busy: _galleryBusy,
+                    preview: _galleryPreview,
+                    previewImageId: _galleryPreviewImageId,
+                    onAdd: () => _pickGymImage(),
+                    onReplace: _pickGymImage,
+                    onRemove: _removeGymImage,
+                    onMove: _moveGymImage,
                   ),
                   const SizedBox(height: 10),
                   Text('${_gym?['address']}, ${_gym?['city']}'),
@@ -1361,6 +1537,216 @@ class _GymCatalogScreenState extends State<GymCatalogScreen> {
           ),
         ),
       ],
+    ),
+  );
+}
+
+class _GymGalleryManager extends StatelessWidget {
+  const _GymGalleryManager({
+    required this.images,
+    required this.maximumImages,
+    required this.busy,
+    required this.preview,
+    required this.previewImageId,
+    required this.onAdd,
+    required this.onReplace,
+    required this.onRemove,
+    required this.onMove,
+  });
+
+  final List<Map<String, dynamic>> images;
+  final int maximumImages;
+  final bool busy;
+  final Uint8List? preview;
+  final String? previewImageId;
+  final VoidCallback onAdd;
+  final ValueChanged<Map<String, dynamic>> onReplace;
+  final ValueChanged<Map<String, dynamic>> onRemove;
+  final void Function(int from, int to) onMove;
+
+  @override
+  Widget build(BuildContext context) {
+    final api = context.read<ApiClient>();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Galerija teretane',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+              ),
+            ),
+            Text('${images.length}/$maximumImages'),
+            const SizedBox(width: 8),
+            FilledButton.tonalIcon(
+              key: const Key('gym-gallery-add'),
+              onPressed: busy || images.length >= maximumImages ? null : onAdd,
+              icon: const Icon(Icons.add_photo_alternate_outlined),
+              label: const Text('Dodaj sliku'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        if (busy) const LinearProgressIndicator(),
+        if (busy) const SizedBox(height: 8),
+        if (images.isEmpty && preview == null)
+          Container(
+            height: 120,
+            width: double.infinity,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F4FA),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Text('Dodajte do pet slika teretane.'),
+          )
+        else
+          SizedBox(
+            height: 160,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount:
+                  images.length +
+                  (preview != null && previewImageId == null ? 1 : 0),
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                if (index == images.length) {
+                  return _GalleryImageTile(
+                    preview: preview,
+                    label: 'Slanje...',
+                  );
+                }
+                final image = images[index];
+                return _GalleryImageTile(
+                  imageUrl: api.mediaUrl(image['imageUrl']),
+                  preview: previewImageId == image['id']?.toString()
+                      ? preview
+                      : null,
+                  label: image['isPrimary'] == true
+                      ? 'Naslovna'
+                      : 'Slika ${index + 1}',
+                  actions: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'Pomjeri lijevo',
+                        onPressed: busy || index == 0
+                            ? null
+                            : () => onMove(index, index - 1),
+                        icon: const Icon(Icons.chevron_left, size: 20),
+                      ),
+                      IconButton(
+                        tooltip: 'Pomjeri desno',
+                        onPressed: busy || index == images.length - 1
+                            ? null
+                            : () => onMove(index, index + 1),
+                        icon: const Icon(Icons.chevron_right, size: 20),
+                      ),
+                      PopupMenuButton<String>(
+                        tooltip: 'Opcije slike',
+                        enabled: !busy,
+                        onSelected: (action) {
+                          if (action == 'replace') onReplace(image);
+                          if (action == 'remove') onRemove(image);
+                          if (action == 'primary') onMove(index, 0);
+                        },
+                        itemBuilder: (_) => [
+                          if (index > 0)
+                            const PopupMenuItem(
+                              value: 'primary',
+                              child: Text('Postavi kao naslovnu'),
+                            ),
+                          const PopupMenuItem(
+                            value: 'replace',
+                            child: Text('Zamijeni sliku'),
+                          ),
+                          const PopupMenuItem(
+                            value: 'remove',
+                            child: Text('Ukloni sliku'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        const SizedBox(height: 6),
+        const Text(
+          'Prva slika je naslovna. Koristite strelice ili opciju za promjenu redoslijeda.',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+      ],
+    );
+  }
+}
+
+class _GalleryImageTile extends StatelessWidget {
+  const _GalleryImageTile({
+    required this.label,
+    this.imageUrl,
+    this.preview,
+    this.actions,
+  });
+
+  final String label;
+  final String? imageUrl;
+  final Uint8List? preview;
+  final Widget? actions;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: 174,
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: ColoredBox(
+        color: const Color(0xFFE8EDF7),
+        child: Column(
+          children: [
+            Expanded(
+              child: SizedBox(
+                width: double.infinity,
+                child: preview != null
+                    ? Image.memory(preview!, fit: BoxFit.cover)
+                    : imageUrl == null
+                    ? const Icon(
+                        Icons.fitness_center,
+                        color: GymLinkColors.blue,
+                      )
+                    : Image.network(
+                        imageUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => const Icon(
+                          Icons.broken_image_outlined,
+                          color: Colors.grey,
+                        ),
+                      ),
+              ),
+            ),
+            SizedBox(
+              height: 42,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Text(
+                        label,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                  ?actions,
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     ),
   );
 }

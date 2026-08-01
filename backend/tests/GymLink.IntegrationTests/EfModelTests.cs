@@ -1,4 +1,5 @@
 using GymLink.Domain.Common;
+using GymLink.Domain.Catalog;
 using GymLink.Domain.Engagement;
 using GymLink.Domain.Messaging;
 using GymLink.Domain.Memberships;
@@ -75,6 +76,42 @@ public sealed class EfModelTests
         Assert.Contains("CK_TrainerProfiles_ImageMetadata", constraintNames);
         Assert.Contains("CK_TrainerProfiles_ImageContentType", constraintNames);
         Assert.Contains("CK_TrainerProfiles_ImageFileSize", constraintNames);
+    }
+
+    [Fact]
+    public void Gym_image_metadata_is_legacy_compatible_bounded_and_concurrency_tracked()
+    {
+        using var context = CreateContext(Guid.NewGuid());
+        var image = context.Model.FindEntityType(typeof(GymImage))!;
+
+        Assert.Equal(512, image.FindProperty(nameof(GymImage.StorageKey))!.GetMaxLength());
+        Assert.Equal(2048, image.FindProperty(nameof(GymImage.PublicUrl))!.GetMaxLength());
+        Assert.Equal(300, image.FindProperty(nameof(GymImage.AltText))!.GetMaxLength());
+        Assert.Equal(32, image.FindProperty(nameof(GymImage.ContentType))!.GetMaxLength());
+        Assert.True(image.FindProperty(nameof(GymImage.ContentType))!.IsNullable);
+        Assert.True(image.FindProperty(nameof(GymImage.FileSizeBytes))!.IsNullable);
+        Assert.True(image.FindProperty(nameof(GymImage.RowVersion))!.IsConcurrencyToken);
+        Assert.Equal(
+            ValueGenerated.OnAddOrUpdate,
+            image.FindProperty(nameof(GymImage.RowVersion))!.ValueGenerated);
+
+        var designImage = context.GetService<IDesignTimeModel>().Model
+            .FindEntityType(typeof(GymImage))!;
+        var constraintNames = designImage.GetCheckConstraints().Select(x => x.Name).ToHashSet();
+        Assert.Contains("CK_GymImages_LocalMetadata", constraintNames);
+        Assert.Contains("CK_GymImages_ContentType", constraintNames);
+        Assert.Contains("CK_GymImages_FileSize", constraintNames);
+        Assert.Contains("CK_GymImages_SortOrder", constraintNames);
+
+        Assert.Contains(
+            image.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["TenantId", "GymId", "SortOrder"]));
+        Assert.Contains(
+            image.GetIndexes(),
+            index => index.IsUnique &&
+                PropertyNames(index).SequenceEqual(["GymId", "IsPrimary"]) &&
+                index.GetFilter() is not null);
     }
 
     [Fact]

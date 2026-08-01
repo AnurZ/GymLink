@@ -9,6 +9,7 @@ using GymLink.Application.ReferenceData;
 using GymLink.Application.Registration;
 using GymLink.Application.Reservations;
 using GymLink.Application.TrainerImages;
+using GymLink.Application.GymImages;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -29,6 +30,7 @@ public static class DependencyInjection
         services.AddScoped<IPasswordResetService, PasswordResetService>();
         services.AddScoped<IProfileService, ProfileService>();
         services.AddScoped<ITrainerImageService, TrainerImageService>();
+        services.AddScoped<IGymImageService, GymImageService>();
         services.AddScoped<IGymRegistrationService, GymRegistrationService>();
         services.AddScoped<IGymAdministrationService, GymAdministrationService>();
         services.AddScoped<ITenantActivationReadinessService, TenantActivationReadinessService>();

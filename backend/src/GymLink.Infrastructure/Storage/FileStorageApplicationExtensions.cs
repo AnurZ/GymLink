@@ -13,15 +13,26 @@ public static class FileStorageApplicationExtensions
         IOptions<FileStorageOptions> options)
     {
         var settings = options.Value;
+        UseArea(app, environment, settings.RootPath, settings.RequestPath);
+        UseArea(app, environment, settings.GymRootPath, settings.GymRequestPath);
+        return app;
+    }
+
+    private static void UseArea(
+        IApplicationBuilder app,
+        IHostEnvironment environment,
+        string configuredRootPath,
+        string requestPath)
+    {
         var rootPath = Path.GetFullPath(
-            Path.IsPathRooted(settings.RootPath)
-                ? settings.RootPath
-                : Path.Combine(environment.ContentRootPath, settings.RootPath));
+            Path.IsPathRooted(configuredRootPath)
+                ? configuredRootPath
+                : Path.Combine(environment.ContentRootPath, configuredRootPath));
         Directory.CreateDirectory(rootPath);
-        return app.UseStaticFiles(new StaticFileOptions
+        app.UseStaticFiles(new StaticFileOptions
         {
             FileProvider = new PhysicalFileProvider(rootPath),
-            RequestPath = settings.RequestPath,
+            RequestPath = requestPath,
             ServeUnknownFileTypes = false,
         });
     }

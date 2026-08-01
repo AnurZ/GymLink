@@ -42,11 +42,13 @@ dotnet ef database update `
   --startup-project backend/src/GymLink.Api
 ```
 
-Trainer image bytes are stored on the backend filesystem under
-`FileStorage__RootPath`; SQL Server stores only the opaque storage key,
-API-relative URL, content type, and size. Keep the default development path or
-set it to a persistent, writable directory for the target environment. Only
-`FileStorage__RequestPath` is exposed publicly by the API.
+Trainer and gym image bytes are stored on the backend filesystem under the
+separate `FileStorage__RootPath` and `FileStorage__GymRootPath` directories;
+SQL Server stores only opaque storage keys, API-relative URLs, content types,
+sizes, and ordering metadata. Keep the development defaults or configure
+persistent, writable directories for the target environment. Only the
+`FileStorage__RequestPath` and `FileStorage__GymRequestPath` directories are
+exposed publicly by the API.
 
 7. To create the linked evaluation dataset, set this value in `.env`:
 

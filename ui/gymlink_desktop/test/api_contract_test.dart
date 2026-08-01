@@ -132,6 +132,49 @@ void main() {
     expect(utf8.decode(captured.bodyBytes), contains('current'));
     expect(utf8.decode(captured.bodyBytes), contains('trainer.webp'));
   });
+
+  test(
+    'gym gallery uses relative media URLs and typed mutation requests',
+    () async {
+      final captured = <http.Request>[];
+      final api = ApiClient(
+        _Tokens(),
+        baseUrlOverride: 'http://localhost:62287',
+        httpClient: MockClient((request) async {
+          captured.add(request);
+          return http.Response('{"maximumImages":5,"images":[]}', 200);
+        }),
+      );
+
+      expect(
+        api.mediaUrl('/uploads/gym-images/cover.jpg'),
+        'http://localhost:62287/uploads/gym-images/cover.jpg',
+      );
+      await api.postMultipart(
+        '/api/tenant/gym/images/image-1/content',
+        bytes: const [0x89, 0x50, 0x4e, 0x47],
+        fileName: 'gym.png',
+        contentType: 'image/png',
+        fields: const {'concurrencyToken': 'current'},
+      );
+      await api.put(
+        '/api/tenant/gym/images/order',
+        body: {
+          'images': [
+            {'imageId': 'image-1', 'concurrencyToken': 'next'},
+          ],
+        },
+      );
+
+      expect(
+        captured[0].headers['content-type'],
+        contains('multipart/form-data'),
+      );
+      expect(latin1.decode(captured[0].bodyBytes), contains('gym.png'));
+      expect(captured[1].method, 'PUT');
+      expect(utf8.decode(captured[1].bodyBytes), contains('image-1'));
+    },
+  );
 }
 
 final class _Tokens implements AuthTokenSource {

@@ -38,9 +38,27 @@ internal sealed class GymImageConfiguration : EntityConfiguration<GymImage>
     protected override void ConfigureEntity(EntityTypeBuilder<GymImage> builder)
     {
         ConfigureTenant(builder);
+        ConfigureConcurrency(builder);
         builder.Property(x => x.StorageKey).HasMaxLength(512).IsRequired();
         builder.Property(x => x.PublicUrl).HasMaxLength(2048);
         builder.Property(x => x.AltText).HasMaxLength(300).IsRequired();
+        builder.Property(x => x.ContentType).HasMaxLength(32);
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint(
+                "CK_GymImages_LocalMetadata",
+                "([ContentType] IS NULL AND [FileSizeBytes] IS NULL) OR " +
+                "([ContentType] IS NOT NULL AND [FileSizeBytes] IS NOT NULL)");
+            table.HasCheckConstraint(
+                "CK_GymImages_ContentType",
+                "[ContentType] IS NULL OR [ContentType] IN " +
+                "('image/jpeg', 'image/png', 'image/webp')");
+            table.HasCheckConstraint(
+                "CK_GymImages_FileSize",
+                $"[FileSizeBytes] IS NULL OR ([FileSizeBytes] > 0 AND " +
+                $"[FileSizeBytes] <= {GymImage.MaximumFileSizeBytes})");
+            table.HasCheckConstraint("CK_GymImages_SortOrder", "[SortOrder] >= 0");
+        });
         builder.HasIndex(x => new { x.TenantId, x.GymId, x.SortOrder }).IsUnique();
         builder.HasIndex(x => new { x.GymId, x.IsPrimary })
             .IsUnique()

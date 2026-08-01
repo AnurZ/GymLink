@@ -711,6 +711,32 @@ void main() {
     expect(api.promotionBody?['reason'], 'Odobrio GymAdmin');
     expect(api.promotionBody?['trainingTypeIds'], ['type-1']);
   });
+
+  testWidgets('GymAdmin profile renders the ordered gallery controls', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1366, 768);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _GymGalleryApi();
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: GymCatalogScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Galerija teretane'), findsOneWidget);
+    expect(find.text('Naslovna'), findsOneWidget);
+    expect(find.text('Slika 2'), findsOneWidget);
+    expect(find.byKey(const Key('gym-gallery-add')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<void> _openGymWizardAtLocation(WidgetTester tester) async {
@@ -753,6 +779,71 @@ class _TestTokens implements AuthTokenSource {
 
   @override
   Future<bool> refresh() async => false;
+}
+
+class _GymGalleryApi extends ApiClient {
+  _GymGalleryApi() : super(_TestTokens());
+
+  @override
+  Future<Object?> get(
+    String path, {
+    Map<String, Object?> query = const {},
+    bool authenticated = true,
+  }) async {
+    if (path == '/api/tenant/gym') {
+      return {
+        'id': 'gym-1',
+        'name': 'Test Gym',
+        'description': 'Opis teretane',
+        'address': 'Testna 1',
+        'cityId': 'city-1',
+        'city': 'Sarajevo',
+        'equipment': ['Tegovi'],
+        'equipmentIds': ['equipment-1'],
+        'trainingTypes': ['Fitness'],
+        'trainingTypeIds': ['type-1'],
+        'workingHours': <Object>[],
+        'imageGallery': {
+          'maximumImages': 5,
+          'images': [
+            {
+              'id': 'image-1',
+              'imageUrl': null,
+              'sortOrder': 0,
+              'isPrimary': true,
+              'concurrencyToken': 'token-1',
+            },
+            {
+              'id': 'image-2',
+              'imageUrl': null,
+              'sortOrder': 1,
+              'isPrimary': false,
+              'concurrencyToken': 'token-2',
+            },
+          ],
+        },
+      };
+    }
+    if (path == '/api/reference-data/lookups') {
+      return {
+        'cities': <Object>[],
+        'equipment': <Object>[],
+        'trainingTypes': <Object>[],
+      };
+    }
+    throw StateError('Unexpected get request: $path');
+  }
+
+  @override
+  Future<PagedData> page(
+    String path, {
+    Map<String, Object?> query = const {},
+  }) async {
+    if (path == '/api/tenant/membership-plans') {
+      return const PagedData(items: [], page: 1, pageSize: 50, totalCount: 0);
+    }
+    throw StateError('Unexpected page request: $path');
+  }
 }
 
 class _CentralAdminApi extends ApiClient {

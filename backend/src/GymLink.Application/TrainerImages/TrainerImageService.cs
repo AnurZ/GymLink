@@ -1,5 +1,6 @@
 using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
+using GymLink.Application.Images;
 using GymLink.Domain.Common;
 using GymLink.Domain.Identity;
 using GymLink.Domain.Trainers;
@@ -17,9 +18,6 @@ public sealed class TrainerImageService(
     TimeProvider timeProvider,
     ILogger<TrainerImageService> logger) : ITrainerImageService
 {
-    private static ReadOnlySpan<byte> PngSignature =>
-        [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-
     private static readonly Action<ILogger, string, Exception?> LogCompensationFailure =
         LoggerMessage.Define<string>(
             LogLevel.Error,
@@ -91,6 +89,7 @@ public sealed class TrainerImageService(
         {
             await using var content = new MemoryStream(upload.Content, writable: false);
             saved = await fileStorage.SaveAsync(
+                FileStorageArea.TrainerImages,
                 content,
                 contentType,
                 upload.FileName,
@@ -172,7 +171,10 @@ public sealed class TrainerImageService(
     {
         try
         {
-            await fileStorage.DeleteAsync(storageKey, cancellationToken);
+            await fileStorage.DeleteAsync(
+                FileStorageArea.TrainerImages,
+                storageKey,
+                cancellationToken);
         }
         catch (Exception exception)
         {
@@ -186,7 +188,10 @@ public sealed class TrainerImageService(
     {
         try
         {
-            await fileStorage.DeleteAsync(storageKey, cancellationToken);
+            await fileStorage.DeleteAsync(
+                FileStorageArea.TrainerImages,
+                storageKey,
+                cancellationToken);
         }
         catch (Exception exception)
         {
@@ -195,51 +200,12 @@ public sealed class TrainerImageService(
     }
 
     private static string ValidateUpload(TrainerImageUpload upload)
-    {
-        if (upload.Content.Length == 0)
-        {
-            throw InvalidImage("Please select an image to upload.");
-        }
-
-        if (upload.Content.LongLength > TrainerProfile.MaximumImageFileSizeBytes)
-        {
-            throw InvalidImage("The image must be 5 MiB or smaller.");
-        }
-
-        if (string.IsNullOrWhiteSpace(upload.FileName) ||
-            !string.Equals(upload.FileName, Path.GetFileName(upload.FileName), StringComparison.Ordinal))
-        {
-            throw InvalidImage("The image filename is invalid.");
-        }
-
-        var extension = Path.GetExtension(upload.FileName).ToLowerInvariant();
-        var expectedContentType = extension switch
-        {
-            ".jpg" or ".jpeg" => "image/jpeg",
-            ".png" => "image/png",
-            ".webp" => "image/webp",
-            _ => throw InvalidImage("Only JPG, PNG, or WebP images are allowed."),
-        };
-        if (!string.Equals(upload.ContentType, expectedContentType, StringComparison.OrdinalIgnoreCase) ||
-            !SignatureMatches(upload.Content, expectedContentType))
-        {
-            throw InvalidImage("The image extension, content type, and file signature must match.");
-        }
-
-        return expectedContentType;
-    }
-
-    private static bool SignatureMatches(byte[] content, string contentType) => contentType switch
-    {
-        "image/jpeg" => content.Length >= 3 &&
-            content[0] == 0xFF && content[1] == 0xD8 && content[2] == 0xFF,
-        "image/png" => content.Length >= 8 &&
-            content.AsSpan(0, 8).SequenceEqual(PngSignature),
-        "image/webp" => content.Length >= 12 &&
-            content.AsSpan(0, 4).SequenceEqual("RIFF"u8) &&
-            content.AsSpan(8, 4).SequenceEqual("WEBP"u8),
-        _ => false,
-    };
+        => ImageUploadValidator.Validate(
+            upload.Content,
+            upload.ContentType,
+            upload.FileName,
+            TrainerProfile.MaximumImageFileSizeBytes,
+            "invalid_trainer_image");
 
     private static void ValidateConcurrencyToken(byte[] current, string token)
     {
@@ -287,6 +253,4 @@ public sealed class TrainerImageService(
     private static NotFoundException TrainerNotFound() =>
         new("trainer_not_found", "The Trainer was not found.");
 
-    private static ApplicationRuleException InvalidImage(string message) =>
-        new("invalid_trainer_image", message);
 }

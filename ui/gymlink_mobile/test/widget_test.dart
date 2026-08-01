@@ -1042,7 +1042,10 @@ void main() {
           'city': 'Sarajevo',
           'averageRating': 4.5,
           'reviewCount': 2,
-          'imageUrls': <String>[],
+          'imageUrls': <String>[
+            '/uploads/gym-images/cover.jpg',
+            '/uploads/gym-images/inside.webp',
+          ],
         },
         '/api/gyms/gym-1/membership-plans' => [
           {
@@ -1098,6 +1101,8 @@ void main() {
       findsOneWidget,
       reason: 'Rendered text: $renderedText',
     );
+    expect(find.byKey(const Key('gym-image-carousel')), findsOneWidget);
+    expect(find.byKey(const Key('gym-image-dots')), findsOneWidget);
     await tester.drag(find.byType(ListView), const Offset(0, -420));
     await tester.pumpAndSettle();
 
