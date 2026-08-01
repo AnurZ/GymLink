@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using GymLink.Application.Recommendations;
 
 namespace GymLink.Infrastructure.Seeding;
 
@@ -23,9 +24,12 @@ public static class DevelopmentSeedExtensions
 
         if (options.Enabled)
         {
-            await scope.ServiceProvider
+            var memberIds = await scope.ServiceProvider
                 .GetRequiredService<DevelopmentDataSeeder>()
                 .SeedAsync(cancellationToken);
+            await scope.ServiceProvider
+                .GetRequiredService<IRecommendationService>()
+                .GenerateForUsersAsync(memberIds, cancellationToken);
         }
     }
 }

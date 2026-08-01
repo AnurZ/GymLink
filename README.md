@@ -217,8 +217,9 @@ The stable seeded workflow contains:
 - 8 weighted preferences spanning different city and training-type combinations.
 - 184 linked activity signals covering gym/trainer views, searches, filters,
   membership requests/activations, reservation creation/completion, reviews,
-  and preference changes. These support the future explainable content-based +
-  popularity-based recommender. Generated `Recommendation` rows are not seeded.
+  and preference changes. Development startup then runs `gymlink-hybrid-v1`
+  for all four Members, producing 72 reproducible recommendation rows from the
+  real algorithm rather than seeded scores. See `recommender-dokumentacija.md`.
 
 Gym organization names and public contact/location details identify real
 organizations for evaluation context. People, memberships, bookings, prices,
@@ -317,6 +318,6 @@ inline and the backend remains the authoritative validator.
 
 Durable notifications and password reset are implemented in Phase 7. Stripe
 hosted Checkout with an Android deep-link return is implemented in Phase 8;
-chat is Phase 9, Trainer profile images are Phase 9.3, recommendations are
-Phase 10, and statistics/PDF
+chat is Phase 9, Trainer profile images are Phase 9.3, the explainable hybrid
+recommender is implemented in Phase 10, and statistics/PDF
 reports are Phase 11.

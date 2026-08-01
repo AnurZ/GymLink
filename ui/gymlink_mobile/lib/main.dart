@@ -14,6 +14,8 @@ import 'features/chat/chat_realtime.dart';
 import 'features/chat/chat_repository.dart';
 import 'features/notifications/notification_controller.dart';
 import 'features/reservations/reservation_refresh_controller.dart';
+import 'features/recommendations/recommendation_controller.dart';
+import 'features/recommendations/recommendation_repository.dart';
 
 void main() {
   runZonedGuarded(
@@ -54,6 +56,9 @@ void main() {
         notifications,
       );
       final reservations = ReservationRefreshController();
+      final recommendations = RecommendationController(
+        RecommendationRepository(api),
+      );
       final paymentLinks = PaymentDeepLinks();
       await paymentLinks.initialize();
       auth.attachApi(api);
@@ -68,6 +73,7 @@ void main() {
             ChangeNotifierProvider.value(value: notifications),
             ChangeNotifierProvider.value(value: chat),
             ChangeNotifierProvider.value(value: reservations),
+            ChangeNotifierProvider.value(value: recommendations),
             Provider.value(value: paymentLinks),
           ],
           child: const GymLinkMobileApp(),

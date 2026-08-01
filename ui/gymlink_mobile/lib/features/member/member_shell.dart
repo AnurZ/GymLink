@@ -8,6 +8,7 @@ import '../reservations/reservation_refresh_controller.dart';
 import 'gym_screens.dart';
 import 'membership_screen.dart';
 import 'reservation_screen.dart';
+import '../recommendations/recommendation_screen.dart';
 
 class MemberShell extends StatefulWidget {
   const MemberShell({super.key});
@@ -56,7 +57,18 @@ class _MemberShellState extends State<MemberShell> {
         ][_index],
         style: const TextStyle(fontWeight: FontWeight.w800),
       ),
-      actions: const [NotificationBell()],
+      actions: [
+        IconButton(
+          key: const Key('open-recommendations'),
+          tooltip: 'Preporuke',
+          onPressed: () => Navigator.push<void>(
+            context,
+            MaterialPageRoute(builder: (_) => const RecommendationScreen()),
+          ),
+          icon: const Icon(Icons.auto_awesome_outlined),
+        ),
+        const NotificationBell(),
+      ],
     ),
     body: IndexedStack(index: _index, children: _pages),
     bottomNavigationBar: NavigationBar(

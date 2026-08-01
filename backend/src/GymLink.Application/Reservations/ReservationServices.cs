@@ -2,6 +2,7 @@ using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.Messaging;
+using GymLink.Application.Recommendations;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Identity;
@@ -876,6 +877,7 @@ internal sealed class ReservationService(
     IReservationWorkflowEventRecorder eventRecorder,
     IConversationProvisioner conversationProvisioner,
     IConversationRealtimeNotifier conversationNotifier,
+    IRecommendationActivityRecorder recommendationActivity,
     TimeProvider timeProvider) : IReservationService
 {
     public async Task<ReservationDto> CreateAsync(
@@ -1010,6 +1012,15 @@ internal sealed class ReservationService(
                 using (tenantMutationScope.Begin(target.Offering.TenantId))
                 {
                     dbContext.AppointmentReservations.Add(entity);
+                    await recommendationActivity.RecordWorkflowAsync(
+                        memberId,
+                        entity.TenantId,
+                        RecommendationTargetType.Trainer,
+                        entity.TrainerProfileId,
+                        ActivityEventType.ReservationCreation,
+                        entity.Id,
+                        now,
+                        ct);
                     var conversation =
                         request.PaymentMethod == ReservationPaymentMethod.PayInPerson
                             ? await conversationProvisioner
@@ -1191,6 +1202,15 @@ internal sealed class ReservationService(
                 else if (action == ReservationAction.Complete)
                 {
                     entity.Complete(actor, now);
+                    await recommendationActivity.RecordWorkflowAsync(
+                        entity.MemberUserId,
+                        entity.TenantId,
+                        RecommendationTargetType.Trainer,
+                        entity.TrainerProfileId,
+                        ActivityEventType.ReservationCompletion,
+                        entity.Id,
+                        now,
+                        ct);
                 }
                 else
                 {
@@ -1598,6 +1618,7 @@ internal sealed class ReviewService(
     ICurrentUser currentUser,
     ITenantMutationScope tenantMutationScope,
     IReservationWorkflowEventRecorder eventRecorder,
+    IRecommendationActivityRecorder recommendationActivity,
     TimeProvider timeProvider) : IReviewService
 {
     public async Task<ReviewDto> CreateTrainerReviewAsync(
@@ -1636,6 +1657,15 @@ internal sealed class ReviewService(
             using (tenantMutationScope.Begin(reservation.TenantId))
             {
                 dbContext.Reviews.Add(entity);
+                await recommendationActivity.RecordWorkflowAsync(
+                    memberId,
+                    entity.TenantId,
+                    RecommendationTargetType.Trainer,
+                    trainer.Id,
+                    ActivityEventType.ReviewCreation,
+                    entity.Id,
+                    timeProvider.GetUtcNow().UtcDateTime,
+                    ct);
                 await RecordAsync(
                     "review.trainer_created",
                     entity.TenantId,
@@ -1707,6 +1737,15 @@ internal sealed class ReviewService(
             using (tenantMutationScope.Begin(gym.TenantId))
             {
                 dbContext.GymReviews.Add(entity);
+                await recommendationActivity.RecordWorkflowAsync(
+                    memberId,
+                    entity.TenantId,
+                    RecommendationTargetType.Gym,
+                    gym.Id,
+                    ActivityEventType.ReviewCreation,
+                    entity.Id,
+                    now,
+                    ct);
                 await RecordAsync(
                     "review.gym_created",
                     entity.TenantId,

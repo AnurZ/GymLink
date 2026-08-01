@@ -3,15 +3,17 @@ using GymLink.Application.Common;
 using GymLink.Domain.Catalog;
 using GymLink.Domain.Enums;
 using GymLink.Application.GymImages;
+using GymLink.Application.Recommendations;
 using Microsoft.EntityFrameworkCore;
 
 namespace GymLink.Application.Catalog;
 
 public sealed class GymCatalogService(
     IApplicationDbContext dbContext,
-    ITenantContext tenantContext) : IGymCatalogService
+    ITenantContext tenantContext,
+    IRecommendationActivityRecorder recommendationActivity) : IGymCatalogService
 {
-    public Task<PagedResult<GymListItemDto>> SearchPublicAsync(
+    public async Task<PagedResult<GymListItemDto>> SearchPublicAsync(
         GymSearchRequest request,
         CancellationToken cancellationToken)
     {
@@ -37,7 +39,7 @@ public sealed class GymCatalogService(
             query = query.Where(x => x.Gym.CityId == request.CityId.Value);
         }
 
-        return query.OrderBy(x => x.Gym.Name).ThenBy(x => x.Gym.Id)
+        var result = await query.OrderBy(x => x.Gym.Name).ThenBy(x => x.Gym.Id)
             .Select(x => new GymListItemDto(
                 x.Gym.Id,
                 x.Gym.Name,
@@ -61,6 +63,17 @@ public sealed class GymCatalogService(
                 x.Gym.AverageRating,
                 x.Gym.ReviewCount))
             .ToPagedResultAsync(request, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(request.Query))
+        {
+            await recommendationActivity.RecordReadAsync(
+                ActivityEventType.Search, null, null, null, cancellationToken);
+        }
+        if (request.CityId.HasValue)
+        {
+            await recommendationActivity.RecordReadAsync(
+                ActivityEventType.Filter, null, null, null, cancellationToken);
+        }
+        return result;
     }
 
     public async Task<GymDetailsDto> GetPublicDetailsAsync(
@@ -80,7 +93,18 @@ public sealed class GymCatalogService(
             throw new NotFoundException("gym_not_found", "The gym was not found.");
         }
 
-        return await BuildDetailsAsync(id, true, cancellationToken);
+        var details = await BuildDetailsAsync(id, true, cancellationToken);
+        var tenantId = await dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.Id == id)
+            .Select(x => x.TenantId)
+            .SingleAsync(cancellationToken);
+        await recommendationActivity.RecordReadAsync(
+            ActivityEventType.GymView,
+            tenantId,
+            RecommendationTargetType.Gym,
+            id,
+            cancellationToken);
+        return details;
     }
 
     public async Task<GymDetailsDto> GetCurrentTenantGymAsync(CancellationToken cancellationToken)

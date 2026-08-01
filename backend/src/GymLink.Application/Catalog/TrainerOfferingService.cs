@@ -1,5 +1,7 @@
 using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
+using GymLink.Application.Recommendations;
+using GymLink.Domain.Enums;
 using GymLink.Domain.Common;
 using GymLink.Domain.Trainers;
 using Microsoft.EntityFrameworkCore;
@@ -9,7 +11,8 @@ namespace GymLink.Application.Catalog;
 public sealed class TrainerOfferingService(
     IApplicationDbContext dbContext,
     ITenantContext tenantContext,
-    ICurrentUser currentUser) : ITrainerOfferingService
+    ICurrentUser currentUser,
+    IRecommendationActivityRecorder recommendationActivity) : ITrainerOfferingService
 {
     public async Task<PagedResult<TrainerOfferingDto>> SearchAsync(
         CatalogSearchRequest request,
@@ -70,7 +73,7 @@ public sealed class TrainerOfferingService(
             throw new NotFoundException("trainer_not_found", "The trainer was not found.");
         }
 
-        return await (
+        var results = await (
                 from offering in dbContext.TrainerServiceOfferings.IgnoreQueryFilters().AsNoTracking()
                 join trainingType in dbContext.TrainingTypes.AsNoTracking()
                     on offering.TrainingTypeId equals trainingType.Id
@@ -87,6 +90,13 @@ public sealed class TrainerOfferingService(
                     offering.Currency,
                     offering.IsActive))
             .ToListAsync(cancellationToken);
+        await recommendationActivity.RecordReadAsync(
+            ActivityEventType.TrainerView,
+            trainer.TenantId,
+            RecommendationTargetType.Trainer,
+            trainer.Id,
+            cancellationToken);
+        return results;
     }
 
     public async Task<TrainerOfferingDto> CreateAsync(

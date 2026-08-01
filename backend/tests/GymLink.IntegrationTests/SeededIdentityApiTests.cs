@@ -7,6 +7,7 @@ using System.Text.Json;
 using GymLink.Application.Administration;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
+using GymLink.Application.Recommendations;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Tenancy;
@@ -74,6 +75,19 @@ public sealed class SeededIdentityApiTests
             {
                 using var firstClient = firstFactory.CreateClient();
                 Assert.Equal(HttpStatusCode.OK, (await firstClient.GetAsync("/health")).StatusCode);
+            }
+            List<(Guid UserId, RecommendationTargetType TargetType, Guid TargetId,
+                decimal Score, string Reason)> firstGeneration;
+            await using (var firstVerification = CreateContext(connectionString))
+            {
+                firstGeneration = (await firstVerification.Recommendations.AsNoTracking()
+                        .ToListAsync())
+                    .OrderBy(x => x.UserId)
+                    .ThenBy(x => x.TargetType)
+                    .ThenBy(x => x.TargetId)
+                    .Select(x => (x.UserId, x.TargetType, x.TargetId, x.Score, x.Reason))
+                    .ToList();
+                Assert.Equal(72, firstGeneration.Count);
             }
 
             await using var factory = CreateFactory(connectionString);
@@ -187,6 +201,40 @@ public sealed class SeededIdentityApiTests
             Assert.Contains("Fit Factory", names);
             Assert.Contains("Fitness Club Iskra", names);
 
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", sessions["mobile1"].AccessToken);
+            var preferences = await client.GetFromJsonAsync<IReadOnlyList<PreferenceDto>>(
+                "/api/me/preferences");
+            Assert.Equal(2, preferences!.Count);
+            Assert.Collection(
+                preferences,
+                preference => Assert.Equal(1.0m, preference.Weight),
+                preference => Assert.Equal(0.7m, preference.Weight));
+            var feed = await client.GetFromJsonAsync<RecommendationFeedDto>(
+                "/api/me/recommendations?limit=10");
+            Assert.NotNull(feed);
+            Assert.Equal(10, feed.Items.Count);
+            Assert.Contains(feed.Items, x => x.TargetType == RecommendationTargetType.Gym);
+            Assert.Contains(feed.Items, x => x.TargetType == RecommendationTargetType.Trainer);
+            Assert.All(feed.Items, x => Assert.False(string.IsNullOrWhiteSpace(x.Reason)));
+            var unchangedFeed = await client.GetFromJsonAsync<RecommendationFeedDto>(
+                "/api/me/recommendations?limit=10");
+            Assert.Equal(feed.GeneratedAtUtc, unchangedFeed!.GeneratedAtUtc);
+            Assert.Equal(
+                HttpStatusCode.BadRequest,
+                (await client.GetAsync("/api/me/recommendations?limit=0")).StatusCode);
+
+            var concurrentRefreshes = await Task.WhenAll(
+                client.PostAsync("/api/me/recommendations/refresh?limit=10", null),
+                client.PostAsync("/api/me/recommendations/refresh?limit=10", null));
+            Assert.All(concurrentRefreshes, response => response.EnsureSuccessStatusCode());
+
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", sessions["respecttrainer1"].AccessToken);
+            Assert.Equal(
+                HttpStatusCode.Forbidden,
+                (await client.GetAsync("/api/me/recommendations")).StatusCode);
+
             var original = sessions["mobile2"];
             var refreshResponse = await client.PostAsJsonAsync(
                 "/api/auth/refresh",
@@ -231,7 +279,7 @@ public sealed class SeededIdentityApiTests
             Assert.Equal(12, await verificationContext.GymReviews.IgnoreQueryFilters().CountAsync());
             Assert.Equal(8, await verificationContext.UserPreferences.CountAsync());
             Assert.Equal(184, await verificationContext.ActivityHistory.CountAsync());
-            Assert.Empty(await verificationContext.Recommendations.ToListAsync());
+            Assert.Equal(72, await verificationContext.Recommendations.CountAsync());
 
             var gyms = await verificationContext.Gyms.IgnoreQueryFilters().ToListAsync();
             var tenants = await verificationContext.Tenants.ToListAsync();
@@ -403,6 +451,37 @@ public sealed class SeededIdentityApiTests
                 Assert.Equal(
                     trainerProfiles.Single(x => x.Id == activity.TargetId.Value).TenantId,
                     activity.TargetTenantId);
+            });
+            var recommendations = await verificationContext.Recommendations.ToListAsync();
+            var secondGeneration = recommendations
+                .OrderBy(x => x.UserId)
+                .ThenBy(x => x.TargetType)
+                .ThenBy(x => x.TargetId)
+                .Select(x => (x.UserId, x.TargetType, x.TargetId, x.Score, x.Reason))
+                .ToList();
+            Assert.Equal(firstGeneration, secondGeneration);
+            Assert.Equal(
+                recommendations.Count,
+                recommendations.Select(x => new { x.UserId, x.TargetType, x.TargetId }).Distinct().Count());
+            Assert.All(recommendations, recommendation =>
+            {
+                Assert.InRange(recommendation.Score, 0, 1);
+                Assert.Equal("gymlink-hybrid-v1", recommendation.AlgorithmVersion);
+                Assert.False(string.IsNullOrWhiteSpace(recommendation.Reason));
+                if (recommendation.TargetType == RecommendationTargetType.Gym)
+                {
+                    Assert.Contains(recommendation.TargetId, gymIds);
+                    Assert.Equal(
+                        gyms.Single(x => x.Id == recommendation.TargetId).TenantId,
+                        recommendation.TargetTenantId);
+                }
+                else
+                {
+                    Assert.Contains(recommendation.TargetId, trainerIds);
+                    Assert.Equal(
+                        trainerProfiles.Single(x => x.Id == recommendation.TargetId).TenantId,
+                        recommendation.TargetTenantId);
+                }
             });
         }
         finally

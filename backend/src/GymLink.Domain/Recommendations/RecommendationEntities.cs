@@ -6,8 +6,8 @@ namespace GymLink.Domain.Recommendations;
 public sealed class UserPreference : AuditedEntity
 {
     public Guid UserId { get; set; }
-    public Guid? PreferredCityId { get; set; }
-    public Guid? PreferredTrainingTypeId { get; set; }
+    public Guid PreferredCityId { get; set; }
+    public Guid PreferredTrainingTypeId { get; set; }
     public decimal Weight { get; set; }
 }
 
@@ -17,6 +17,7 @@ public sealed class ActivityHistory : Entity
     public Guid? TargetTenantId { get; set; }
     public RecommendationTargetType? TargetType { get; set; }
     public Guid? TargetId { get; set; }
+    public Guid? SourceId { get; set; }
     public ActivityEventType EventType { get; set; }
     public DateTime OccurredAtUtc { get; set; }
     public int MetadataVersion { get; set; } = 1;
@@ -25,7 +26,7 @@ public sealed class ActivityHistory : Entity
 public sealed class Recommendation : Entity
 {
     public Guid UserId { get; set; }
-    public Guid? TargetTenantId { get; set; }
+    public Guid TargetTenantId { get; set; }
     public RecommendationTargetType TargetType { get; set; }
     public Guid TargetId { get; set; }
     public decimal Score { get; set; }

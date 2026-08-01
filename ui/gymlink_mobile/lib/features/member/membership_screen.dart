@@ -198,7 +198,6 @@ class MembershipDetailsScreen extends StatefulWidget {
 class _MembershipDetailsScreenState extends State<MembershipDetailsScreen> {
   Map<String, dynamic>? _membership;
   bool _loading = true;
-  bool _cancelling = false;
   bool _paying = false;
   Object? _error;
 
@@ -224,44 +223,6 @@ class _MembershipDetailsScreenState extends State<MembershipDetailsScreen> {
       _error = error;
     } finally {
       if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _cancel() async {
-    final membership = _membership;
-    final api = context.read<ApiClient>();
-    if (membership == null ||
-        !await confirmAction(
-          context,
-          title: 'Otkaži članstvo',
-          message: 'Aktivno članstvo će biti otkazano.',
-          action: 'Otkaži',
-        )) {
-      return;
-    }
-    setState(() => _cancelling = true);
-    try {
-      _membership = Map<String, dynamic>.from(
-        (await api.post(
-              '/api/me/memberships/${widget.membershipId}/cancel',
-              body: {'concurrencyToken': membership['concurrencyToken']},
-            ))!
-            as Map,
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Članstvo je otkazano.')));
-      }
-    } on ApiProblem catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-      if (error.status == 409) await _load();
-    } finally {
-      if (mounted) setState(() => _cancelling = false);
     }
   }
 
@@ -365,23 +326,6 @@ class _MembershipDetailsScreenState extends State<MembershipDetailsScreen> {
                             )
                           : const Icon(Icons.payment),
                       label: const Text('Plati članarinu'),
-                    ),
-                  ],
-                  if ((membership['allowedActions'] as List? ?? const [])
-                      .contains('cancel')) ...[
-                    const SizedBox(height: 16),
-                    FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.red.shade700,
-                      ),
-                      onPressed: _cancelling ? null : _cancel,
-                      icon: _cancelling
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.cancel_outlined),
-                      label: const Text('Otkaži članstvo'),
                     ),
                   ],
                 ],

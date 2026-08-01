@@ -1,6 +1,7 @@
 using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
+using GymLink.Application.Recommendations;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Memberships;
@@ -16,6 +17,7 @@ internal sealed class MembershipRequestService(
     ITenantContext tenantContext,
     ITenantMutationScope tenantMutationScope,
     IMembershipWorkflowEventRecorder eventRecorder,
+    IRecommendationActivityRecorder recommendationActivity,
     TimeProvider timeProvider) : IMembershipRequestService
 {
     public async Task<MembershipRequestDto> CreateAsync(
@@ -74,6 +76,15 @@ internal sealed class MembershipRequestService(
         using (tenantMutationScope.Begin(target.Plan.TenantId))
         {
             dbContext.MembershipRequests.Add(entity);
+            await recommendationActivity.RecordWorkflowAsync(
+                userId,
+                entity.TenantId,
+                RecommendationTargetType.Gym,
+                entity.GymId,
+                ActivityEventType.MembershipRequest,
+                entity.Id,
+                now,
+                cancellationToken);
             await eventRecorder.RecordAsync(new MembershipWorkflowEventIntent(
                 "membership.requested",
                 entity.TenantId,

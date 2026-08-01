@@ -1115,12 +1115,12 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('membership details expose contextual cancellation', (
+  testWidgets('membership details hide membership cancellation action', (
     tester,
   ) async {
-    var cancelled = false;
+    var requestCount = 0;
     final client = MockClient((request) async {
-      if (request.method == 'POST') cancelled = true;
+      requestCount++;
       final membership = {
         'id': 'membership-1',
         'gymName': 'Test Gym',
@@ -1129,10 +1129,10 @@ void main() {
         'currency': 'BAM',
         'startsAtUtc': '2030-01-01T00:00:00Z',
         'endsAtUtc': '2030-01-31T00:00:00Z',
-        'status': cancelled ? 3 : 1,
-        'statusReason': cancelled ? 'Otkazao član' : null,
-        'allowedActions': cancelled ? <String>[] : ['cancel'],
-        'concurrencyToken': cancelled ? 'token-2' : 'token-1',
+        'status': 1,
+        'statusReason': null,
+        'allowedActions': ['cancel'],
+        'concurrencyToken': 'token-1',
       };
       return http.Response(
         jsonEncode(membership),
@@ -1158,14 +1158,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Detalji članstva'), findsOneWidget);
-    expect(find.text('Otkaži članstvo'), findsOneWidget);
-    await tester.tap(find.text('Otkaži članstvo'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Otkaži').last);
-    await tester.pumpAndSettle();
-
-    expect(cancelled, isTrue);
     expect(find.text('Otkaži članstvo'), findsNothing);
+    expect(requestCount, 1);
   });
 
   testWidgets('payment result refreshes authoritative server state', (

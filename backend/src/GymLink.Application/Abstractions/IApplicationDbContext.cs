@@ -6,6 +6,7 @@ using GymLink.Domain.Reservations;
 using GymLink.Domain.ReferenceData;
 using GymLink.Domain.Identity;
 using GymLink.Domain.Payments;
+using GymLink.Domain.Recommendations;
 using GymLink.Domain.Tenancy;
 using GymLink.Domain.Trainers;
 using Microsoft.EntityFrameworkCore;
@@ -50,6 +51,9 @@ public interface IApplicationDbContext
     DbSet<InboxMessage> InboxMessages { get; }
     DbSet<Payment> Payments { get; }
     DbSet<StripeEventReceipt> StripeEventReceipts { get; }
+    DbSet<UserPreference> UserPreferences { get; }
+    DbSet<ActivityHistory> ActivityHistory { get; }
+    DbSet<Recommendation> Recommendations { get; }
 
     void ClearTrackedChanges();
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);

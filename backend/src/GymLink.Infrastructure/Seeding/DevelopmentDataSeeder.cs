@@ -48,7 +48,7 @@ internal sealed class DevelopmentDataSeeder(
         new(2026, 9, 22), new(2026, 9, 23), new(2026, 9, 25),
     ];
 
-    public async Task SeedAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<Guid>> SeedAsync(CancellationToken cancellationToken)
     {
         await EnsureRolesAsync();
 
@@ -230,6 +230,10 @@ internal sealed class DevelopmentDataSeeder(
             preferences,
             cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
+        return DevelopmentSeedCatalog.Accounts
+            .Where(x => x.Role == RoleNames.Member)
+            .Select(x => users[x.Username].Id)
+            .ToList();
     }
 
     private async Task EnsureRolesAsync()

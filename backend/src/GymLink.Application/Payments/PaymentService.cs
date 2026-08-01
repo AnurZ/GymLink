@@ -2,6 +2,7 @@ using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.Messaging;
+using GymLink.Application.Recommendations;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Memberships;
@@ -22,6 +23,7 @@ internal sealed class PaymentService(
     IRequestMetadata requestMetadata,
     IConversationProvisioner conversationProvisioner,
     IConversationRealtimeNotifier conversationNotifier,
+    IRecommendationActivityRecorder recommendationActivity,
     TimeProvider timeProvider) : IPaymentService
 {
     private static readonly PaymentStatus[] OpenOrSuccessful =
@@ -492,6 +494,15 @@ internal sealed class PaymentService(
             {
                 membership.ActivateFromPayment(payment.Id, now);
                 await ActivateMemberAssignmentAsync(payment, now, cancellationToken);
+                await recommendationActivity.RecordWorkflowAsync(
+                    payment.UserId,
+                    payment.TenantId,
+                    RecommendationTargetType.Gym,
+                    membership.GymId,
+                    ActivityEventType.MembershipActivation,
+                    membership.Id,
+                    now,
+                    cancellationToken);
             }
 
             return null;
