@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using GymLink.Application.Common;
+using GymLink.Application.TrainerImages;
 
 namespace GymLink.Application.Catalog;
 
@@ -103,7 +104,9 @@ public sealed record TrainerDto(
     bool IsActive,
     decimal AverageRating,
     int ReviewCount,
-    IReadOnlyList<Guid> TrainingTypeIds);
+    IReadOnlyList<Guid> TrainingTypeIds,
+    string? ImageUrl,
+    TrainerImageDto? ManagementImage);
 
 public sealed record TrainerCandidateSearchRequest : PagedRequest
 {

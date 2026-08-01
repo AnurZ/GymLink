@@ -1297,6 +1297,7 @@ internal sealed class ReservationService(
             {
                 Reservation = reservation,
                 TrainerName = trainerUser.DisplayName,
+                TrainerImageUrl = trainer.ImageUrl,
                 MemberName = member.DisplayName,
                 GymName = gym.Name,
                 OfferingName = offering.Name,
@@ -1351,6 +1352,7 @@ internal sealed class ReservationService(
                 x.Reservation.Id,
                 x.Reservation.TrainerProfileId,
                 x.TrainerName,
+                x.TrainerImageUrl,
                 x.MemberName,
                 x.GymName,
                 x.OfferingName,

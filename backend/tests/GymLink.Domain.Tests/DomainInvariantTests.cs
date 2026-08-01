@@ -52,6 +52,46 @@ public sealed class DomainInvariantTests
     }
 
     [Fact]
+    public void Trainer_image_metadata_is_atomic_bounded_and_removable()
+    {
+        var trainer = new TrainerProfile();
+
+        trainer.SetImage(
+            "trainers/opaque.webp",
+            "/uploads/trainer-images/opaque.webp",
+            "image/webp",
+            TrainerProfile.MaximumImageFileSizeBytes);
+
+        Assert.Equal("trainers/opaque.webp", trainer.ImageStorageKey);
+        Assert.Equal("/uploads/trainer-images/opaque.webp", trainer.ImageUrl);
+        Assert.Equal("image/webp", trainer.ImageContentType);
+        Assert.Equal(TrainerProfile.MaximumImageFileSizeBytes, trainer.ImageFileSizeBytes);
+        Assert.True(trainer.RemoveImage());
+        Assert.False(trainer.RemoveImage());
+        Assert.Null(trainer.ImageStorageKey);
+        Assert.Null(trainer.ImageUrl);
+        Assert.Null(trainer.ImageContentType);
+        Assert.Null(trainer.ImageFileSizeBytes);
+    }
+
+    [Theory]
+    [InlineData("../escape.jpg", "/uploads/trainer-images/image.jpg", "image/jpeg", 10)]
+    [InlineData("image.jpg", "https://example.test/image.jpg", "image/jpeg", 10)]
+    [InlineData("image.gif", "/uploads/trainer-images/image.gif", "image/gif", 10)]
+    [InlineData("image.jpg", "/uploads/trainer-images/image.jpg", "image/jpeg", 0)]
+    public void Trainer_image_rejects_invalid_metadata(
+        string storageKey,
+        string imageUrl,
+        string contentType,
+        long size)
+    {
+        var error = Assert.Throws<DomainException>(() =>
+            new TrainerProfile().SetImage(storageKey, imageUrl, contentType, size));
+
+        Assert.Equal("invalid_trainer_image", error.Code);
+    }
+
+    [Fact]
     public void Reservation_copies_authoritative_duration_and_price()
     {
         var ids = Enumerable.Range(0, 6).Select(_ => Guid.NewGuid()).ToArray();

@@ -15,6 +15,9 @@ internal sealed class TrainerProfileConfiguration : EntityConfiguration<TrainerP
         ConfigureConcurrency(builder);
         builder.Property(x => x.Biography).HasMaxLength(4000).IsRequired();
         builder.Property(x => x.Credentials).HasMaxLength(2000);
+        builder.Property(x => x.ImageStorageKey).HasMaxLength(500);
+        builder.Property(x => x.ImageUrl).HasMaxLength(1000);
+        builder.Property(x => x.ImageContentType).HasMaxLength(32);
         builder.Property(x => x.AverageRating).HasPrecision(3, 2);
         builder.ToTable(table =>
         {
@@ -22,6 +25,20 @@ internal sealed class TrainerProfileConfiguration : EntityConfiguration<TrainerP
                 "CK_TrainerProfiles_AverageRating",
                 "[AverageRating] >= 0 AND [AverageRating] <= 5");
             table.HasCheckConstraint("CK_TrainerProfiles_ReviewCount", "[ReviewCount] >= 0");
+            table.HasCheckConstraint(
+                "CK_TrainerProfiles_ImageMetadata",
+                "([ImageStorageKey] IS NULL AND [ImageUrl] IS NULL AND " +
+                "[ImageContentType] IS NULL AND [ImageFileSizeBytes] IS NULL) OR " +
+                "([ImageStorageKey] IS NOT NULL AND [ImageUrl] IS NOT NULL AND " +
+                "[ImageContentType] IS NOT NULL AND [ImageFileSizeBytes] IS NOT NULL)");
+            table.HasCheckConstraint(
+                "CK_TrainerProfiles_ImageContentType",
+                "[ImageContentType] IS NULL OR [ImageContentType] IN " +
+                "('image/jpeg', 'image/png', 'image/webp')");
+            table.HasCheckConstraint(
+                "CK_TrainerProfiles_ImageFileSize",
+                $"[ImageFileSizeBytes] IS NULL OR " +
+                $"([ImageFileSizeBytes] > 0 AND [ImageFileSizeBytes] <= {TrainerProfile.MaximumImageFileSizeBytes})");
         });
         builder.HasIndex(x => new { x.TenantId, x.UserId }).IsUnique();
         builder.HasOne<UserProfile>().WithMany().HasForeignKey(x => x.UserId)

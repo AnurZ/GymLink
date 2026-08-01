@@ -100,6 +100,38 @@ void main() {
     expect(page.items.single['name'], 'GymLink');
     expect(page.totalCount, 1);
   });
+
+  test('trainer image URLs and multipart upload use the API origin', () async {
+    late http.Request captured;
+    final api = ApiClient(
+      _Tokens(),
+      baseUrlOverride: 'http://localhost:62287',
+      httpClient: MockClient((request) async {
+        captured = request;
+        return http.Response(
+          '{"trainerProfileId":"trainer-1","imageUrl":null,'
+          '"contentType":null,"fileSizeBytes":null,"concurrencyToken":"next"}',
+          200,
+        );
+      }),
+    );
+
+    expect(
+      api.mediaUrl('/uploads/trainer-images/image.webp'),
+      'http://localhost:62287/uploads/trainer-images/image.webp',
+    );
+    await api.postMultipart(
+      '/api/tenant/trainers/trainer-1/image',
+      bytes: const [0x52, 0x49, 0x46, 0x46],
+      fileName: 'trainer.webp',
+      contentType: 'image/webp',
+      fields: const {'concurrencyToken': 'current'},
+    );
+
+    expect(captured.headers['content-type'], contains('multipart/form-data'));
+    expect(utf8.decode(captured.bodyBytes), contains('current'));
+    expect(utf8.decode(captured.bodyBytes), contains('trainer.webp'));
+  });
 }
 
 final class _Tokens implements AuthTokenSource {

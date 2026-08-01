@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -394,6 +395,7 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
   List<Map<String, dynamic>> _trainers = const [];
   List<Map<String, dynamic>> _offerings = const [];
   bool _loading = true;
+  final Set<String> _imageBusy = {};
   Object? _error;
 
   @override
@@ -472,6 +474,87 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
     }
   }
 
+  Future<void> _uploadTrainerImage(Map<String, dynamic> item) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
+      withData: true,
+    );
+    final file = result?.files.singleOrNull;
+    if (file == null || !mounted) return;
+    final bytes = file.bytes;
+    if (bytes == null) {
+      _showImageError('Odabranu sliku nije moguće pročitati.');
+      return;
+    }
+    if (bytes.length > 5 * 1024 * 1024) {
+      _showImageError('Slika mora biti manja ili jednaka 5 MiB.');
+      return;
+    }
+    final extension = file.extension?.toLowerCase();
+    final contentType = switch (extension) {
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'png' => 'image/png',
+      'webp' => 'image/webp',
+      _ => null,
+    };
+    final image = item['managementImage'];
+    final token = image is Map ? image['concurrencyToken']?.toString() : null;
+    if (contentType == null || token == null || token.isEmpty) {
+      _showImageError('Osvježite listu prije izmjene slike.');
+      return;
+    }
+    final id = item['id'].toString();
+    setState(() => _imageBusy.add(id));
+    try {
+      await context.read<ApiClient>().postMultipart(
+        '/api/tenant/trainers/$id/image',
+        bytes: bytes,
+        fileName: file.name,
+        contentType: contentType,
+        fields: {'concurrencyToken': token},
+      );
+      await _load();
+    } on ApiProblem catch (error) {
+      _showImageError(error.message);
+    } finally {
+      if (mounted) setState(() => _imageBusy.remove(id));
+    }
+  }
+
+  Future<void> _removeTrainerImage(Map<String, dynamic> item) async {
+    final api = context.read<ApiClient>();
+    final image = item['managementImage'];
+    if (image is! Map || image['imageUrl'] == null) return;
+    if (!await confirmAction(
+      context,
+      title: 'Ukloni sliku trenera',
+      message: 'Na mjestima bez slike prikazat će se inicijali trenera.',
+    )) {
+      return;
+    }
+    final id = item['id'].toString();
+    setState(() => _imageBusy.add(id));
+    try {
+      await api.delete(
+        '/api/tenant/trainers/$id/image',
+        body: {'concurrencyToken': image['concurrencyToken']},
+      );
+      await _load();
+    } on ApiProblem catch (error) {
+      _showImageError(error.message);
+    } finally {
+      if (mounted) setState(() => _imageBusy.remove(id));
+    }
+  }
+
+  void _showImageError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _addOffering() async {
     final api = context.read<ApiClient>();
     try {
@@ -539,9 +622,14 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
                           separatorBuilder: (_, _) => const Divider(height: 1),
                           itemBuilder: (_, index) {
                             final item = _trainers[index];
+                            final id = item['id'].toString();
+                            final imageUrl = context.read<ApiClient>().mediaUrl(
+                              item['imageUrl'],
+                            );
                             return ListTile(
-                              leading: const CircleAvatar(
-                                child: Icon(Icons.person),
+                              leading: _TrainerAvatar(
+                                name: item['displayName'].toString(),
+                                imageUrl: imageUrl,
                               ),
                               title: Text(item['displayName'].toString()),
                               subtitle: Text(
@@ -555,14 +643,46 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
                                         ? 'Active'
                                         : 'Inactive',
                                   ),
-                                  if (item['isActive'] == true)
-                                    IconButton(
-                                      tooltip: 'Deaktiviraj',
-                                      onPressed: () => _deactivate(item),
-                                      icon: const Icon(
-                                        Icons.person_off_outlined,
-                                        color: Colors.red,
+                                  if (_imageBusy.contains(id))
+                                    const Padding(
+                                      padding: EdgeInsets.all(12),
+                                      child: SizedBox.square(
+                                        dimension: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
                                       ),
+                                    )
+                                  else
+                                    PopupMenuButton<String>(
+                                      tooltip: 'Radnje trenera',
+                                      onSelected: (value) {
+                                        if (value == 'image') {
+                                          _uploadTrainerImage(item);
+                                        } else if (value == 'remove-image') {
+                                          _removeTrainerImage(item);
+                                        } else if (value == 'deactivate') {
+                                          _deactivate(item);
+                                        }
+                                      },
+                                      itemBuilder: (_) => [
+                                        const PopupMenuItem(
+                                          value: 'image',
+                                          child: Text(
+                                            'Dodaj ili zamijeni sliku',
+                                          ),
+                                        ),
+                                        if (imageUrl != null)
+                                          const PopupMenuItem(
+                                            value: 'remove-image',
+                                            child: Text('Ukloni sliku'),
+                                          ),
+                                        if (item['isActive'] == true)
+                                          const PopupMenuItem(
+                                            value: 'deactivate',
+                                            child: Text('Deaktiviraj trenera'),
+                                          ),
+                                      ],
                                     ),
                                 ],
                               ),
@@ -624,6 +744,42 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
       ],
     ),
   );
+}
+
+class _TrainerAvatar extends StatelessWidget {
+  const _TrainerAvatar({required this.name, this.imageUrl});
+
+  final String name;
+  final String? imageUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    final initials = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .map((part) => part[0].toUpperCase())
+        .join();
+    final fallback = Center(
+      child: Text(
+        initials,
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+    );
+    return ClipOval(
+      child: SizedBox.square(
+        dimension: 42,
+        child: imageUrl == null
+            ? fallback
+            : Image.network(
+                imageUrl!,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => fallback,
+              ),
+      ),
+    );
+  }
 }
 
 class TenantAvailabilityScreen extends StatefulWidget {

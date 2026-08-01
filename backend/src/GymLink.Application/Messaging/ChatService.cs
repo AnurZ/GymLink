@@ -184,6 +184,13 @@ internal sealed class ChatService(
                     x.SenderUserId != userId &&
                     (participant.LastReadAtUtc == null ||
                      x.SentAtUtc > participant.LastReadAtUtc))
+            let trainerImageUrl = dbContext.TrainerProfiles
+                .IgnoreQueryFilters()
+                .Where(x =>
+                    x.TenantId == conversation.TenantId &&
+                    x.UserId == conversation.TrainerUserId)
+                .Select(x => x.ImageUrl)
+                .FirstOrDefault()
             let canSend = participant.LeftAtUtc == null &&
                 conversation.ClosedAtUtc == null &&
                 member.IsActive &&
@@ -220,6 +227,7 @@ internal sealed class ChatService(
                 userId == conversation.MemberUserId
                     ? RoleNames.Trainer
                     : RoleNames.Member,
+                userId == conversation.MemberUserId ? trainerImageUrl : null,
                 gym.Id,
                 gym.Name,
                 lastText,
@@ -514,6 +522,13 @@ internal sealed class ChatService(
                     Gym = gym,
                     LastText = lastText,
                     UnreadCount = unreadCount,
+                    TrainerImageUrl = dbContext.TrainerProfiles
+                        .IgnoreQueryFilters()
+                        .Where(x =>
+                            x.TenantId == conversation.TenantId &&
+                            x.UserId == conversation.TrainerUserId)
+                        .Select(x => x.ImageUrl)
+                        .FirstOrDefault(),
                 })
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw ConversationNotFound();
@@ -537,6 +552,9 @@ internal sealed class ChatService(
             userId == result.Conversation.MemberUserId
                 ? RoleNames.Trainer
                 : RoleNames.Member,
+            userId == result.Conversation.MemberUserId
+                ? result.TrainerImageUrl
+                : null,
             result.Gym.Id,
             result.Gym.Name,
             result.LastText,

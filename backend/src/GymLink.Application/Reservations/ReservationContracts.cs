@@ -117,6 +117,7 @@ public sealed record ReservationDto(
     Guid Id,
     Guid TrainerProfileId,
     string TrainerName,
+    string? TrainerImageUrl,
     string MemberName,
     string GymName,
     string OfferingName,

@@ -5,13 +5,77 @@ namespace GymLink.Domain.Trainers;
 
 public sealed class TrainerProfile : TenantEntity, IConcurrencyTracked
 {
+    public const long MaximumImageFileSizeBytes = 5 * 1024 * 1024;
+
+    private static readonly HashSet<string> AllowedImageContentTypes =
+        new(StringComparer.Ordinal)
+        {
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+        };
+
     public Guid UserId { get; set; }
     public string Biography { get; set; } = string.Empty;
     public string? Credentials { get; set; }
+    public string? ImageStorageKey { get; private set; }
+    public string? ImageUrl { get; private set; }
+    public string? ImageContentType { get; private set; }
+    public long? ImageFileSizeBytes { get; private set; }
     public bool IsActive { get; set; } = true;
     public decimal AverageRating { get; private set; }
     public int ReviewCount { get; private set; }
     public byte[] RowVersion { get; set; } = [];
+
+    public void SetImage(
+        string storageKey,
+        string imageUrl,
+        string contentType,
+        long fileSizeBytes)
+    {
+        if (string.IsNullOrWhiteSpace(storageKey) || storageKey.Length > 500 ||
+            Path.IsPathRooted(storageKey) || storageKey.Contains("..", StringComparison.Ordinal) ||
+            storageKey.Contains('\\'))
+        {
+            throw InvalidImage("The image storage key is invalid.");
+        }
+
+        if (string.IsNullOrWhiteSpace(imageUrl) || imageUrl.Length > 1000 ||
+            imageUrl[0] != '/' ||
+            Uri.TryCreate(imageUrl, UriKind.Absolute, out _))
+        {
+            throw InvalidImage("The image URL must be an API-relative path.");
+        }
+
+        if (!AllowedImageContentTypes.Contains(contentType))
+        {
+            throw InvalidImage("The image content type is not supported.");
+        }
+
+        if (fileSizeBytes is <= 0 or > MaximumImageFileSizeBytes)
+        {
+            throw InvalidImage("The image file size is invalid.");
+        }
+
+        ImageStorageKey = storageKey;
+        ImageUrl = imageUrl;
+        ImageContentType = contentType;
+        ImageFileSizeBytes = fileSizeBytes;
+    }
+
+    public bool RemoveImage()
+    {
+        if (ImageStorageKey is null)
+        {
+            return false;
+        }
+
+        ImageStorageKey = null;
+        ImageUrl = null;
+        ImageContentType = null;
+        ImageFileSizeBytes = null;
+        return true;
+    }
 
     public void AddReview(int rating)
     {
@@ -26,6 +90,9 @@ public sealed class TrainerProfile : TenantEntity, IConcurrencyTracked
             MidpointRounding.AwayFromZero);
         ReviewCount++;
     }
+
+    private static DomainException InvalidImage(string message) =>
+        new("invalid_trainer_image", message);
 }
 
 public sealed class TrainerTrainingType : TenantEntity

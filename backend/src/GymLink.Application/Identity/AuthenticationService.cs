@@ -258,6 +258,7 @@ internal sealed class AuthenticationService(
             account.Role,
             profile.IsActive,
             tenant,
+            null,
             null);
 
     private static string? NormalizeOptional(string? value) =>

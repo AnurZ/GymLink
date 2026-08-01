@@ -398,6 +398,7 @@ final class ChatController extends ChangeNotifier {
     counterpartUserId: value.counterpartUserId,
     counterpartDisplayName: value.counterpartDisplayName,
     counterpartRole: value.counterpartRole,
+    counterpartImageUrl: value.counterpartImageUrl,
     gymId: value.gymId,
     gymName: value.gymName,
     lastMessageText: value.lastMessageText,

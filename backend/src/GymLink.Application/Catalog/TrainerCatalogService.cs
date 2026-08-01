@@ -1,6 +1,7 @@
 using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
+using GymLink.Application.TrainerImages;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Identity;
@@ -58,6 +59,10 @@ public sealed class TrainerCatalogService(
                 x.Trainer.IsActive,
                 x.Trainer.AverageRating,
                 x.Trainer.ReviewCount,
+                x.Trainer.ImageUrl,
+                x.Trainer.ImageContentType,
+                x.Trainer.ImageFileSizeBytes,
+                x.Trainer.RowVersion,
             })
             .ToListAsync(cancellationToken);
         var specializations = await LoadSpecializationsAsync(rows.Select(x => x.Id), false, cancellationToken);
@@ -70,7 +75,14 @@ public sealed class TrainerCatalogService(
                 x.IsActive,
                 x.AverageRating,
                 x.ReviewCount,
-                specializations.GetValueOrDefault(x.Id, [])))
+                specializations.GetValueOrDefault(x.Id, []),
+                x.ImageUrl,
+                new TrainerImageDto(
+                    x.Id,
+                    x.ImageUrl,
+                    x.ImageContentType,
+                    x.ImageFileSizeBytes,
+                    Convert.ToBase64String(x.RowVersion))))
             .ToList();
         return new PagedResult<TrainerDto>(items, request.Page, request.PageSize, totalCount);
     }
@@ -169,6 +181,7 @@ public sealed class TrainerCatalogService(
                     trainer.IsActive,
                     trainer.AverageRating,
                     trainer.ReviewCount,
+                    trainer.ImageUrl,
                 })
             .ToListAsync(cancellationToken);
         var specializations = await LoadSpecializationsAsync(
@@ -184,7 +197,9 @@ public sealed class TrainerCatalogService(
                 x.IsActive,
                 x.AverageRating,
                 x.ReviewCount,
-                specializations.GetValueOrDefault(x.Id, [])))
+                specializations.GetValueOrDefault(x.Id, []),
+                x.ImageUrl,
+                null))
             .ToList();
     }
 
@@ -441,7 +456,14 @@ public sealed class TrainerCatalogService(
             trainer.IsActive,
             trainer.AverageRating,
             trainer.ReviewCount,
-            trainingTypeIds);
+            trainingTypeIds,
+            trainer.ImageUrl,
+            new TrainerImageDto(
+                trainer.Id,
+                trainer.ImageUrl,
+                trainer.ImageContentType,
+                trainer.ImageFileSizeBytes,
+                Convert.ToBase64String(trainer.RowVersion)));
 
     private static void EnsureSucceeded(IdentityOperationResult result)
     {

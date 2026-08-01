@@ -1,5 +1,6 @@
 using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
+using GymLink.Application.TrainerImages;
 using GymLink.Domain.Common;
 using Microsoft.EntityFrameworkCore;
 
@@ -28,10 +29,17 @@ internal sealed class ProfileService(
                 .SingleAsync(cancellationToken);
             tenant = new(tenantContext.TenantId.Value, tenantName, tenantContext.TenantRole);
         }
-        var trainerProfileId = account.Role == RoleNames.Trainer
+        var trainerProfile = account.Role == RoleNames.Trainer
             ? await dbContext.TrainerProfiles
                 .Where(x => x.UserId == userId && x.IsActive)
-                .Select(x => (Guid?)x.Id)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.ImageUrl,
+                    x.ImageContentType,
+                    x.ImageFileSizeBytes,
+                    x.RowVersion,
+                })
                 .SingleOrDefaultAsync(cancellationToken)
             : null;
 
@@ -44,7 +52,15 @@ internal sealed class ProfileService(
             account.Role,
             profile.IsActive,
             tenant,
-            trainerProfileId);
+            trainerProfile?.Id,
+            trainerProfile is null
+                ? null
+                : new TrainerImageDto(
+                    trainerProfile.Id,
+                    trainerProfile.ImageUrl,
+                    trainerProfile.ImageContentType,
+                    trainerProfile.ImageFileSizeBytes,
+                    Convert.ToBase64String(trainerProfile.RowVersion)));
     }
 
     public Task<UserProfileDto> UpdateAsync(

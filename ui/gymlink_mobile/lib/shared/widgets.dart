@@ -3,6 +3,54 @@ import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/theme.dart';
 
+class TrainerImageAvatar extends StatelessWidget {
+  const TrainerImageAvatar({
+    super.key,
+    required this.name,
+    this.imageUrl,
+    this.radius = 20,
+  });
+
+  final String name;
+  final String? imageUrl;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    final initials = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .map((part) => part[0].toUpperCase())
+        .join();
+    final fallback = ColoredBox(
+      color: Theme.of(context).colorScheme.primaryContainer,
+      child: Center(
+        child: Text(
+          initials,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onPrimaryContainer,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+    return ClipOval(
+      child: SizedBox.square(
+        dimension: radius * 2,
+        child: imageUrl == null
+            ? fallback
+            : Image.network(
+                imageUrl!,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => fallback,
+              ),
+      ),
+    );
+  }
+}
+
 class PageFrame extends StatelessWidget {
   const PageFrame({
     required this.title,

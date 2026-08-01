@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 abstract interface class AuthTokenSource {
   String? get accessToken;
@@ -151,7 +152,30 @@ class ApiClient {
   Future<Object?> put(String path, {Object? body}) =>
       _send('PUT', path, body: body);
 
-  Future<void> delete(String path) async => _send('DELETE', path);
+  Future<Object?> delete(String path, {Object? body}) =>
+      _send('DELETE', path, body: body);
+
+  Future<Object?> postMultipart(
+    String path, {
+    required List<int> bytes,
+    required String fileName,
+    required String contentType,
+    required Map<String, String> fields,
+  }) => _sendMultipart(
+    path,
+    bytes: bytes,
+    fileName: fileName,
+    contentType: contentType,
+    fields: fields,
+  );
+
+  String? mediaUrl(Object? value) {
+    final raw = value?.toString().trim() ?? '';
+    if (raw.isEmpty) return null;
+    final parsed = Uri.tryParse(raw);
+    if (parsed?.hasScheme == true) return raw;
+    return _uri(raw, const {}).toString();
+  }
 
   Future<Object?> _send(
     String method,
@@ -229,6 +253,84 @@ class ApiClient {
         status: 0,
         code: 'client_error',
         message: 'Zahtjev nije moguće izvršiti.',
+      );
+    }
+  }
+
+  Future<Object?> _sendMultipart(
+    String path, {
+    required List<int> bytes,
+    required String fileName,
+    required String contentType,
+    required Map<String, String> fields,
+    bool retry = true,
+  }) async {
+    try {
+      final request = http.MultipartRequest('POST', _uri(path, const {}));
+      request.headers['Accept'] = 'application/json';
+      if (_tokens.accessToken != null) {
+        request.headers['Authorization'] = 'Bearer ${_tokens.accessToken}';
+      }
+      request.fields.addAll(fields);
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: fileName,
+          contentType: MediaType.parse(contentType),
+        ),
+      );
+      final streamed = await _http
+          .send(request)
+          .timeout(const Duration(seconds: 30));
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode == 401 && retry) {
+        final refreshFuture = _refreshing ??= _tokens.refresh();
+        final refreshed = await refreshFuture.whenComplete(() {
+          _refreshing = null;
+        });
+        if (refreshed) {
+          return _sendMultipart(
+            path,
+            bytes: bytes,
+            fileName: fileName,
+            contentType: contentType,
+            fields: fields,
+            retry: false,
+          );
+        }
+        await _tokens.invalidate();
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ApiProblem.fromResponse(response);
+      }
+      if (response.body.trim().isEmpty) return null;
+      return jsonDecode(response.body);
+    } on ApiProblem {
+      rethrow;
+    } on TimeoutException {
+      throw const ApiProblem(
+        status: 0,
+        code: 'request_timeout',
+        message: 'Zahtjev je istekao. Provjerite vezu i pokušajte ponovo.',
+      );
+    } on SocketException {
+      throw const ApiProblem(
+        status: 0,
+        code: 'network_unavailable',
+        message: 'Nije moguće povezati se sa serverom.',
+      );
+    } on http.ClientException {
+      throw const ApiProblem(
+        status: 0,
+        code: 'network_error',
+        message: 'Mrežni zahtjev nije uspio. Pokušajte ponovo.',
+      );
+    } on FormatException {
+      throw const ApiProblem(
+        status: 0,
+        code: 'invalid_response',
+        message: 'Server je vratio neočekivan odgovor.',
       );
     }
   }

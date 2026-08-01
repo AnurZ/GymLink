@@ -27,6 +27,7 @@ final class ConversationModel {
     required this.canSend,
     required this.createdAtUtc,
     required this.closedAtUtc,
+    this.counterpartImageUrl,
   });
 
   final String id;
@@ -34,6 +35,7 @@ final class ConversationModel {
   final String counterpartUserId;
   final String counterpartDisplayName;
   final String counterpartRole;
+  final String? counterpartImageUrl;
   final String gymId;
   final String gymName;
   final String? lastMessageText;
@@ -50,6 +52,7 @@ final class ConversationModel {
         counterpartUserId: json['counterpartUserId'].toString(),
         counterpartDisplayName: json['counterpartDisplayName'].toString(),
         counterpartRole: json['counterpartRole'].toString(),
+        counterpartImageUrl: json['counterpartImageUrl']?.toString(),
         gymId: json['gymId'].toString(),
         gymName: json['gymName'].toString(),
         lastMessageText: json['lastMessageText']?.toString(),
@@ -69,6 +72,7 @@ final class ConversationModel {
     counterpartUserId: counterpartUserId,
     counterpartDisplayName: counterpartDisplayName,
     counterpartRole: counterpartRole,
+    counterpartImageUrl: counterpartImageUrl,
     gymId: gymId,
     gymName: gymName,
     lastMessageText: message.text,
@@ -85,6 +89,7 @@ final class ConversationModel {
     counterpartUserId: counterpartUserId,
     counterpartDisplayName: counterpartDisplayName,
     counterpartRole: counterpartRole,
+    counterpartImageUrl: counterpartImageUrl,
     gymId: gymId,
     gymName: gymName,
     lastMessageText: lastMessageText,

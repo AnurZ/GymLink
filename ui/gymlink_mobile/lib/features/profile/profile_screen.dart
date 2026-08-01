@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
@@ -19,6 +22,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _phone = TextEditingController();
   bool _loading = true;
   bool _saving = false;
+  bool _uploadingImage = false;
+  Map<String, dynamic>? _profile;
+  Uint8List? _imagePreview;
+  String? _imageError;
   Object? _error;
 
   @override
@@ -34,6 +41,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
     try {
       final profile = await context.read<AuthController>().loadProfile();
+      _profile = profile;
       _name.text = profile['displayName']?.toString() ?? '';
       _email.text = profile['email']?.toString() ?? '';
       _phone.text = profile['phoneNumber']?.toString() ?? '';
@@ -42,6 +50,103 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _pickAndUploadImage() async {
+    final api = context.read<ApiClient>();
+    final image = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (image == null || !mounted) return;
+    final bytes = await image.readAsBytes();
+    if (bytes.length > 5 * 1024 * 1024) {
+      setState(() => _imageError = 'Slika mora biti manja ili jednaka 5 MiB.');
+      return;
+    }
+    final extension = image.name.split('.').last.toLowerCase();
+    final contentType = switch (extension) {
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'png' => 'image/png',
+      'webp' => 'image/webp',
+      _ => null,
+    };
+    if (contentType == null) {
+      setState(() => _imageError = 'Dozvoljene su JPG, PNG i WebP slike.');
+      return;
+    }
+    final token = _trainerImage?['concurrencyToken']?.toString();
+    if (token == null || token.isEmpty) {
+      setState(() => _imageError = 'Osvježite profil prije izmjene slike.');
+      return;
+    }
+    setState(() {
+      _uploadingImage = true;
+      _imagePreview = bytes;
+      _imageError = null;
+    });
+    try {
+      final result = await api.postMultipart(
+        '/api/profile/trainer-image',
+        bytes: bytes,
+        fileName: image.name,
+        contentType: contentType,
+        fields: {'concurrencyToken': token},
+      );
+      if (!mounted) return;
+      setState(() {
+        _profile = {
+          ...?_profile,
+          'trainerImage': Map<String, dynamic>.from(result! as Map),
+        };
+        _imagePreview = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profilna slika je sačuvana.')),
+      );
+    } on ApiProblem catch (error) {
+      if (mounted) setState(() => _imageError = error.message);
+    } finally {
+      if (mounted) setState(() => _uploadingImage = false);
+    }
+  }
+
+  Future<void> _removeImage() async {
+    final api = context.read<ApiClient>();
+    final image = _trainerImage;
+    if (image?['imageUrl'] == null ||
+        !await confirmAction(
+          context,
+          title: 'Ukloni profilnu sliku',
+          message: 'Prikazat će se inicijali dok ne dodate novu sliku.',
+        )) {
+      return;
+    }
+    setState(() {
+      _uploadingImage = true;
+      _imageError = null;
+    });
+    try {
+      final result = await api.delete(
+        '/api/profile/trainer-image',
+        body: {'concurrencyToken': image!['concurrencyToken']},
+      );
+      if (mounted) {
+        setState(() {
+          _profile = {
+            ...?_profile,
+            'trainerImage': Map<String, dynamic>.from(result! as Map),
+          };
+          _imagePreview = null;
+        });
+      }
+    } on ApiProblem catch (error) {
+      if (mounted) setState(() => _imageError = error.message);
+    } finally {
+      if (mounted) setState(() => _uploadingImage = false);
+    }
+  }
+
+  Map<String, dynamic>? get _trainerImage {
+    final value = _profile?['trainerImage'];
+    return value is Map ? Map<String, dynamic>.from(value) : null;
   }
 
   Future<void> _save() async {
@@ -80,6 +185,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final session = context.watch<AuthController>().session;
+    final api = context.read<ApiClient>();
+    final imageUrl = api.mediaUrl(_trainerImage?['imageUrl']);
+    final isTrainer = session?.role == 'Trainer';
     return AsyncPanel(
       loading: _loading,
       error: _error,
@@ -92,9 +200,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
               padding: const EdgeInsets.all(20),
               child: Row(
                 children: [
-                  const CircleAvatar(
-                    radius: 28,
-                    child: Icon(Icons.person, size: 30),
+                  _ProfileAvatar(
+                    name: session?.displayName ?? '',
+                    imageUrl: imageUrl,
+                    preview: _imagePreview,
                   ),
                   const SizedBox(width: 14),
                   Expanded(
@@ -116,6 +225,58 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
           const SizedBox(height: 16),
+          if (isTrainer) ...[
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Profilna slika trenera',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 6),
+                    const Text('JPG, PNG ili WebP · najviše 5 MiB'),
+                    if (_imageError != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _imageError!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
+                      children: [
+                        FilledButton.icon(
+                          key: const Key('trainer-image-upload'),
+                          onPressed: _uploadingImage
+                              ? null
+                              : _pickAndUploadImage,
+                          icon: const Icon(Icons.add_a_photo_outlined),
+                          label: Text(
+                            _uploadingImage ? 'Slanje...' : 'Odaberi sliku',
+                          ),
+                        ),
+                        if (imageUrl != null)
+                          OutlinedButton.icon(
+                            key: const Key('trainer-image-remove'),
+                            onPressed: _uploadingImage ? null : _removeImage,
+                            icon: const Icon(Icons.delete_outline),
+                            label: const Text('Ukloni'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
           Card(
             child: Padding(
               padding: const EdgeInsets.all(20),
@@ -173,5 +334,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ],
       ),
     );
+  }
+}
+
+class _ProfileAvatar extends StatelessWidget {
+  const _ProfileAvatar({required this.name, this.imageUrl, this.preview});
+
+  final String name;
+  final String? imageUrl;
+  final Uint8List? preview;
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = Center(
+      child: Text(
+        _initials(name),
+        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+      ),
+    );
+    final image = preview != null
+        ? Image.memory(preview!, fit: BoxFit.cover)
+        : imageUrl == null
+        ? fallback
+        : Image.network(
+            imageUrl!,
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => fallback,
+          );
+    return ClipOval(child: SizedBox.square(dimension: 58, child: image));
+  }
+
+  static String _initials(String value) {
+    final parts = value.trim().split(RegExp(r'\s+')).where((x) => x.isNotEmpty);
+    return parts.take(2).map((x) => x[0].toUpperCase()).join();
   }
 }

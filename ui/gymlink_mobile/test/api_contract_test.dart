@@ -96,6 +96,52 @@ void main() {
       ),
     );
   });
+
+  test('trainer image URLs resolve against the configured API origin', () {
+    final api = ApiClient(
+      _Tokens(),
+      baseUrlOverride: 'http://10.0.2.2:62287',
+      httpClient: MockClient((_) async => http.Response('{}', 200)),
+    );
+
+    expect(
+      api.mediaUrl('/uploads/trainer-images/image.jpg'),
+      'http://10.0.2.2:62287/uploads/trainer-images/image.jpg',
+    );
+    expect(api.mediaUrl(null), isNull);
+  });
+
+  test(
+    'trainer image upload sends multipart file and concurrency token',
+    () async {
+      late http.Request captured;
+      final api = ApiClient(
+        _Tokens(),
+        baseUrlOverride: 'https://example.test',
+        httpClient: MockClient((request) async {
+          captured = request;
+          return http.Response(
+            '{"trainerProfileId":"trainer-1","imageUrl":null,'
+            '"contentType":null,"fileSizeBytes":null,"concurrencyToken":"next"}',
+            200,
+          );
+        }),
+      );
+
+      await api.postMultipart(
+        '/api/profile/trainer-image',
+        bytes: const [0xFF, 0xD8, 0xFF],
+        fileName: 'trainer.jpg',
+        contentType: 'image/jpeg',
+        fields: const {'concurrencyToken': 'current'},
+      );
+
+      expect(captured.method, 'POST');
+      expect(captured.headers['content-type'], contains('multipart/form-data'));
+      expect(latin1.decode(captured.bodyBytes), contains('current'));
+      expect(latin1.decode(captured.bodyBytes), contains('trainer.jpg'));
+    },
+  );
 }
 
 final class _Tokens implements AuthTokenSource {

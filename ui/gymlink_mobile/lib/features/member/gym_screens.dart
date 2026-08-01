@@ -648,7 +648,12 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
                   ..._trainers.map(
                     (trainer) => Card(
                       child: ListTile(
-                        leading: const CircleAvatar(child: Icon(Icons.person)),
+                        leading: TrainerImageAvatar(
+                          name: trainer['displayName'].toString(),
+                          imageUrl: context.read<ApiClient>().mediaUrl(
+                            trainer['imageUrl'],
+                          ),
+                        ),
                         title: Text(trainer['displayName'].toString()),
                         subtitle: Text(
                           'Ocjena ${trainer['averageRating']} · ${trainer['reviewCount']} recenzija',
@@ -1108,16 +1113,12 @@ class _BookingScreenState extends State<BookingScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            CircleAvatar(
-              radius: 29,
-              backgroundColor: GymLinkColors.blue.withValues(alpha: 0.12),
-              child: Text(
-                _initials(name),
-                style: const TextStyle(
-                  color: GymLinkColors.blue,
-                  fontWeight: FontWeight.w800,
-                ),
+            TrainerImageAvatar(
+              name: name,
+              imageUrl: context.read<ApiClient>().mediaUrl(
+                widget.trainer['imageUrl'],
               ),
+              radius: 29,
             ),
             const SizedBox(width: 13),
             Expanded(
@@ -1547,16 +1548,6 @@ class _BookingScreenState extends State<BookingScreen> {
       '${date.year.toString().padLeft(4, '0')}-'
       '${date.month.toString().padLeft(2, '0')}-'
       '${date.day.toString().padLeft(2, '0')}';
-
-  String _initials(String value) {
-    final parts = value
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((part) => part.isNotEmpty)
-        .toList();
-    if (parts.isEmpty) return 'T';
-    return parts.take(2).map((part) => part[0].toUpperCase()).join();
-  }
 }
 
 class _Legend extends StatelessWidget {

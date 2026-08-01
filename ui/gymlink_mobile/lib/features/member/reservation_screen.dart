@@ -111,8 +111,11 @@ class _MemberReservationsScreenState extends State<MemberReservationsScreen> {
                           padding: const EdgeInsets.only(bottom: 10),
                           child: Card(
                             child: ListTile(
-                              leading: const CircleAvatar(
-                                child: Icon(Icons.fitness_center),
+                              leading: TrainerImageAvatar(
+                                name: item['trainerName'].toString(),
+                                imageUrl: context.read<ApiClient>().mediaUrl(
+                                  item['trainerImageUrl'],
+                                ),
                               ),
                               title: Text(
                                 '${item['trainerName']} · ${item['gymName']}',

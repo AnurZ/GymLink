@@ -14,6 +14,7 @@ using GymLink.Infrastructure.Payments;
 using GymLink.Application.Payments;
 using GymLink.Application.Reservations;
 using GymLink.Application.Memberships;
+using GymLink.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -77,6 +78,15 @@ public static class DependencyInjection
                 "Enabled geocoding configuration is incomplete or invalid.")
             .ValidateOnStart();
         services.AddScoped<ILocationSearchService, NominatimLocationSearchService>();
+        services.AddOptions<FileStorageOptions>()
+            .Bind(configuration.GetSection(FileStorageOptions.SectionName))
+            .Validate(
+                options => !string.IsNullOrWhiteSpace(options.RootPath) &&
+                    options.RequestPath.StartsWith('/') &&
+                    !options.RequestPath.EndsWith('/'),
+                "FileStorage__RootPath and a valid FileStorage__RequestPath are required.")
+            .ValidateOnStart();
+        services.AddScoped<IFileStorage, FileSystemFileStorage>();
         AddStripePayments(services, configuration);
         services.AddHttpContextAccessor();
         services.AddScoped<ClaimsRequestContext>();

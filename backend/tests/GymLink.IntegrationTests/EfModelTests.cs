@@ -11,6 +11,7 @@ using GymLink.Infrastructure.Identity;
 using GymLink.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace GymLink.IntegrationTests;
@@ -52,6 +53,28 @@ public sealed class EfModelTests
             Assert.True(property.IsConcurrencyToken);
             Assert.Equal(ValueGenerated.OnAddOrUpdate, property.ValueGenerated);
         }
+    }
+
+    [Fact]
+    public void Trainer_image_metadata_is_nullable_bounded_and_database_constrained()
+    {
+        using var context = CreateContext(Guid.NewGuid());
+        var trainer = context.Model.FindEntityType(typeof(TrainerProfile))!;
+
+        Assert.Equal(500, trainer.FindProperty(nameof(TrainerProfile.ImageStorageKey))!.GetMaxLength());
+        Assert.Equal(1000, trainer.FindProperty(nameof(TrainerProfile.ImageUrl))!.GetMaxLength());
+        Assert.Equal(32, trainer.FindProperty(nameof(TrainerProfile.ImageContentType))!.GetMaxLength());
+        Assert.True(trainer.FindProperty(nameof(TrainerProfile.ImageStorageKey))!.IsNullable);
+        Assert.True(trainer.FindProperty(nameof(TrainerProfile.ImageUrl))!.IsNullable);
+        Assert.True(trainer.FindProperty(nameof(TrainerProfile.ImageContentType))!.IsNullable);
+        Assert.True(trainer.FindProperty(nameof(TrainerProfile.ImageFileSizeBytes))!.IsNullable);
+
+        var designTrainer = context.GetService<IDesignTimeModel>().Model
+            .FindEntityType(typeof(TrainerProfile))!;
+        var constraintNames = designTrainer.GetCheckConstraints().Select(x => x.Name).ToHashSet();
+        Assert.Contains("CK_TrainerProfiles_ImageMetadata", constraintNames);
+        Assert.Contains("CK_TrainerProfiles_ImageContentType", constraintNames);
+        Assert.Contains("CK_TrainerProfiles_ImageFileSize", constraintNames);
     }
 
     [Fact]

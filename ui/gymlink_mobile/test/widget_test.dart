@@ -21,6 +21,16 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  testWidgets('trainer image avatar falls back to initials', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: TrainerImageAvatar(name: 'Anur Zjakić')),
+      ),
+    );
+
+    expect(find.text('AZ'), findsOneWidget);
+  });
+
   testWidgets(
     'GymLink status and empty states render approved visual language',
     (tester) async {

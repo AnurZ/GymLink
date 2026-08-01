@@ -42,6 +42,12 @@ dotnet ef database update `
   --startup-project backend/src/GymLink.Api
 ```
 
+Trainer image bytes are stored on the backend filesystem under
+`FileStorage__RootPath`; SQL Server stores only the opaque storage key,
+API-relative URL, content type, and size. Keep the default development path or
+set it to a persistent, writable directory for the target environment. Only
+`FileStorage__RequestPath` is exposed publicly by the API.
+
 7. To create the linked evaluation dataset, set this value in `.env`:
 
 ```text
@@ -253,5 +259,6 @@ inline and the backend remains the authoritative validator.
 
 Durable notifications and password reset are implemented in Phase 7. Stripe
 hosted Checkout with an Android deep-link return is implemented in Phase 8;
-chat is Phase 9, recommendations are Phase 10, and statistics/PDF
+chat is Phase 9, Trainer profile images are Phase 9.3, recommendations are
+Phase 10, and statistics/PDF
 reports are Phase 11.

@@ -239,7 +239,12 @@ class _ConversationTile extends StatelessWidget {
       child: ListTile(
         key: Key('conversation-${conversation.id}'),
         onTap: onTap,
-        leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+        leading: TrainerImageAvatar(
+          name: conversation.counterpartDisplayName,
+          imageUrl: context.read<ApiClient>().mediaUrl(
+            conversation.counterpartImageUrl,
+          ),
+        ),
         title: Text(
           conversation.counterpartDisplayName,
           style: const TextStyle(fontWeight: FontWeight.w700),

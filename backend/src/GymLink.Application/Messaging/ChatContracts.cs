@@ -58,6 +58,7 @@ public sealed record ConversationDto(
     Guid CounterpartUserId,
     string CounterpartDisplayName,
     string CounterpartRole,
+    string? CounterpartImageUrl,
     Guid GymId,
     string GymName,
     string? LastMessageText,

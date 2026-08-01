@@ -1,5 +1,7 @@
 using GymLink.Application.Authorization;
 using GymLink.Application.Catalog;
+using GymLink.Application.TrainerImages;
+using GymLink.Domain.Trainers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -11,7 +13,8 @@ namespace GymLink.Api.Controllers;
 public sealed class TenantCatalogController(
     IGymCatalogService gyms,
     ITrainerCatalogService trainers,
-    IMembershipPlanService plans) : ControllerBase
+    IMembershipPlanService plans,
+    ITrainerImageService trainerImages) : ControllerBase
 {
     [HttpGet("gym")]
     public async Task<IActionResult> GetGym(CancellationToken cancellationToken) =>
@@ -57,6 +60,26 @@ public sealed class TenantCatalogController(
         await trainers.DeactivateAsync(id, cancellationToken);
         return NoContent();
     }
+
+    [HttpPost("trainers/{id:guid}/image")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(TrainerProfile.MaximumImageFileSizeBytes + 65536)]
+    [RequestFormLimits(MultipartBodyLengthLimit = TrainerProfile.MaximumImageFileSizeBytes + 65536)]
+    public async Task<ActionResult<TrainerImageDto>> UploadTrainerImage(
+        Guid id,
+        [FromForm] TrainerImageUploadForm form,
+        CancellationToken cancellationToken) =>
+        Ok(await trainerImages.UploadForTenantAsync(
+            id,
+            await form.ToUploadAsync(cancellationToken),
+            cancellationToken));
+
+    [HttpDelete("trainers/{id:guid}/image")]
+    public async Task<ActionResult<TrainerImageDto>> RemoveTrainerImage(
+        Guid id,
+        TrainerImageMutationRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(await trainerImages.RemoveForTenantAsync(id, request, cancellationToken));
 
     [HttpGet("membership-plans")]
     public async Task<IActionResult> SearchPlans(

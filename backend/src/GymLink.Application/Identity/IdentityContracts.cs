@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using GymLink.Application.TrainerImages;
 
 namespace GymLink.Application.Identity;
 
@@ -98,7 +99,8 @@ public sealed record UserProfileDto(
     string Role,
     bool IsActive,
     TenantSessionDto? Tenant,
-    Guid? TrainerProfileId);
+    Guid? TrainerProfileId,
+    TrainerImageDto? TrainerImage);
 
 public sealed record AuthSessionDto(
     string AccessToken,
