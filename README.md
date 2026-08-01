@@ -201,8 +201,9 @@ The six public, active gyms have seven-day hours, a primary image, verified
 public contact/location details, two active membership plans, varied equipment
 with quantities and notes, and varied training types. Each of the 12 trainers
 has two specializations, three offerings (personal 60 minutes, personal 90
-minutes, and a gym-appropriate 60-minute specialty), plus recurring Morning and
-Evening shifts Monday–Friday.
+minutes, and a gym-appropriate 60-minute specialty), a distinct locally served
+fictional profile portrait, plus recurring Morning and Evening shifts
+Monday–Friday.
 
 The stable seeded workflow contains:
 

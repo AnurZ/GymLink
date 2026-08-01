@@ -75,8 +75,8 @@ internal static class DevelopmentSeedCatalog
             ["Traka za trčanje", "Sobni bicikl", "Eliptični trenažer", "Slobodni utezi", "Smith mašina", "Squat rack", "Cable crossover", "Leg press", "Kettlebell set"],
             ["Personalni trening", "Funkcionalni trening", "Trening snage", "Kondicioni trening"],
             [
-                new("arenatrainer1", "Trening snage", "Trening snage 60 min", "Certificirani trener snage i kondicione pripreme."),
-                new("arenatrainer2", "Kondicioni trening", "Kondicioni trening 60 min", "Trenerica usmjerena na kondiciju i siguran individualni napredak."),
+                new("arenatrainer1", "Trening snage", "Trening snage 60 min", "Certificirani trener snage i kondicione pripreme.", "arenatrainer1.png"),
+                new("arenatrainer2", "Kondicioni trening", "Kondicioni trening 60 min", "Trenerica usmjerena na kondiciju i siguran individualni napredak.", "arenatrainer2.png"),
             ],
             SeedGymHours.Arena),
         new(
@@ -96,8 +96,8 @@ internal static class DevelopmentSeedCatalog
             ["Traka za trčanje", "Sobni bicikl", "Slobodni utezi", "Smith mašina", "Cable crossover", "Leg press", "Kettlebell set"],
             ["Personalni trening", "Funkcionalni trening", "Pilates", "Mobilnost"],
             [
-                new("perfectfittrainer1", "Funkcionalni trening", "Funkcionalni trening 60 min", "Trener funkcionalnog treninga i individualne pripreme."),
-                new("perfectfittrainer2", "Pilates", "Pilates 60 min", "Trenerica pilatesa, posture i kontroliranog pokreta."),
+                new("perfectfittrainer1", "Funkcionalni trening", "Funkcionalni trening 60 min", "Trener funkcionalnog treninga i individualne pripreme.", "perfectfittrainer1.png"),
+                new("perfectfittrainer2", "Pilates", "Pilates 60 min", "Trenerica pilatesa, posture i kontroliranog pokreta.", "perfectfittrainer2.png"),
             ],
             SeedGymHours.PerfectFit),
         new(
@@ -117,8 +117,8 @@ internal static class DevelopmentSeedCatalog
             ["Traka za trčanje", "Sobni bicikl", "Slobodni utezi", "Squat rack", "Cable crossover", "Kettlebell set", "Vreća za boks"],
             ["Personalni trening", "Funkcionalni trening", "Kondicioni trening", "Kickboxing"],
             [
-                new("respecttrainer1", "Funkcionalni trening", "Funkcionalni trening 60 min", "Trener funkcionalne pripreme i rada jedan-na-jedan."),
-                new("respecttrainer2", "Kickboxing", "Kickboxing 60 min", "Trenerica kondicione pripreme i osnova kickboxinga."),
+                new("respecttrainer1", "Funkcionalni trening", "Funkcionalni trening 60 min", "Trener funkcionalne pripreme i rada jedan-na-jedan.", "respecttrainer1.png"),
+                new("respecttrainer2", "Kickboxing", "Kickboxing 60 min", "Trenerica kondicione pripreme i osnova kickboxinga.", "respecttrainer2.png"),
             ],
             SeedGymHours.Respect),
         new(
@@ -138,8 +138,8 @@ internal static class DevelopmentSeedCatalog
             ["Traka za trčanje", "Sobni bicikl", "Eliptični trenažer", "Slobodni utezi", "Smith mašina", "Squat rack", "Cable crossover", "Leg press", "Kettlebell set"],
             ["Personalni trening", "Funkcionalni trening", "Trening snage", "Kondicioni trening"],
             [
-                new("oxidetrainer1", "Trening snage", "Trening snage 60 min", "Trener hipertrofije, snage i pravilne tehnike izvođenja vježbi."),
-                new("oxidetrainer2", "Kondicioni trening", "Kondicioni trening 60 min", "Trenerica izdržljivosti i individualnog fitness programa."),
+                new("oxidetrainer1", "Trening snage", "Trening snage 60 min", "Trener hipertrofije, snage i pravilne tehnike izvođenja vježbi.", "oxidetrainer1.png"),
+                new("oxidetrainer2", "Kondicioni trening", "Kondicioni trening 60 min", "Trenerica izdržljivosti i individualnog fitness programa.", "oxidetrainer2.png"),
             ],
             SeedGymHours.Oxide),
         new(
@@ -159,8 +159,8 @@ internal static class DevelopmentSeedCatalog
             ["Traka za trčanje", "Sobni bicikl", "Slobodni utezi", "Cable crossover", "Leg press", "Kettlebell set"],
             ["Personalni trening", "Funkcionalni trening", "Kondicioni trening", "Mobilnost"],
             [
-                new("fitfactorytrainer1", "Funkcionalni trening", "Funkcionalni trening 60 min", "Trener funkcionalne pripreme i razvoja opće kondicije."),
-                new("fitfactorytrainer2", "Mobilnost", "Mobilnost 60 min", "Trenerica mobilnosti, oporavka i pravilnih obrazaca pokreta."),
+                new("fitfactorytrainer1", "Funkcionalni trening", "Funkcionalni trening 60 min", "Trener funkcionalne pripreme i razvoja opće kondicije.", "fitfactorytrainer1.png"),
+                new("fitfactorytrainer2", "Mobilnost", "Mobilnost 60 min", "Trenerica mobilnosti, oporavka i pravilnih obrazaca pokreta.", "fitfactorytrainer2.png"),
             ],
             SeedGymHours.FitFactory),
         new(
@@ -180,8 +180,8 @@ internal static class DevelopmentSeedCatalog
             ["Traka za trčanje", "Slobodni utezi", "Smith mašina", "Squat rack", "Kettlebell set", "Vreća za boks"],
             ["Personalni trening", "Funkcionalni trening", "Trening snage", "Kickboxing"],
             [
-                new("iskratrainer1", "Trening snage", "Trening snage 60 min", "Trener razvoja snage i individualne sportske pripreme."),
-                new("iskratrainer2", "Kickboxing", "Kickboxing 60 min", "Trenerica kondicije i tehničkih osnova kickboxinga."),
+                new("iskratrainer1", "Trening snage", "Trening snage 60 min", "Trener razvoja snage i individualne sportske pripreme.", "iskratrainer1.png"),
+                new("iskratrainer2", "Kickboxing", "Kickboxing 60 min", "Trenerica kondicije i tehničkih osnova kickboxinga.", "iskratrainer2.png"),
             ],
             SeedGymHours.Iskra),
     ];
@@ -224,7 +224,8 @@ internal sealed record SeedTrainer(
     string Username,
     string SpecialtyTrainingType,
     string SpecialtyOfferingName,
-    string Biography);
+    string Biography,
+    string ImageAssetName);
 
 internal sealed record SeedGym(
     string Slug,

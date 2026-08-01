@@ -20,6 +20,10 @@
     <ProjectReference Include="..\GymLink.Contracts\GymLink.Contracts.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Seeding\Assets\TrainerImages\*.png" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>

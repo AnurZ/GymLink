@@ -22,8 +22,12 @@ internal sealed class DevelopmentDataSeeder(
     UserManager<GymLinkIdentityUser> userManager,
     RoleManager<IdentityRole<Guid>> roleManager,
     ITenantMutationScope tenantMutationScope,
+    IFileStorage fileStorage,
     IOptions<DevelopmentSeedOptions> options)
 {
+    private const string TrainerImageResourcePrefix =
+        "GymLink.Infrastructure.Seeding.Assets.TrainerImages.";
+
     private static readonly DateTime MembershipRequestedAtUtc = Utc(2026, 7, 10, 10);
     private static readonly DateTime MembershipActivatedAtUtc = Utc(2026, 7, 15, 10);
     private static readonly DateTime ReservationConfirmedAtUtc = Utc(2026, 7, 20, 10);
@@ -645,6 +649,7 @@ internal sealed class DevelopmentDataSeeder(
         trainer.Biography = definition.Biography;
         trainer.Credentials = "GymLink demo certifikat za stručno vođenje treninga";
         trainer.IsActive = true;
+        await EnsureTrainerImageAsync(trainer, definition, cancellationToken);
 
         var personal = trainingTypes["Personalni trening"];
         var specialty = trainingTypes[definition.SpecialtyTrainingType];
@@ -690,6 +695,36 @@ internal sealed class DevelopmentDataSeeder(
             cancellationToken);
         await EnsureTrainerScheduleAsync(trainer, cancellationToken);
         return new SeededTrainer(definition, user, trainer, personal60);
+    }
+
+    private async Task EnsureTrainerImageAsync(
+        TrainerProfile trainer,
+        SeedTrainer definition,
+        CancellationToken cancellationToken)
+    {
+        if (trainer.ImageUrl is not null)
+        {
+            return;
+        }
+
+        var resourceName = TrainerImageResourcePrefix + definition.ImageAssetName;
+        await using var content = typeof(DevelopmentDataSeeder).Assembly
+            .GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException(
+                $"The embedded trainer seed image '{resourceName}' was not found.");
+        var fileSizeBytes = content.Length;
+        var saved = await fileStorage.SaveAsync(
+            FileStorageArea.TrainerImages,
+            content,
+            "image/png",
+            definition.ImageAssetName,
+            cancellationToken);
+        trainer.SetImage(
+            saved.StorageKey,
+            saved.PublicUrl ?? throw new InvalidOperationException(
+                "Trainer seed image storage did not return a public URL."),
+            "image/png",
+            fileSizeBytes);
     }
 
     private async Task<TrainerServiceOffering> FindOrCreateOfferingAsync(

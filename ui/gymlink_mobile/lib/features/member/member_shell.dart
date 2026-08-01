@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:provider/provider.dart';
 
 import '../profile/profile_screen.dart';
@@ -22,6 +25,13 @@ class _MemberShellState extends State<MemberShell> {
   int _chatUnreadCount = 0;
   ReservationRefreshController? _reservationsController;
   late List<Widget> _pages;
+
+  void _openRecommendations() {
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute(builder: (_) => const RecommendationScreen()),
+    );
+  }
 
   @override
   void didChangeDependencies() {
@@ -58,15 +68,7 @@ class _MemberShellState extends State<MemberShell> {
         style: const TextStyle(fontWeight: FontWeight.w800),
       ),
       actions: [
-        IconButton(
-          key: const Key('open-recommendations'),
-          tooltip: 'Preporuke',
-          onPressed: () => Navigator.push<void>(
-            context,
-            MaterialPageRoute(builder: (_) => const RecommendationScreen()),
-          ),
-          icon: const Icon(Icons.auto_awesome_outlined),
-        ),
+        RecommendationAttentionAction(onPressed: _openRecommendations),
         const NotificationBell(),
       ],
     ),
@@ -106,6 +108,90 @@ class _MemberShellState extends State<MemberShell> {
           label: 'Profil',
         ),
       ],
+    ),
+  );
+}
+
+abstract interface class RecommendationCueStorage {
+  Future<bool> hasSeenRecommendations();
+  Future<void> markRecommendationsSeen();
+}
+
+final class SecureRecommendationCueStorage implements RecommendationCueStorage {
+  const SecureRecommendationCueStorage();
+
+  static const _key = 'gymlink.recommendations_seen';
+  static const _storage = FlutterSecureStorage();
+
+  @override
+  Future<bool> hasSeenRecommendations() async =>
+      await _storage.read(key: _key) == 'true';
+
+  @override
+  Future<void> markRecommendationsSeen() =>
+      _storage.write(key: _key, value: 'true');
+}
+
+class RecommendationAttentionAction extends StatefulWidget {
+  const RecommendationAttentionAction({
+    super.key,
+    required this.onPressed,
+    this.storage = const SecureRecommendationCueStorage(),
+  });
+
+  final VoidCallback onPressed;
+  final RecommendationCueStorage storage;
+
+  @override
+  State<RecommendationAttentionAction> createState() =>
+      _RecommendationAttentionActionState();
+}
+
+class _RecommendationAttentionActionState
+    extends State<RecommendationAttentionAction> {
+  bool _showDot = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    var show = true;
+    try {
+      show = !await widget.storage.hasSeenRecommendations();
+    } catch (_) {
+      show = true;
+    }
+    if (mounted) setState(() => _showDot = show);
+  }
+
+  Future<void> _rememberSeen() async {
+    try {
+      await widget.storage.markRecommendationsSeen();
+    } catch (_) {
+      // The cue is best-effort and must never block the destination.
+    }
+  }
+
+  void _open() {
+    if (_showDot) setState(() => _showDot = false);
+    unawaited(_rememberSeen());
+    widget.onPressed();
+  }
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    key: const Key('open-recommendations'),
+    tooltip: 'Preporuke',
+    onPressed: _open,
+    icon: Badge(
+      key: const Key('recommendation-attention-dot'),
+      isLabelVisible: _showDot,
+      backgroundColor: Colors.red,
+      smallSize: 8,
+      child: const Icon(Icons.auto_awesome_outlined),
     ),
   );
 }

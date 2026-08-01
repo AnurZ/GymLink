@@ -164,25 +164,13 @@ class _GymMap extends StatefulWidget {
 class _GymMapState extends State<_GymMap> {
   final _mapController = MapController();
 
+  static const _fallbackCenter = LatLng(43.8563, 18.4131);
+  static const _fallbackZoom = 8.0;
+  static const _fitPadding = EdgeInsets.all(40);
+
   List<Map<String, dynamic>> get _validGyms => widget.gyms
       .where((gym) => gym['latitude'] is num && gym['longitude'] is num)
       .toList();
-
-  LatLng get _resultCenter {
-    final valid = _validGyms;
-    return valid.isEmpty
-        ? const LatLng(43.8563, 18.4131)
-        : LatLng(
-            valid
-                    .map((gym) => (gym['latitude'] as num).toDouble())
-                    .reduce((a, b) => a + b) /
-                valid.length,
-            valid
-                    .map((gym) => (gym['longitude'] as num).toDouble())
-                    .reduce((a, b) => a + b) /
-                valid.length,
-          );
-  }
 
   @override
   void didUpdateWidget(covariant _GymMap oldWidget) {
@@ -204,7 +192,45 @@ class _GymMapState extends State<_GymMap> {
     _mapController.move(camera.center, (camera.zoom + delta).clamp(6.0, 19.0));
   }
 
-  void _centerMap() => _mapController.move(_resultCenter, 13);
+  CameraFit get _resultCameraFit => CameraFit.coordinates(
+    coordinates: _validGyms
+        .map(
+          (gym) => LatLng(
+            (gym['latitude'] as num).toDouble(),
+            (gym['longitude'] as num).toDouble(),
+          ),
+        )
+        .toList(growable: false),
+    padding: _fitPadding,
+    minZoom: 6,
+    maxZoom: 13,
+  );
+
+  void _centerMap() {
+    if (_validGyms.isEmpty) {
+      _mapController.move(_fallbackCenter, _fallbackZoom);
+      return;
+    }
+    _mapController.fitCamera(_resultCameraFit);
+  }
+
+  Widget _markerContent(BuildContext context, Map<String, dynamic> gym) {
+    final imageUrl = context.read<ApiClient>().mediaUrl(gym['primaryImageUrl']);
+    const fallback = ColoredBox(
+      color: Colors.white,
+      child: Icon(Icons.fitness_center, color: GymLinkColors.blue),
+    );
+    return ClipOval(
+      child: imageUrl == null
+          ? fallback
+          : Image.network(
+              imageUrl,
+              key: Key('gym-map-marker-image-${gym['id']}'),
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => fallback,
+            ),
+    );
+  }
 
   Widget _mapControlButton({
     required Key key,
@@ -238,8 +264,9 @@ class _GymMapState extends State<_GymMap> {
             FlutterMap(
               mapController: _mapController,
               options: MapOptions(
-                initialCenter: _resultCenter,
-                initialZoom: 13,
+                initialCenter: _fallbackCenter,
+                initialZoom: _fallbackZoom,
+                initialCameraFit: valid.isEmpty ? null : _resultCameraFit,
                 minZoom: 6,
                 maxZoom: 19,
               ),
@@ -265,6 +292,7 @@ class _GymMapState extends State<_GymMap> {
                             child: GestureDetector(
                               onTap: () => widget.onOpen(gym),
                               child: Container(
+                                padding: const EdgeInsets.all(3),
                                 decoration: BoxDecoration(
                                   color: Colors.white,
                                   shape: BoxShape.circle,
@@ -279,10 +307,7 @@ class _GymMapState extends State<_GymMap> {
                                     ),
                                   ],
                                 ),
-                                child: const Icon(
-                                  Icons.fitness_center,
-                                  color: GymLinkColors.blue,
-                                ),
+                                child: _markerContent(context, gym),
                               ),
                             ),
                           ),

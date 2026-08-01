@@ -78,6 +78,7 @@ public sealed class SeededIdentityApiTests
             }
             List<(Guid UserId, RecommendationTargetType TargetType, Guid TargetId,
                 decimal Score, string Reason)> firstGeneration;
+            Dictionary<Guid, string> firstTrainerImageUrls;
             await using (var firstVerification = CreateContext(connectionString))
             {
                 firstGeneration = (await firstVerification.Recommendations.AsNoTracking()
@@ -88,6 +89,18 @@ public sealed class SeededIdentityApiTests
                     .Select(x => (x.UserId, x.TargetType, x.TargetId, x.Score, x.Reason))
                     .ToList();
                 Assert.Equal(72, firstGeneration.Count);
+                var firstTrainerImages = await firstVerification.TrainerProfiles
+                    .IgnoreQueryFilters()
+                    .AsNoTracking()
+                    .ToListAsync();
+                Assert.Equal(12, firstTrainerImages.Count);
+                Assert.All(firstTrainerImages, AssertSeededTrainerImage);
+                Assert.Equal(
+                    12,
+                    firstTrainerImages.Select(x => x.ImageUrl).Distinct().Count());
+                firstTrainerImageUrls = firstTrainerImages.ToDictionary(
+                    x => x.Id,
+                    x => x.ImageUrl!);
             }
 
             await using var factory = CreateFactory(connectionString);
@@ -341,6 +354,8 @@ public sealed class SeededIdentityApiTests
 
             Assert.All(trainerProfiles, trainer =>
             {
+                AssertSeededTrainerImage(trainer);
+                Assert.Equal(firstTrainerImageUrls[trainer.Id], trainer.ImageUrl);
                 Assert.Equal(2, specializations.Count(x => x.TrainerProfileId == trainer.Id));
                 var trainerOfferings = offerings.Where(x => x.TrainerProfileId == trainer.Id).ToList();
                 Assert.Equal(3, trainerOfferings.Count);
@@ -359,6 +374,14 @@ public sealed class SeededIdentityApiTests
                 Assert.Equal(5, trainerShifts.Count(x => x.Period == TrainerShiftPeriod.Morning));
                 Assert.Equal(5, trainerShifts.Count(x => x.Period == TrainerShiftPeriod.Evening));
             });
+
+            foreach (var trainer in trainerProfiles)
+            {
+                using var response = await client.GetAsync(trainer.ImageUrl);
+                response.EnsureSuccessStatusCode();
+                Assert.Equal("image/png", response.Content.Headers.ContentType?.MediaType);
+                Assert.Equal(trainer.ImageFileSizeBytes, response.Content.Headers.ContentLength);
+            }
 
             var membershipRequests = await verificationContext.MembershipRequests
                 .IgnoreQueryFilters()
@@ -499,6 +522,20 @@ public sealed class SeededIdentityApiTests
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<AuthSessionDto>()
             ?? throw new InvalidOperationException("Login returned no session.");
+    }
+
+    private static void AssertSeededTrainerImage(
+        GymLink.Domain.Trainers.TrainerProfile trainer)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(trainer.ImageStorageKey));
+        Assert.EndsWith(".png", trainer.ImageStorageKey, StringComparison.OrdinalIgnoreCase);
+        Assert.False(string.IsNullOrWhiteSpace(trainer.ImageUrl));
+        Assert.StartsWith("/uploads/trainer-images/", trainer.ImageUrl, StringComparison.Ordinal);
+        Assert.Equal("image/png", trainer.ImageContentType);
+        Assert.InRange(
+            trainer.ImageFileSizeBytes!.Value,
+            1,
+            GymLink.Domain.Trainers.TrainerProfile.MaximumImageFileSizeBytes);
     }
 
     private static void AssertTokenClaims(string value, ExpectedAccount expected)

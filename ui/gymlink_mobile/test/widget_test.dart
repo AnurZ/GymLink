@@ -879,6 +879,31 @@ void main() {
         final mostar = request.url.queryParameters['query'] == 'Mostar';
         final noLocation =
             request.url.queryParameters['query'] == 'Bez lokacije';
+        if (!mostar && !noLocation) {
+          return _jsonResponse(
+            _page([
+              {
+                'id': 'gym-sarajevo',
+                'name': 'Gym Sarajevo',
+                'latitude': 43.8563,
+                'longitude': 18.4131,
+                'primaryImageUrl': 'http://invalid.test/gym.jpg',
+              },
+              {
+                'id': 'gym-mostar-initial',
+                'name': 'Gym Mostar',
+                'latitude': 43.3438,
+                'longitude': 17.8078,
+              },
+              {
+                'id': 'gym-bihac',
+                'name': 'Gym Bihać',
+                'latitude': 44.8169,
+                'longitude': 15.8708,
+              },
+            ]),
+          );
+        }
         return _jsonResponse(
           _page([
             {
@@ -926,6 +951,17 @@ void main() {
       find.byKey(const Key('gym-map-marker-gym-sarajevo')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const Key('gym-map-marker-image-gym-sarajevo')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('gym-map-marker-gym-bihac')),
+        matching: find.byIcon(Icons.fitness_center),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const Key('gym-map-marker-gym-sarajevo')));
     await tester.pump();
     expect(navigatorObserver.pushCount, 2);
@@ -934,10 +970,11 @@ void main() {
 
     final map = tester.widget<FlutterMap>(find.byType(FlutterMap));
     final controller = map.mapController!;
-    expect(controller.camera.zoom, 13);
+    expect(controller.camera.zoom, inInclusiveRange(6, 10));
+    final initialZoom = controller.camera.zoom;
     await tester.tap(find.byKey(const Key('gym-discovery-map-zoom-in')));
     await tester.pump();
-    expect(controller.camera.zoom, 14);
+    expect(controller.camera.zoom, closeTo(initialZoom + 1, 0.0001));
     controller.move(controller.camera.center, 19);
     await tester.tap(find.byKey(const Key('gym-discovery-map-zoom-in')));
     await tester.pump();
@@ -950,9 +987,19 @@ void main() {
     controller.move(const LatLng(42, 16), 17);
     await tester.tap(find.byKey(const Key('gym-discovery-map-center')));
     await tester.pump();
-    expect(controller.camera.zoom, 13);
-    expect(controller.camera.center.latitude, closeTo(43.8563, 0.0001));
-    expect(controller.camera.center.longitude, closeTo(18.4131, 0.0001));
+    expect(controller.camera.zoom, inInclusiveRange(6, 10));
+    expect(
+      controller.camera.visibleBounds.contains(const LatLng(43.8563, 18.4131)),
+      isTrue,
+    );
+    expect(
+      controller.camera.visibleBounds.contains(const LatLng(43.3438, 17.8078)),
+      isTrue,
+    );
+    expect(
+      controller.camera.visibleBounds.contains(const LatLng(44.8169, 15.8708)),
+      isTrue,
+    );
 
     await tester.enterText(find.byKey(const Key('gym-search-field')), 'Mostar');
     await tester.tap(find.byKey(const Key('gym-search-submit')));
@@ -960,6 +1007,7 @@ void main() {
     expect(gymQueries, [null, 'Mostar']);
     final updatedMap = tester.widget<FlutterMap>(find.byType(FlutterMap));
     final updatedController = updatedMap.mapController!;
+    expect(updatedController.camera.zoom, 13);
     expect(updatedController.camera.center.latitude, closeTo(43.3438, 0.0001));
     expect(updatedController.camera.center.longitude, closeTo(17.8078, 0.0001));
     expect(
@@ -975,7 +1023,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(gymQueries, [null, 'Mostar', 'Bez lokacije']);
     final fallbackMap = tester.widget<FlutterMap>(find.byType(FlutterMap));
-    expect(fallbackMap.mapController!.camera.zoom, 13);
+    expect(fallbackMap.mapController!.camera.zoom, 8);
     expect(
       fallbackMap.mapController!.camera.center.latitude,
       closeTo(43.8563, 0.0001),

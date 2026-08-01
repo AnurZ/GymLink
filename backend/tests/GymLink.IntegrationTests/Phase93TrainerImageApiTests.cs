@@ -47,6 +47,14 @@ public sealed class Phase93TrainerImageApiTests
             Assert.NotNull(profile?.TrainerImage);
             var trainerId = profile.TrainerProfileId!.Value;
             var initialToken = profile.TrainerImage.ConcurrencyToken;
+            var originalSeedFileName = Path.GetFileName(profile.TrainerImage.ImageUrl);
+            var untouchedSeedFiles = Directory.GetFiles(storageRoot)
+                .Where(x => !string.Equals(
+                    Path.GetFileName(x),
+                    originalSeedFileName,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            Assert.Equal(11, untouchedSeedFiles.Count);
 
             var maximumJpeg = JpegBytes(5 * 1024 * 1024);
             var uploaded = await UploadAsync(
@@ -59,7 +67,8 @@ public sealed class Phase93TrainerImageApiTests
             Assert.StartsWith("/uploads/trainer-images/", uploaded.ImageUrl);
             Assert.Equal("image/jpeg", uploaded.ContentType);
             Assert.Equal(maximumJpeg.LongLength, uploaded.FileSizeBytes);
-            Assert.Single(Directory.GetFiles(storageRoot));
+            Assert.Equal(12, Directory.GetFiles(storageRoot).Length);
+            Assert.All(untouchedSeedFiles, path => Assert.True(File.Exists(path)));
 
             client.DefaultRequestHeaders.Authorization = null;
             var storedImage = await client.GetAsync(uploaded.ImageUrl);
@@ -86,7 +95,8 @@ public sealed class Phase93TrainerImageApiTests
                 initialToken);
             Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
             Assert.Equal("concurrency_conflict", await ProblemCodeAsync(stale));
-            Assert.Single(Directory.GetFiles(storageRoot));
+            Assert.Equal(12, Directory.GetFiles(storageRoot).Length);
+            Assert.All(untouchedSeedFiles, path => Assert.True(File.Exists(path)));
 
             var spoofed = await UploadResponseAsync(
                 client,
@@ -135,7 +145,8 @@ public sealed class Phase93TrainerImageApiTests
                 "image/webp",
                 uploaded.ConcurrencyToken);
             Assert.Equal("image/webp", webp.ContentType);
-            Assert.Single(Directory.GetFiles(storageRoot));
+            Assert.Equal(12, Directory.GetFiles(storageRoot).Length);
+            Assert.All(untouchedSeedFiles, path => Assert.True(File.Exists(path)));
 
             Authorize(client, otherAdminSession);
             var crossTenant = await UploadResponseAsync(
@@ -186,7 +197,8 @@ public sealed class Phase93TrainerImageApiTests
                 "image/png",
                 webp.ConcurrencyToken);
             Assert.Equal("image/png", replaced.ContentType);
-            Assert.Single(Directory.GetFiles(storageRoot));
+            Assert.Equal(12, Directory.GetFiles(storageRoot).Length);
+            Assert.All(untouchedSeedFiles, path => Assert.True(File.Exists(path)));
 
             var removedResponse = await client.SendAsync(new HttpRequestMessage(
                 HttpMethod.Delete,
@@ -200,7 +212,9 @@ public sealed class Phase93TrainerImageApiTests
             removedResponse.EnsureSuccessStatusCode();
             var removed = await removedResponse.Content.ReadFromJsonAsync<TrainerImageDto>();
             Assert.Null(removed?.ImageUrl);
-            Assert.Empty(Directory.GetFiles(storageRoot));
+            Assert.Equal(
+                untouchedSeedFiles.Order(StringComparer.OrdinalIgnoreCase),
+                Directory.GetFiles(storageRoot).Order(StringComparer.OrdinalIgnoreCase));
 
             await using var verification = CreateContext(connectionString);
             var audits = await verification.SecurityAuditRecords
@@ -209,7 +223,7 @@ public sealed class Phase93TrainerImageApiTests
                 .ToListAsync();
             Assert.Equal(
                 [
-                    "trainer_image.uploaded",
+                    "trainer_image.replaced",
                     "trainer_image.replaced",
                     "trainer_image.replaced",
                     "trainer_image.removed",
