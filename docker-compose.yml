@@ -75,6 +75,12 @@ services:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__GymLink: Server=sqlserver,1433;Database=230038;User Id=sa;Password=${GYMLINK_SQLSERVER_SA_PASSWORD};Encrypt=True;TrustServerCertificate=True
       Database__MigrateOnStartup: "true"
+      Jwt__Issuer: ${Jwt__Issuer:-GymLink}
+      Jwt__Audience: ${Jwt__Audience:-GymLink.Clients}
+      Jwt__SigningKey: ${Jwt__SigningKey:?Add Jwt__SigningKey to .env}
+      Jwt__AccessTokenMinutes: ${Jwt__AccessTokenMinutes:-15}
+      Jwt__RefreshTokenDays: ${Jwt__RefreshTokenDays:-30}
+      PasswordReset__CodePepper: ${PasswordReset__CodePepper:?Add PasswordReset__CodePepper to .env}
       RabbitMq__Enabled: "true"
       RabbitMq__Host: rabbitmq
       RabbitMq__Port: "5672"
@@ -86,6 +92,7 @@ services:
       Smtp__Port: "1025"
       Smtp__UseSsl: "false"
       Seed__Enabled: ${GYMLINK_COMPOSE_SEED_ENABLED:-true}
+      Seed__DefaultPassword: ${Seed__DefaultPassword:-Test123!}
       FileStorage__RootPath: /data/trainer-images
       FileStorage__GymRootPath: /data/gym-images
     ports:
@@ -127,6 +134,7 @@ services:
       Smtp__Host: mailpit
       Smtp__Port: "1025"
       Smtp__UseSsl: "false"
+      PasswordReset__CodePepper: ${PasswordReset__CodePepper:?Add PasswordReset__CodePepper to .env}
       Stripe__Enabled: "false"
     networks:
       - gymlink-internal

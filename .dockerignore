@@ -3,8 +3,11 @@
 .agents/
 architectureReference/
 ui/
+artifacts/
+scripts/
 **/bin/
 **/obj/
+**/.gymlink-storage/
 **/.vs/
 **/TestResults/
 **/.dart_tool/
