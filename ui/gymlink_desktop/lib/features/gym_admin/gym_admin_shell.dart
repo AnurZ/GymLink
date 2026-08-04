@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../desktop_frame.dart';
 import '../profile/profile_screen.dart';
 import 'gym_admin_screens.dart';
+import '../reporting/reporting_screens.dart';
 
 class GymAdminShell extends StatelessWidget {
   const GymAdminShell({super.key});
@@ -37,6 +38,11 @@ class GymAdminShell extends StatelessWidget {
         'Rezervacije',
         Icons.event_note_outlined,
         TenantReservationsScreen(),
+      ),
+      DesktopDestination(
+        'Izvještaji',
+        Icons.bar_chart_outlined,
+        GymAdminReportsScreen(),
       ),
       DesktopDestination(
         'Postavke teretane',

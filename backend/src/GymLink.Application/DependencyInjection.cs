@@ -11,6 +11,7 @@ using GymLink.Application.Reservations;
 using GymLink.Application.TrainerImages;
 using GymLink.Application.GymImages;
 using GymLink.Application.Recommendations;
+using GymLink.Application.Reporting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -56,6 +57,11 @@ public static class DependencyInjection
         services.AddScoped<IPaymentReconciliationService, PaymentReconciliationService>();
         services.AddScoped<IRecommendationActivityRecorder, RecommendationActivityRecorder>();
         services.AddScoped<IRecommendationService, RecommendationService>();
+        services.AddScoped<ReportingService>();
+        services.AddScoped<IStatisticsService>(provider =>
+            provider.GetRequiredService<ReportingService>());
+        services.AddScoped<IReportService>(provider =>
+            provider.GetRequiredService<ReportingService>());
         return services;
     }
 }

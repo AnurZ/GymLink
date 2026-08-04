@@ -15,6 +15,8 @@ using GymLink.Application.Payments;
 using GymLink.Application.Reservations;
 using GymLink.Application.Memberships;
 using GymLink.Infrastructure.Storage;
+using GymLink.Infrastructure.Reporting;
+using GymLink.Application.Reporting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -60,6 +62,7 @@ public static class DependencyInjection
         services.AddOptions<DatabaseStartupOptions>()
             .Bind(configuration.GetSection(DatabaseStartupOptions.SectionName));
         services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IReportPdfRenderer, QuestPdfReportRenderer>();
         services.AddHttpClient("Nominatim", (provider, client) =>
         {
             var settings = provider.GetRequiredService<

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../desktop_frame.dart';
 import '../profile/profile_screen.dart';
 import 'central_screens.dart';
+import '../reporting/reporting_screens.dart';
 
 class CentralAdminShell extends StatelessWidget {
   const CentralAdminShell({super.key});
@@ -34,6 +35,11 @@ class CentralAdminShell extends StatelessWidget {
           'Referentni podaci',
           Icons.dataset_outlined,
           ReferenceDataScreen(),
+        ),
+        DesktopDestination(
+          'Statistika',
+          Icons.query_stats_outlined,
+          CentralStatisticsScreen(),
         ),
         DesktopDestination('Moj profil', Icons.person_outline, ProfileScreen()),
       ],

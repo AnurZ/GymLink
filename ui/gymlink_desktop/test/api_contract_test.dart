@@ -175,11 +175,51 @@ void main() {
       expect(utf8.decode(captured[1].bodyBytes), contains('image-1'));
     },
   );
+
+  test('PDF download preserves bytes and safe response metadata', () async {
+    late http.Request captured;
+    final api = ApiClient(
+      _AuthenticatedTokens(),
+      baseUrlOverride: 'https://example.test',
+      httpClient: MockClient((request) async {
+        captured = request;
+        return http.Response.bytes(
+          const [0x25, 0x50, 0x44, 0x46],
+          200,
+          headers: {
+            'content-type': 'application/pdf',
+            'content-disposition':
+                "attachment; filename*=UTF-8''gymlink-clanstva.pdf",
+            'x-report-record-count': '12',
+          },
+        );
+      }),
+    );
+
+    final report = await api.download('/api/tenant/reports/memberships.pdf');
+
+    expect(captured.headers['authorization'], 'Bearer token');
+    expect(captured.headers['accept'], 'application/pdf');
+    expect(report.bytes, const [0x25, 0x50, 0x44, 0x46]);
+    expect(report.fileName, 'gymlink-clanstva.pdf');
+    expect(report.recordCount, 12);
+  });
 }
 
 final class _Tokens implements AuthTokenSource {
   @override
   String? get accessToken => null;
+
+  @override
+  Future<void> invalidate() async {}
+
+  @override
+  Future<bool> refresh() async => false;
+}
+
+final class _AuthenticatedTokens implements AuthTokenSource {
+  @override
+  String? get accessToken => 'token';
 
   @override
   Future<void> invalidate() async {}

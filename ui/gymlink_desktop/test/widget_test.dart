@@ -10,9 +10,186 @@ import 'package:gymlink_desktop/features/central/central_screens.dart';
 import 'package:gymlink_desktop/features/desktop_frame.dart';
 import 'package:gymlink_desktop/features/auth/password_reset_screens.dart';
 import 'package:gymlink_desktop/features/gym_admin/gym_admin_screens.dart';
+import 'package:gymlink_desktop/features/reporting/reporting_screens.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  testWidgets(
+    'Figure 7 statistics load independently and export both reports',
+    (tester) async {
+      tester.view.physicalSize = const Size(1500, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _ReportingApi();
+      var saved = false;
+      var printed = false;
+      await tester.pumpWidget(
+        Provider<ApiClient>.value(
+          value: api,
+          child: MaterialApp(
+            theme: buildGymLinkTheme(),
+            home: Scaffold(
+              body: GymAdminReportsScreen(
+                saveReport: (_) async {
+                  saved = true;
+                  return true;
+                },
+                printReport: (_) async => printed = true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Izvještaji i statistika'), findsOneWidget);
+      expect(find.text('Broj članova'), findsOneWidget);
+      expect(find.text('142'), findsWidgets);
+      expect(find.text('Broj članova po mjesecima'), findsOneWidget);
+      expect(find.text('Tipovi članstva'), findsOneWidget);
+      final exportTrigger = tester.widget<AnimatedContainer>(
+        find.byKey(const Key('export-pdf-trigger')),
+      );
+      final exportContext = tester.element(
+        find.byKey(const Key('export-pdf-trigger')),
+      );
+      expect(
+        (exportTrigger.decoration! as BoxDecoration).color,
+        Theme.of(exportContext).colorScheme.primary,
+      );
+
+      await tester.tap(find.byKey(const Key('export-pdf-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('export-memberships')));
+      await tester.pumpAndSettle();
+      expect(api.downloadedPaths, ['/api/tenant/reports/memberships.pdf']);
+      expect(find.text('PDF izvještaj je spreman'), findsOneWidget);
+
+      await tester.tap(find.text('Sačuvaj'));
+      await tester.pump();
+      await tester.tap(find.text('Štampaj'));
+      await tester.pump();
+      expect(saved, isTrue);
+      expect(printed, isTrue);
+
+      await tester.tap(find.text('Zatvori'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('export-pdf-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('export-reservations')));
+      await tester.pumpAndSettle();
+      expect(api.downloadedPaths, [
+        '/api/tenant/reports/memberships.pdf',
+        '/api/tenant/reports/reservations.pdf',
+      ]);
+    },
+  );
+
+  testWidgets(
+    'report layout supports constrained width and explicit empty charts',
+    (tester) async {
+      tester.view.physicalSize = const Size(760, 720);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        Provider<ApiClient>.value(
+          value: _ReportingApi(emptyCharts: true),
+          child: MaterialApp(
+            theme: buildGymLinkTheme(),
+            home: const Scaffold(body: GymAdminReportsScreen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(
+        find.text('Nema podataka za posljednjih šest mjeseci.'),
+        findsOneWidget,
+      );
+      expect(find.text('Nema aktivnih članstava.'), findsOneWidget);
+    },
+  );
+
+  testWidgets('report export prevents duplicate generation requests', (
+    tester,
+  ) async {
+    final api = _DelayedReportingApi();
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: GymAdminReportsScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('export-pdf-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('export-memberships')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('export-pdf-menu')));
+    await tester.pump();
+
+    expect(api.downloadedPaths, ['/api/tenant/reports/memberships.pdf']);
+    api.pending.complete(_ReportingApi.report);
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+    'report save cancellation and print failure have distinct messages',
+    (tester) async {
+      await tester.pumpWidget(
+        Provider<ApiClient>.value(
+          value: _ReportingApi(),
+          child: MaterialApp(
+            theme: buildGymLinkTheme(),
+            home: Scaffold(
+              body: GymAdminReportsScreen(
+                saveReport: (_) async => false,
+                printReport: (_) async => throw StateError('printer_failed'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('export-pdf-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('export-memberships')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sačuvaj'));
+      await tester.pump();
+      expect(find.text('Spremanje izvještaja je otkazano.'), findsOneWidget);
+      await tester.tap(find.text('Štampaj'));
+      await tester.pump();
+      expect(find.textContaining('PDF nije moguće štampati'), findsOneWidget);
+    },
+  );
+
+  testWidgets('statistics chart failure keeps successful summary cards', (
+    tester,
+  ) async {
+    final api = _ReportingApi(failMonths: true);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: GymAdminReportsScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('142'), findsWidgets);
+    expect(find.textContaining('monthly_failed'), findsOneWidget);
+    expect(find.text('Pokušaj ponovo'), findsOneWidget);
+  });
+
   testWidgets('desktop shell exposes role-specific navigation', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -779,6 +956,85 @@ class _TestTokens implements AuthTokenSource {
 
   @override
   Future<bool> refresh() async => false;
+}
+
+class _ReportingApi extends ApiClient {
+  _ReportingApi({this.failMonths = false, this.emptyCharts = false})
+    : super(_TestTokens());
+
+  final bool failMonths;
+  final bool emptyCharts;
+  final List<String> downloadedPaths = [];
+  static const report = DownloadedFile(
+    bytes: [0x25, 0x50, 0x44, 0x46],
+    fileName: 'gymlink-clanstva.pdf',
+    contentType: 'application/pdf',
+    recordCount: 12,
+  );
+
+  @override
+  Future<Object?> get(
+    String path, {
+    Map<String, Object?> query = const {},
+    bool authenticated = true,
+  }) async {
+    if (path == '/api/tenant/statistics/summary') {
+      return {
+        'activeMemberCount': 142,
+        'memberChangePercentage': 12,
+        'reservationCount': 89,
+        'reservationsToday': 8,
+        'averageTrainerRating': 4.7,
+      };
+    }
+    if (path == '/api/tenant/statistics/members-by-month') {
+      if (failMonths) throw StateError('monthly_failed');
+      if (emptyCharts) return {'items': <Object>[]};
+      return {
+        'items': [
+          for (var month = 3; month <= 8; month++)
+            {'year': 2026, 'month': month, 'count': month * 10},
+        ],
+      };
+    }
+    if (path == '/api/tenant/statistics/membership-plan-distribution') {
+      if (emptyCharts) return {'total': 0, 'items': <Object>[]};
+      return {
+        'total': 142,
+        'items': [
+          {
+            'membershipPlanId': 'monthly',
+            'planName': 'Mjesečna',
+            'count': 68,
+            'percentage': 47.9,
+          },
+          {
+            'membershipPlanId': 'quarterly',
+            'planName': 'Tromjesečna',
+            'count': 74,
+            'percentage': 52.1,
+          },
+        ],
+      };
+    }
+    throw StateError('Unexpected get request: $path');
+  }
+
+  @override
+  Future<DownloadedFile> download(String path) async {
+    downloadedPaths.add(path);
+    return report;
+  }
+}
+
+class _DelayedReportingApi extends _ReportingApi {
+  final pending = Completer<DownloadedFile>();
+
+  @override
+  Future<DownloadedFile> download(String path) {
+    downloadedPaths.add(path);
+    return pending.future;
+  }
 }
 
 class _GymGalleryApi extends ApiClient {

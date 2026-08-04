@@ -109,6 +109,20 @@ class PagedData {
   );
 }
 
+class DownloadedFile {
+  const DownloadedFile({
+    required this.bytes,
+    required this.fileName,
+    required this.contentType,
+    required this.recordCount,
+  });
+
+  final List<int> bytes;
+  final String fileName;
+  final String contentType;
+  final int recordCount;
+}
+
 class ApiClient {
   ApiClient(this._tokens, {http.Client? httpClient, String? baseUrlOverride})
     : _http = httpClient ?? http.Client(),
@@ -154,6 +168,8 @@ class ApiClient {
 
   Future<Object?> delete(String path, {Object? body}) =>
       _send('DELETE', path, body: body);
+
+  Future<DownloadedFile> download(String path) => _download(path);
 
   Future<Object?> postMultipart(
     String path, {
@@ -333,6 +349,80 @@ class ApiClient {
         message: 'Server je vratio neočekivan odgovor.',
       );
     }
+  }
+
+  Future<DownloadedFile> _download(String path, {bool retry = true}) async {
+    try {
+      final request = http.Request('GET', _uri(path, const {}));
+      request.headers['Accept'] = 'application/pdf';
+      if (_tokens.accessToken != null) {
+        request.headers['Authorization'] = 'Bearer ${_tokens.accessToken}';
+      }
+      final response = await http.Response.fromStream(
+        await _http.send(request).timeout(const Duration(seconds: 30)),
+      );
+      if (response.statusCode == 401 && retry) {
+        final future = _refreshing ??= _tokens.refresh();
+        final refreshed = await future.whenComplete(() => _refreshing = null);
+        if (refreshed) return _download(path, retry: false);
+        await _tokens.invalidate();
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ApiProblem.fromResponse(response);
+      }
+      final contentType = response.headers['content-type']?.split(';').first;
+      if (contentType != 'application/pdf') {
+        throw const ApiProblem(
+          status: 0,
+          code: 'invalid_report_response',
+          message: 'Server nije vratio ispravan PDF izvještaj.',
+        );
+      }
+      return DownloadedFile(
+        bytes: response.bodyBytes,
+        fileName: _downloadFileName(response.headers['content-disposition']),
+        contentType: contentType!,
+        recordCount:
+            int.tryParse(response.headers['x-report-record-count'] ?? '') ?? 0,
+      );
+    } on ApiProblem {
+      rethrow;
+    } on TimeoutException {
+      throw const ApiProblem(
+        status: 0,
+        code: 'request_timeout',
+        message: 'Generisanje izvještaja je isteklo. Pokušajte ponovo.',
+      );
+    } on SocketException {
+      throw const ApiProblem(
+        status: 0,
+        code: 'network_unavailable',
+        message: 'Nije moguće povezati se sa serverom.',
+      );
+    } on http.ClientException {
+      throw const ApiProblem(
+        status: 0,
+        code: 'network_error',
+        message: 'Preuzimanje izvještaja nije uspjelo.',
+      );
+    }
+  }
+
+  static String _downloadFileName(String? disposition) {
+    final encoded = RegExp(
+      r"filename\*=UTF-8''([^;]+)",
+      caseSensitive: false,
+    ).firstMatch(disposition ?? '')?.group(1);
+    final plain = RegExp(
+      r'filename="?([^";]+)',
+      caseSensitive: false,
+    ).firstMatch(disposition ?? '')?.group(1);
+    final decoded = encoded == null ? plain : Uri.decodeComponent(encoded);
+    final safe = (decoded ?? 'gymlink-izvjestaj.pdf').replaceAll(
+      RegExp(r'[^A-Za-z0-9._-]'),
+      '-',
+    );
+    return safe.toLowerCase().endsWith('.pdf') ? safe : '$safe.pdf';
   }
 
   Future<PagedData> page(
