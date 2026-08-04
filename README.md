@@ -11,7 +11,8 @@ Members and Trainers, and a Windows app for GymAdmins and CentralAdmins.
 - Flutter 3.44.8 or a compatible stable release
 - Android SDK/emulator for the mobile client
 - Visual Studio with Desktop development with C++ for the Windows client
-- Docker Desktop for the local RabbitMQ and Mailpit services
+- Docker Desktop for the complete local SQL Server, RabbitMQ, Mailpit, API,
+  and Worker stack
 
 The default development connection uses Windows authentication. It does not require a SQL username or password:
 
@@ -34,7 +35,9 @@ dotnet tool restore
 dotnet restore backend/GymLink.sln
 ```
 
-6. Apply the committed EF Core migrations. The API never applies migrations automatically:
+6. Apply the committed EF Core migrations. Ordinary host startup never applies
+   migrations automatically; the isolated Compose stack opts into the reviewed
+   startup-migration path with `Database__MigrateOnStartup=true`:
 
 ```powershell
 dotnet ef database update `
@@ -94,31 +97,67 @@ with a compliant hosted or self-hosted provider for heavier traffic. Every
 accepted result is resolved to the local active BiH city catalog before its
 `CityId` is persisted, and the desktop keeps OpenStreetMap attribution visible.
 
-## Start RabbitMQ, Mailpit, and the Worker
+## Start the complete Docker stack
 
-The API safely retains committed workflow events in its outbox while RabbitMQ
-is unavailable. Enable publishing only when the local broker is running:
+The root Compose stack runs isolated SQL Server database `230038`, RabbitMQ,
+Mailpit, the API, and the separate Worker. Copy the Compose variables from
+`.env.example` into the uncommitted `.env`, replace all secret placeholders,
+and use a RabbitMQ username other than `guest`. Then run:
 
 ```powershell
-docker run -d --name gymlink-rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:4-management
-docker run -d --name gymlink-mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit
+docker compose config
+docker compose up --build -d
+docker compose ps
 ```
 
-Set `RabbitMq__Enabled=true` in `.env`, restart the API, and run the separate
-consumer:
+The default local entry points are:
+
+- API and Swagger: [http://localhost:62287/swagger](http://localhost:62287/swagger)
+- RabbitMQ Management: [http://localhost:15672](http://localhost:15672)
+- Mailpit inbox: [http://localhost:8025](http://localhost:8025)
+- SQL Server for optional host tools: `localhost,14330`
+
+Sign into RabbitMQ Management with `GYMLINK_RABBITMQ_USERNAME` and
+`GYMLINK_RABBITMQ_PASSWORD` from `.env`. **Overview** shows aggregate publish,
+delivery, and acknowledgement rates. **Connections** and **Channels** show the
+API publisher and Worker consumers. **Exchanges** shows `gymlink.events` and
+`gymlink.dead-letter`. **Queues and Streams** shows ready, unacknowledged,
+consumer, incoming, delivery, and acknowledgement activity for the live and
+dead-letter queues.
+
+The Worker normally consumes quickly, so a healthy queue may stay at zero even
+while its rate charts show traffic. To inspect one local payload without
+discarding it:
+
+1. Stop only the consumer with `docker compose stop worker`.
+2. Trigger a password reset or membership workflow through GymLink.
+3. Open `gymlink.email.v1` or `gymlink.notifications.v1` under **Queues and
+   Streams** in RabbitMQ Management.
+4. In **Get messages**, request one message and select the acknowledgement mode
+   that requeues the message (`Nack message requeue true`).
+5. Start the consumer with `docker compose start worker`; watch the ready count
+   return to zero and the acknowledgement rate increase.
+6. For password reset, open Mailpit and confirm the captured email. Workflow
+   notifications appear in GymLink instead of email.
+
+Message bodies may contain private workflow data or password-reset codes. Use
+manual retrieval only in this isolated local development stack. Never use it
+as a production inspection technique.
+
+The broker and SQL Server use named volumes. `docker compose down` stops the
+stack but preserves data. `docker compose down --volumes` permanently removes
+the isolated Compose database, queues, Mailpit inbox, and uploaded-image
+volumes. Port defaults can be changed with the `GYMLINK_*_PORT` values in
+`.env` if another local project owns them.
+
+For host-process development instead of Compose, keep
+`Database__MigrateOnStartup=false`, point `ConnectionStrings__GymLink` at the
+host SQL Server, set `RabbitMq__Enabled=true`, and run:
 
 ```powershell
+dotnet run --project backend/src/GymLink.Api --launch-profile http
 dotnet run --project backend/src/GymLink.Worker
 ```
-
-RabbitMQ management is available at [http://localhost:15672](http://localhost:15672)
-and Mailpit's captured reset emails at [http://localhost:8025](http://localhost:8025).
-Only password-reset codes generate email; workflow updates remain in-app
-notifications.
-
-If another local project already owns ports `5672`/`15672`, map GymLink to
-unused host ports, for example `-p 5673:5672 -p 15673:15672`, and set
-`RabbitMq__Port=5673` for both the API and Worker.
 
 ## Start the Flutter clients
 
@@ -326,3 +365,5 @@ hosted Checkout with an Android deep-link return is implemented in Phase 8;
 chat is Phase 9, Trainer profile images are Phase 9.3, the explainable hybrid
 recommender is implemented in Phase 10, and statistics/PDF
 reports are Phase 11.
+The Compose/RabbitMQ hardening portion of Phase 12 is implemented separately;
+Phase 12 remains incomplete until Phase 11 and the final release audit are done.

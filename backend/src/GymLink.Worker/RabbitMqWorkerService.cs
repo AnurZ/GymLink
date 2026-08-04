@@ -56,11 +56,19 @@ internal sealed class RabbitMqWorkerService(
             ConsumerDispatchConcurrency = 1,
         };
         connection = await factory.CreateConnectionAsync(stoppingToken);
+        var channelOptions = new CreateChannelOptions(
+            publisherConfirmationsEnabled: true,
+            publisherConfirmationTrackingEnabled: true);
         notificationChannel = await connection.CreateChannelAsync(
-            cancellationToken: stoppingToken);
+            channelOptions,
+            stoppingToken);
         emailChannel = await connection.CreateChannelAsync(
-            cancellationToken: stoppingToken);
-        await DeclareTopologyAsync(notificationChannel, stoppingToken);
+            channelOptions,
+            stoppingToken);
+        await RabbitMqTopology.DeclareAsync(
+            notificationChannel,
+            options.Value,
+            stoppingToken);
         await notificationChannel.BasicQosAsync(0, 8, false, stoppingToken);
         await emailChannel.BasicQosAsync(0, 2, false, stoppingToken);
 
@@ -143,7 +151,7 @@ internal sealed class RabbitMqWorkerService(
                 await channel.BasicPublishAsync(
                     options.Value.DeadLetterExchange,
                     delivery.RoutingKey,
-                    mandatory: false,
+                    mandatory: true,
                     new BasicProperties
                     {
                         Persistent = true,
@@ -376,43 +384,4 @@ internal sealed class RabbitMqWorkerService(
         JsonSerializer.Deserialize<MessageEnvelope<T>>(body.Span, SerializerOptions)
         ?? throw new InvalidOperationException("The message payload is invalid.");
 
-    private async Task DeclareTopologyAsync(
-        IChannel channel,
-        CancellationToken cancellationToken)
-    {
-        await channel.ExchangeDeclareAsync(
-            options.Value.Exchange,
-            ExchangeType.Direct,
-            durable: true,
-            autoDelete: false,
-            cancellationToken: cancellationToken);
-        await channel.ExchangeDeclareAsync(
-            options.Value.DeadLetterExchange,
-            ExchangeType.Direct,
-            durable: true,
-            autoDelete: false,
-            cancellationToken: cancellationToken);
-        await channel.QueueDeclareAsync(
-            options.Value.NotificationQueue,
-            durable: true,
-            exclusive: false,
-            autoDelete: false,
-            cancellationToken: cancellationToken);
-        await channel.QueueDeclareAsync(
-            options.Value.EmailQueue,
-            durable: true,
-            exclusive: false,
-            autoDelete: false,
-            cancellationToken: cancellationToken);
-        await channel.QueueBindAsync(
-            options.Value.NotificationQueue,
-            options.Value.Exchange,
-            MessageContractNames.NotificationRequestedV1,
-            cancellationToken: cancellationToken);
-        await channel.QueueBindAsync(
-            options.Value.EmailQueue,
-            options.Value.Exchange,
-            MessageContractNames.PasswordResetRequestedV1,
-            cancellationToken: cancellationToken);
-    }
 }

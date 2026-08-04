@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace GymLink.IntegrationTests;
 
@@ -27,6 +28,43 @@ public sealed class ApiStartupTests
         using var document = JsonDocument.Parse(await swagger.Content.ReadAsStringAsync());
         var requirement = document.RootElement.GetProperty("security")[0];
         Assert.True(requirement.TryGetProperty("Bearer", out _));
+    }
+
+    [Fact]
+    public async Task Startup_migration_is_disabled_by_default()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        Assert.False(
+            factory.Services
+                .GetRequiredService<IOptions<DatabaseStartupOptions>>()
+                .Value
+                .MigrateOnStartup);
+    }
+
+    [Fact]
+    public async Task Enabled_startup_migration_applies_all_committed_migrations()
+    {
+        var connectionString = TestSqlServer.ConnectionString(
+            $"GymLink_StartupMigration_{Guid.NewGuid():N}");
+        try
+        {
+            await using var factory = CreateFactory(
+                connectionString,
+                migrateOnStartup: true);
+            using var client = factory.CreateClient();
+
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+            await using var context = CreateContext(connectionString);
+            Assert.Empty(await context.Database.GetPendingMigrationsAsync());
+            Assert.NotEmpty(await context.Database.GetAppliedMigrationsAsync());
+        }
+        finally
+        {
+            await using var context = CreateContext(connectionString);
+            await context.Database.EnsureDeletedAsync();
+        }
     }
 
     [Fact]
@@ -141,7 +179,8 @@ public sealed class ApiStartupTests
 
     private static WebApplicationFactory<Program> CreateFactory(
         string? connectionString = null,
-        Action<IServiceCollection>? configureServices = null)
+        Action<IServiceCollection>? configureServices = null,
+        bool migrateOnStartup = false)
     {
         Environment.SetEnvironmentVariable(
             "ConnectionStrings__GymLink",
@@ -159,6 +198,9 @@ public sealed class ApiStartupTests
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
+            builder.UseSetting(
+                "Database:MigrateOnStartup",
+                migrateOnStartup.ToString(System.Globalization.CultureInfo.InvariantCulture));
             if (configureServices is not null)
             {
                 builder.ConfigureServices(configureServices);

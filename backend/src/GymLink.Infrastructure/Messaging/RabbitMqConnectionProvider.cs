@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Options;
-using GymLink.Contracts.Messaging.V1;
 using RabbitMQ.Client;
 
 namespace GymLink.Infrastructure.Messaging;
@@ -43,7 +42,7 @@ internal sealed class RabbitMqConnectionProvider(
                     publisherConfirmationsEnabled: true,
                     publisherConfirmationTrackingEnabled: true),
                 cancellationToken);
-            await DeclareTopologyAsync(channel, settings, cancellationToken);
+            await RabbitMqTopology.DeclareAsync(channel, settings, cancellationToken);
             return channel;
         }
         finally
@@ -65,46 +64,5 @@ internal sealed class RabbitMqConnectionProvider(
         }
 
         gate.Dispose();
-    }
-
-    private static async Task DeclareTopologyAsync(
-        IChannel channel,
-        RabbitMqOptions settings,
-        CancellationToken cancellationToken)
-    {
-        await channel.ExchangeDeclareAsync(
-            settings.Exchange,
-            ExchangeType.Direct,
-            durable: true,
-            autoDelete: false,
-            cancellationToken: cancellationToken);
-        await channel.ExchangeDeclareAsync(
-            settings.DeadLetterExchange,
-            ExchangeType.Direct,
-            durable: true,
-            autoDelete: false,
-            cancellationToken: cancellationToken);
-        await channel.QueueDeclareAsync(
-            settings.NotificationQueue,
-            durable: true,
-            exclusive: false,
-            autoDelete: false,
-            cancellationToken: cancellationToken);
-        await channel.QueueDeclareAsync(
-            settings.EmailQueue,
-            durable: true,
-            exclusive: false,
-            autoDelete: false,
-            cancellationToken: cancellationToken);
-        await channel.QueueBindAsync(
-            settings.NotificationQueue,
-            settings.Exchange,
-            MessageContractNames.NotificationRequestedV1,
-            cancellationToken: cancellationToken);
-        await channel.QueueBindAsync(
-            settings.EmailQueue,
-            settings.Exchange,
-            MessageContractNames.PasswordResetRequestedV1,
-            cancellationToken: cancellationToken);
     }
 }

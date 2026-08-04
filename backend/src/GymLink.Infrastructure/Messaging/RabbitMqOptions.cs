@@ -14,6 +14,9 @@ public sealed class RabbitMqOptions
     public string NotificationQueue { get; init; } = "gymlink.notifications.v1";
     public string EmailQueue { get; init; } = "gymlink.email.v1";
     public string DeadLetterExchange { get; init; } = "gymlink.dead-letter";
+    public string NotificationDeadLetterQueue { get; init; } =
+        "gymlink.notifications.dead-letter.v1";
+    public string EmailDeadLetterQueue { get; init; } = "gymlink.email.dead-letter.v1";
     public int BatchSize { get; init; } = 50;
     public int PollIntervalSeconds { get; init; } = 2;
     public int LeaseSeconds { get; init; } = 30;

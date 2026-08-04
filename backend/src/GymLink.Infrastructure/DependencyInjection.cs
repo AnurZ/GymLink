@@ -57,6 +57,8 @@ public static class DependencyInjection
             ?? throw new InvalidOperationException(
                 "Environment variable ConnectionStrings__GymLink is required.");
 
+        services.AddOptions<DatabaseStartupOptions>()
+            .Bind(configuration.GetSection(DatabaseStartupOptions.SectionName));
         services.AddSingleton(TimeProvider.System);
         services.AddHttpClient("Nominatim", (provider, client) =>
         {
@@ -183,19 +185,7 @@ public static class DependencyInjection
                 options => Encoding.UTF8.GetByteCount(options.CodePepper) >= 32,
                 "PasswordReset__CodePepper must contain at least 32 UTF-8 bytes.")
             .ValidateOnStart();
-        services.AddOptions<RabbitMqOptions>()
-            .Bind(configuration.GetSection(RabbitMqOptions.SectionName))
-            .Validate(
-                options => !options.Enabled ||
-                    (!string.IsNullOrWhiteSpace(options.Host) &&
-                     !string.IsNullOrWhiteSpace(options.Username) &&
-                     !string.IsNullOrWhiteSpace(options.Password) &&
-                     options.Port > 0 &&
-                     options.BatchSize is > 0 and <= 100 &&
-                     options.PollIntervalSeconds > 0 &&
-                     options.LeaseSeconds > 0),
-                "Enabled RabbitMQ configuration is incomplete.")
-            .ValidateOnStart();
+        services.AddGymLinkRabbitMqOptions(configuration);
         services.AddSingleton<RabbitMqConnectionProvider>();
         services.AddHostedService<OutboxPublisherService>();
         services.AddScoped<IMembershipWorkflowEventRecorder, LoggingMembershipWorkflowEventRecorder>();

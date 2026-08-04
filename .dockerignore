@@ -1,0 +1,16 @@
+.git/
+.github/
+.agents/
+architectureReference/
+ui/
+**/bin/
+**/obj/
+**/.vs/
+**/TestResults/
+**/.dart_tool/
+.env
+.gymlink-storage/
+.gymlink-*.log
+*.docx
+*.pdf
+recommender-dokumentacija.md

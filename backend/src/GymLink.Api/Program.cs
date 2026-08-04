@@ -6,6 +6,7 @@ using GymLink.Api.Hubs;
 using GymLink.Infrastructure.Storage;
 using Microsoft.Extensions.Options;
 using GymLink.Infrastructure.Seeding;
+using GymLink.Infrastructure.Persistence;
 
 Env.TraversePath().NoClobber().Load();
 var builder = WebApplication.CreateBuilder(args);
@@ -14,6 +15,7 @@ builder.Services.AddGymLinkInfrastructure(builder.Configuration);
 builder.Services.AddGymLinkApi(builder.Configuration);
 
 var app = builder.Build();
+await app.MigrateDatabaseOnStartupAsync();
 await app.SeedDevelopmentDataAsync();
 app.UseGymLinkApi();
 app.UseGymLinkFileStorage(

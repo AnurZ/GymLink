@@ -23,8 +23,7 @@ builder.Services.AddSingleton<IRequestMetadata>(provider =>
     provider.GetRequiredService<WorkerTenantContext>());
 builder.Services.AddGymLinkApplication();
 builder.Services.AddGymLinkPaymentWorkerInfrastructure(builder.Configuration);
-builder.Services.AddOptions<RabbitMqOptions>()
-    .Bind(builder.Configuration.GetSection(RabbitMqOptions.SectionName));
+builder.Services.AddGymLinkRabbitMqOptions(builder.Configuration);
 builder.Services.AddOptions<PasswordResetOptions>()
     .Bind(builder.Configuration.GetSection(PasswordResetOptions.SectionName))
     .Validate(
