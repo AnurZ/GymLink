@@ -91,6 +91,10 @@ services:
       Smtp__Host: mailpit
       Smtp__Port: "1025"
       Smtp__UseSsl: "false"
+      Stripe__Enabled: ${Stripe__Enabled:-true}
+      Stripe__SuccessUrl: ${Stripe__SuccessUrl:-http://10.0.2.2:62287/payments/stripe/success}
+      Stripe__CancelUrl: ${Stripe__CancelUrl:-http://10.0.2.2:62287/payments/stripe/cancel}
+      ALLOW_FAKE_PAYMENTS: ${ALLOW_FAKE_PAYMENTS:-false}
       Seed__Enabled: ${GYMLINK_COMPOSE_SEED_ENABLED:-true}
       Seed__DefaultPassword: ${Seed__DefaultPassword:-Test123!}
       FileStorage__RootPath: /data/trainer-images
@@ -135,7 +139,7 @@ services:
       Smtp__Port: "1025"
       Smtp__UseSsl: "false"
       PasswordReset__CodePepper: ${PasswordReset__CodePepper:?Add PasswordReset__CodePepper to .env}
-      Stripe__Enabled: "false"
+      Stripe__Enabled: ${Stripe__Enabled:-true}
     networks:
       - gymlink-internal
     depends_on:

@@ -19,6 +19,21 @@ namespace GymLink.Application;
 
 public static class DependencyInjection
 {
+    public static IServiceCollection AddGymLinkPaymentWorkerApplication(
+        this IServiceCollection services)
+    {
+        services.AddScoped<IConversationProvisioner, ConversationProvisioner>();
+        services.TryAddSingleton<
+            IConversationRealtimeNotifier,
+            NullConversationRealtimeNotifier>();
+        services.AddScoped<
+            IRecommendationActivityRecorder,
+            PaymentWorkerRecommendationActivityRecorder>();
+        services.AddScoped<IPaymentService, PaymentService>();
+        services.AddScoped<IPaymentReconciliationService, PaymentReconciliationService>();
+        return services;
+    }
+
     public static IServiceCollection AddGymLinkApplication(this IServiceCollection services)
     {
         services.AddMemoryCache();

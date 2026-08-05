@@ -41,6 +41,36 @@ public sealed class PaymentsController(IPaymentService service) : ControllerBase
 }
 
 [ApiController]
+[Authorize(Policy = PolicyNames.MemberSelf)]
+[Route("api/payments/manual")]
+public sealed class ManualPaymentsController(IPaymentService service) : ControllerBase
+{
+    [HttpPost("memberships/pay")]
+    public async Task<IActionResult> PayMembershipPlan(
+        CreateManualMembershipPlanPaymentRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(await service.CompleteManualMembershipPlanPaymentAsync(
+            request.MembershipPlanId,
+            cancellationToken));
+
+    [HttpPost("memberships/{membershipId:guid}/pay")]
+    public async Task<IActionResult> PayMembership(
+        Guid membershipId,
+        CancellationToken cancellationToken) =>
+        Ok(await service.CompleteManualMembershipPaymentAsync(
+            membershipId,
+            cancellationToken));
+
+    [HttpPost("reservations/{reservationId:guid}/pay")]
+    public async Task<IActionResult> PayReservation(
+        Guid reservationId,
+        CancellationToken cancellationToken) =>
+        Ok(await service.CompleteManualReservationPaymentAsync(
+            reservationId,
+            cancellationToken));
+}
+
+[ApiController]
 [AllowAnonymous]
 [Route("api/webhooks/stripe")]
 public sealed class StripeWebhookController(IPaymentService service) : ControllerBase

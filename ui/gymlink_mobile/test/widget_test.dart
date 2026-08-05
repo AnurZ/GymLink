@@ -133,7 +133,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('reservation payment sheet explains both payment methods', (
+  testWidgets('reservation payment sheet explains all payment methods', (
     tester,
   ) async {
     ReservationPaymentMethod? selected;
@@ -156,14 +156,49 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Stripe'), findsOneWidget);
+    expect(find.text('Označi kao plaćeno'), findsOneWidget);
     expect(find.text('Plati uživo'), findsOneWidget);
     expect(find.textContaining('vanjski preglednik'), findsOneWidget);
     expect(find.textContaining('automatski ćete se vratiti'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('reservation-payment-in-person')));
+    final payInPerson = find.byKey(const Key('reservation-payment-in-person'));
+    await tester.ensureVisible(payInPerson);
+    await tester.tap(payInPerson);
     await tester.pumpAndSettle();
 
     expect(selected, ReservationPaymentMethod.payInPerson);
+  });
+
+  testWidgets('membership payment sheet exposes guarded manual payment', (
+    tester,
+  ) async {
+    MembershipPaymentMethod? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () async {
+                selected = await chooseMembershipPaymentMethod(context);
+              },
+              child: const Text('Plati članarinu'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Plati članarinu'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Stripe'), findsOneWidget);
+    expect(find.text('Označi kao plaćeno'), findsOneWidget);
+    expect(find.textContaining('ALLOW_FAKE_PAYMENTS'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('membership-payment-manual')));
+    await tester.pumpAndSettle();
+
+    expect(selected, MembershipPaymentMethod.manual);
   });
 
   testWidgets('pay-in-person booking shows a confirmed success state', (

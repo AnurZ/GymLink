@@ -21,7 +21,7 @@ builder.Services.AddSingleton<ICurrentUser>(provider =>
     provider.GetRequiredService<WorkerTenantContext>());
 builder.Services.AddSingleton<IRequestMetadata>(provider =>
     provider.GetRequiredService<WorkerTenantContext>());
-builder.Services.AddGymLinkApplication();
+builder.Services.AddGymLinkPaymentWorkerApplication();
 builder.Services.AddGymLinkPaymentWorkerInfrastructure(builder.Configuration);
 builder.Services.AddGymLinkRabbitMqOptions(builder.Configuration);
 builder.Services.AddOptions<PasswordResetOptions>()

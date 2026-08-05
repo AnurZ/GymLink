@@ -602,23 +602,43 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
 
   Future<void> _requestMembership(Map<String, dynamic> plan) async {
     final api = context.read<ApiClient>();
+    final paymentMethod = await chooseMembershipPaymentMethod(context);
+    if (paymentMethod == null) return;
+    if (!mounted) return;
+    final isManual = paymentMethod == MembershipPaymentMethod.manual;
     if (!await confirmAction(
       context,
       title: 'Plaćanje članarine',
-      message:
-          'Otvori Stripe plaćanje za ${plan['name']} (${plan['price']} ${plan['currency']})?',
-      action: 'Nastavi na plaćanje',
+      message: isManual
+          ? 'Označi članarinu ${plan['name']} kao testno plaćenu?'
+          : 'Otvori Stripe plaćanje za ${plan['name']} '
+                '(${plan['price']} ${plan['currency']})?',
+      action: isManual ? 'Označi kao plaćeno' : 'Nastavi na plaćanje',
     )) {
       return;
     }
     setState(() => _purchasingPlanId = plan['id'].toString());
     try {
-      await openHostedCheckout(
-        api,
-        '/api/payments/memberships/checkout',
-        body: {'membershipPlanId': plan['id']},
-      );
+      if (isManual) {
+        await api.post(
+          '/api/payments/manual/memberships/pay',
+          body: {'membershipPlanId': plan['id']},
+        );
+      } else {
+        await openHostedCheckout(
+          api,
+          '/api/payments/memberships/checkout',
+          body: {'membershipPlanId': plan['id']},
+        );
+      }
       await _load();
+      if (isManual && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Testno plaćanje je uspješno evidentirano.'),
+          ),
+        );
+      }
     } on ApiProblem catch (error) {
       if (error.status == 409) await _load();
       if (mounted) {
@@ -986,7 +1006,10 @@ class _BookingScreenState extends State<BookingScreen> {
               body: {
                 'trainerServiceOfferingId': _offering!['id'],
                 'startsAtUtc': _slot!['startsAtUtc'],
-                'paymentMethod': paymentMethod.index,
+                'paymentMethod':
+                    paymentMethod == ReservationPaymentMethod.payInPerson
+                    ? ReservationPaymentMethod.payInPerson.index
+                    : ReservationPaymentMethod.stripe.index,
               },
             ))!
             as Map,
@@ -997,10 +1020,23 @@ class _BookingScreenState extends State<BookingScreen> {
           '/api/payments/reservations/${reservation['id']}/checkout',
         );
       }
+      if (paymentMethod == ReservationPaymentMethod.manual) {
+        await api.post(
+          '/api/payments/manual/reservations/${reservation['id']}/pay',
+        );
+      }
       if (mounted) {
         context.read<ReservationRefreshController>().refresh();
         if (paymentMethod == ReservationPaymentMethod.payInPerson) {
           await showPayInPersonReservationSuccess(context);
+          if (!mounted) return;
+        }
+        if (paymentMethod == ReservationPaymentMethod.manual) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Testno plaćanje je uspješno evidentirano.'),
+            ),
+          );
         }
         if (mounted) Navigator.pop(context, reservation);
       }

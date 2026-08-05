@@ -79,6 +79,69 @@ public sealed class Phase4MembershipApiTests
     }
 
     [Fact]
+    public async Task Manual_payment_requires_flag_and_coexists_with_Stripe_checkout()
+    {
+        var databaseName = $"GymLink_ManualPayment_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+        try
+        {
+            await using (var migration = CreateContext(connectionString))
+            {
+                await migration.Database.MigrateAsync();
+            }
+
+            AuthSessionDto member;
+            Guid planId;
+            await using (var disabledFactory = CreateFactory(connectionString))
+            using (var disabledClient = disabledFactory.CreateClient())
+            {
+                member = await RegisterAsync(disabledClient);
+                planId = await FindPlanAsync(
+                    disabledClient,
+                    "Sportska Akademija Respect");
+                Authorize(disabledClient, member);
+                var disabled = await disabledClient.PostAsJsonAsync(
+                    "/api/payments/manual/memberships/pay",
+                    new { membershipPlanId = planId });
+                Assert.Equal(HttpStatusCode.BadRequest, disabled.StatusCode);
+                Assert.Equal("fake_payments_disabled", await ReadProblemCodeAsync(disabled));
+            }
+
+            await using var enabledFactory = CreateFactory(
+                connectionString,
+                allowFakePayments: true);
+            using var enabledClient = enabledFactory.CreateClient();
+            Authorize(enabledClient, member);
+
+            var checkout = await enabledClient.PostAsJsonAsync(
+                "/api/payments/memberships/checkout",
+                new { membershipPlanId = planId });
+            checkout.EnsureSuccessStatusCode();
+            var checkoutResult = await checkout.Content
+                .ReadFromJsonAsync<CheckoutSessionDto>();
+            Assert.NotNull(checkoutResult);
+            Assert.StartsWith("https://checkout.test/", checkoutResult.CheckoutUrl);
+
+            var manual = await enabledClient.PostAsJsonAsync(
+                "/api/payments/manual/memberships/pay",
+                new { membershipPlanId = planId });
+            manual.EnsureSuccessStatusCode();
+            var payment = await manual.Content.ReadFromJsonAsync<PaymentDto>();
+            Assert.NotNull(payment);
+            Assert.True(payment.IsPaid);
+
+            var active = Assert.Single((await GetMineAsync(enabledClient)).Items);
+            Assert.Equal(MembershipStatus.Active, active.Status);
+            Assert.True(active.IsPaid);
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
     public async Task Gym_admin_promotes_only_an_active_tenant_member_to_trainer()
     {
         var databaseName = $"GymLink_TrainerPromotion_{Guid.NewGuid():N}";
@@ -505,7 +568,9 @@ public sealed class Phase4MembershipApiTests
             ?? throw new InvalidOperationException("Problem response had no title.");
     }
 
-    private static WebApplicationFactory<Program> CreateFactory(string connectionString) =>
+    private static WebApplicationFactory<Program> CreateFactory(
+        string connectionString,
+        bool allowFakePayments = false) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
@@ -520,8 +585,10 @@ public sealed class Phase4MembershipApiTests
                 "integration-test-reset-pepper-at-least-32-bytes");
             builder.UseSetting("Seed:Enabled", "true");
             builder.UseSetting("Seed:DefaultPassword", Password);
+            builder.UseSetting("ALLOW_FAKE_PAYMENTS", allowFakePayments.ToString());
             builder.ConfigureAppConfiguration((_, configuration) =>
-                configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                var values = new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:GymLink"] = connectionString,
                     ["Jwt:Issuer"] = "GymLink.Tests",
@@ -533,7 +600,10 @@ public sealed class Phase4MembershipApiTests
                         "integration-test-reset-pepper-at-least-32-bytes",
                     ["Seed:Enabled"] = "true",
                     ["Seed:DefaultPassword"] = Password,
-                }));
+                    ["ALLOW_FAKE_PAYMENTS"] = allowFakePayments.ToString(),
+                };
+                configuration.AddInMemoryCollection(values);
+            });
             builder.ConfigureServices(services =>
                 services.Replace(ServiceDescriptor.Singleton<
                     IPaymentGateway,

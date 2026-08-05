@@ -5,15 +5,17 @@ import 'package:url_launcher/url_launcher.dart';
 import 'api.dart';
 import 'theme.dart';
 
-enum ReservationPaymentMethod { stripe, payInPerson }
+enum MembershipPaymentMethod { stripe, manual }
 
-Future<ReservationPaymentMethod?> chooseReservationPaymentMethod(
+enum ReservationPaymentMethod { stripe, payInPerson, manual }
+
+Future<MembershipPaymentMethod?> chooseMembershipPaymentMethod(
   BuildContext context,
-) => showModalBottomSheet<ReservationPaymentMethod>(
+) => showModalBottomSheet<MembershipPaymentMethod>(
   context: context,
   showDragHandle: true,
   builder: (context) => SafeArea(
-    child: Padding(
+    child: SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -26,18 +28,63 @@ Future<ReservationPaymentMethod?> chooseReservationPaymentMethod(
             ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 12),
+          _stripePaymentTile(context, () {
+            Navigator.pop(context, MembershipPaymentMethod.stripe);
+          }),
           Card(
             child: ListTile(
-              key: const Key('reservation-payment-stripe'),
-              leading: const Icon(Icons.credit_card),
-              title: const Text('Stripe'),
+              key: const Key('membership-payment-manual'),
+              leading: const Icon(Icons.check_circle_outline),
+              title: const Text('Označi kao plaćeno'),
               subtitle: const Text(
-                'Otvorit će se vanjski preglednik. Nakon uspješnog '
-                'plaćanja automatski ćete se vratiti u GymLink.',
+                'Testno plaćanje bez Stripe transakcije. Dostupno samo kada '
+                'je ALLOW_FAKE_PAYMENTS uključen.',
               ),
               trailing: const Icon(Icons.chevron_right),
               onTap: () =>
-                  Navigator.pop(context, ReservationPaymentMethod.stripe),
+                  Navigator.pop(context, MembershipPaymentMethod.manual),
+            ),
+          ),
+        ],
+      ),
+    ),
+  ),
+);
+
+Future<ReservationPaymentMethod?> chooseReservationPaymentMethod(
+  BuildContext context,
+) => showModalBottomSheet<ReservationPaymentMethod>(
+  context: context,
+  showDragHandle: true,
+  builder: (context) => SafeArea(
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Odaberite način plaćanja',
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 12),
+          _stripePaymentTile(context, () {
+            Navigator.pop(context, ReservationPaymentMethod.stripe);
+          }, key: const Key('reservation-payment-stripe')),
+          Card(
+            child: ListTile(
+              key: const Key('reservation-payment-manual'),
+              leading: const Icon(Icons.check_circle_outline),
+              title: const Text('Označi kao plaćeno'),
+              subtitle: const Text(
+                'Testno plaćanje bez Stripe transakcije. Dostupno samo kada '
+                'je ALLOW_FAKE_PAYMENTS uključen.',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () =>
+                  Navigator.pop(context, ReservationPaymentMethod.manual),
             ),
           ),
           Card(
@@ -56,6 +103,24 @@ Future<ReservationPaymentMethod?> chooseReservationPaymentMethod(
         ],
       ),
     ),
+  ),
+);
+
+Widget _stripePaymentTile(
+  BuildContext context,
+  VoidCallback onTap, {
+  Key key = const Key('membership-payment-stripe'),
+}) => Card(
+  child: ListTile(
+    key: key,
+    leading: const Icon(Icons.credit_card),
+    title: const Text('Stripe'),
+    subtitle: const Text(
+      'Otvorit će se vanjski preglednik. Nakon uspješnog plaćanja '
+      'automatski ćete se vratiti u GymLink.',
+    ),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: onTap,
   ),
 );
 

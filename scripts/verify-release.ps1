@@ -128,6 +128,15 @@ function Assert-RequiredEnvironment {
     if ($env:GYMLINK_RABBITMQ_USERNAME -eq 'guest') {
         throw 'GYMLINK_RABBITMQ_USERNAME must not be guest.'
     }
+
+    if (-not $SkipDocker) {
+        if ($env:Stripe__Enabled -eq 'true') {
+            if ($env:Stripe__SecretKey -notmatch '^sk_test_' -or
+                $env:Stripe__WebhookSecret -notmatch '^whsec_') {
+                throw 'Enabled Stripe must use sk_test_ and whsec_ sandbox credentials.'
+            }
+        }
+    }
 }
 
 function Assert-Tool([string]$Name) {

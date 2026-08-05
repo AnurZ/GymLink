@@ -72,7 +72,9 @@ public sealed class GymImage : TenantEntity, IConcurrencyTracked
         }
 
         if (string.IsNullOrWhiteSpace(publicUrl) || publicUrl.Length > 2048 ||
-            publicUrl[0] != '/' || Uri.TryCreate(publicUrl, UriKind.Absolute, out _))
+            publicUrl[0] != '/' ||
+            publicUrl.StartsWith("//", StringComparison.Ordinal) ||
+            publicUrl.Contains('\\'))
         {
             throw InvalidImage("The image URL must be an API-relative path.");
         }

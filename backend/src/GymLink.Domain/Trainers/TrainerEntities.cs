@@ -42,7 +42,8 @@ public sealed class TrainerProfile : TenantEntity, IConcurrencyTracked
 
         if (string.IsNullOrWhiteSpace(imageUrl) || imageUrl.Length > 1000 ||
             imageUrl[0] != '/' ||
-            Uri.TryCreate(imageUrl, UriKind.Absolute, out _))
+            imageUrl.StartsWith("//", StringComparison.Ordinal) ||
+            imageUrl.Contains('\\'))
         {
             throw InvalidImage("The image URL must be an API-relative path.");
         }

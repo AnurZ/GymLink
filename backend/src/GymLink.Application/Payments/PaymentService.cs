@@ -16,7 +16,6 @@ internal sealed class PaymentService(
     IApplicationDbContext dbContext,
     IApplicationTransaction transaction,
     IPaymentGateway gateway,
-    IIdentityAccountManager identityAccounts,
     ICurrentUser currentUser,
     ITenantMutationScope tenantMutationScope,
     IOutboxWriter outbox,
@@ -24,7 +23,9 @@ internal sealed class PaymentService(
     IConversationProvisioner conversationProvisioner,
     IConversationRealtimeNotifier conversationNotifier,
     IRecommendationActivityRecorder recommendationActivity,
-    TimeProvider timeProvider) : IPaymentService
+    IFakePaymentAvailability fakePayments,
+    TimeProvider timeProvider,
+    IIdentityAccountManager? identityAccounts = null) : IPaymentService
 {
     private static readonly PaymentStatus[] OpenOrSuccessful =
         [PaymentStatus.Created, PaymentStatus.Processing, PaymentStatus.Succeeded];
@@ -33,8 +34,48 @@ internal sealed class PaymentService(
         Guid membershipPlanId,
         CancellationToken cancellationToken)
     {
+        var membershipId = await EnsureMembershipForPlanAsync(
+            membershipPlanId,
+            cancellationToken);
+        return await CreateMembershipCheckoutAsync(membershipId, cancellationToken);
+    }
+
+    public async Task<PaymentDto> CompleteManualMembershipPlanPaymentAsync(
+        Guid membershipPlanId,
+        CancellationToken cancellationToken)
+    {
+        EnsureFakePaymentsEnabled();
+        var membershipId = await EnsureMembershipForPlanAsync(
+            membershipPlanId,
+            cancellationToken);
+        return await CompleteManualPaymentAsync(
+            PaymentPurpose.Membership,
+            membershipId,
+            cancellationToken);
+    }
+
+    public Task<PaymentDto> CompleteManualMembershipPaymentAsync(
+        Guid membershipId,
+        CancellationToken cancellationToken) =>
+        CompleteManualPaymentAsync(
+            PaymentPurpose.Membership,
+            membershipId,
+            cancellationToken);
+
+    public Task<PaymentDto> CompleteManualReservationPaymentAsync(
+        Guid reservationId,
+        CancellationToken cancellationToken) =>
+        CompleteManualPaymentAsync(
+            PaymentPurpose.TrainerReservation,
+            reservationId,
+            cancellationToken);
+
+    private async Task<Guid> EnsureMembershipForPlanAsync(
+        Guid membershipPlanId,
+        CancellationToken cancellationToken)
+    {
         var userId = RequireUser();
-        var membershipId = await transaction.ExecuteSerializableAsync(async ct =>
+        return await transaction.ExecuteSerializableAsync(async ct =>
         {
             var plan = await (
                     from candidate in dbContext.MembershipPlans.IgnoreQueryFilters()
@@ -123,8 +164,6 @@ internal sealed class PaymentService(
 
             return membership.Id;
         }, cancellationToken);
-
-        return await CreateMembershipCheckoutAsync(membershipId, cancellationToken);
     }
 
     public Task<CheckoutSessionDto> CreateMembershipCheckoutAsync(
@@ -147,6 +186,77 @@ internal sealed class PaymentService(
             .SingleOrDefaultAsync(x => x.Id == paymentId && x.UserId == userId, cancellationToken)
             ?? throw PaymentNotFound();
         return Map(payment);
+    }
+
+    private async Task<PaymentDto> CompleteManualPaymentAsync(
+        PaymentPurpose purpose,
+        Guid targetId,
+        CancellationToken cancellationToken)
+    {
+        EnsureFakePaymentsEnabled();
+        ConversationProvisioningResult? provisionedConversation = null;
+        var result = await transaction.ExecuteSerializableAsync(async ct =>
+        {
+            var userId = RequireUser();
+            var existing = await dbContext.Payments.IgnoreQueryFilters()
+                .SingleOrDefaultAsync(
+                    x => x.Purpose == purpose &&
+                         x.TargetId == targetId &&
+                         x.UserId == userId &&
+                         OpenOrSuccessful.Contains(x.Status),
+                    ct);
+            if (existing?.Status == PaymentStatus.Succeeded)
+            {
+                return Map(existing);
+            }
+
+            var quote = await LoadQuoteAsync(purpose, targetId, userId, ct);
+            var payment = existing ?? new Payment(
+                quote.TenantId,
+                purpose,
+                targetId,
+                userId,
+                quote.Amount,
+                quote.Currency,
+                $"manual:{purpose}:{targetId}:{Guid.NewGuid():N}");
+            var now = timeProvider.GetUtcNow().UtcDateTime;
+            var manualReference = $"manual:{payment.Id:N}";
+
+            using (tenantMutationScope.Begin(quote.TenantId))
+            {
+                if (existing is null)
+                {
+                    dbContext.Payments.Add(payment);
+                }
+                if (payment.Status == PaymentStatus.Created)
+                {
+                    payment.StartCheckout(
+                        manualReference,
+                        quote.DeadlineUtc ?? now.AddMinutes(15));
+                }
+
+                payment.Succeed(
+                    manualReference,
+                    manualReference,
+                    payment.Amount,
+                    payment.Currency,
+                    now);
+                provisionedConversation = await ActivateTargetAsync(payment, now, ct);
+                AddPaidNotification(payment, now);
+                await dbContext.SaveChangesAsync(ct);
+            }
+
+            return Map(payment);
+        }, cancellationToken);
+
+        if (provisionedConversation is { Created: true })
+        {
+            await conversationNotifier.ConversationAvailableAsync(
+                provisionedConversation,
+                CancellationToken.None);
+        }
+
+        return result;
     }
 
     public async Task HandleWebhookAsync(
@@ -237,7 +347,9 @@ internal sealed class PaymentService(
     {
         var userId = RequireUser();
         var quote = await LoadQuoteAsync(purpose, targetId, userId, cancellationToken);
-        var account = await identityAccounts.FindByIdAsync(userId, cancellationToken)
+        var accountManager = identityAccounts ?? throw new InvalidOperationException(
+            "Checkout account access is unavailable in this process.");
+        var account = await accountManager.FindByIdAsync(userId, cancellationToken)
             ?? throw new NotFoundException("user_not_found", "User account was not found.");
         var payment = await dbContext.Payments.IgnoreQueryFilters()
             .SingleOrDefaultAsync(
@@ -682,6 +794,16 @@ internal sealed class PaymentService(
         currentUser.IsAuthenticated && currentUser.UserId.HasValue
             ? currentUser.UserId.Value
             : throw new AuthorizationDeniedException();
+
+    private void EnsureFakePaymentsEnabled()
+    {
+        if (!fakePayments.Enabled)
+        {
+            throw new ApplicationRuleException(
+                "fake_payments_disabled",
+                "Manual test payments are disabled.");
+        }
+    }
 
     private static PaymentDto Map(Payment payment) =>
         new(

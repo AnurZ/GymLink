@@ -77,6 +77,8 @@ public sealed class DomainInvariantTests
     [Theory]
     [InlineData("../escape.jpg", "/uploads/trainer-images/image.jpg", "image/jpeg", 10)]
     [InlineData("image.jpg", "https://example.test/image.jpg", "image/jpeg", 10)]
+    [InlineData("image.jpg", "//example.test/image.jpg", "image/jpeg", 10)]
+    [InlineData("image.jpg", "/uploads\\image.jpg", "image/jpeg", 10)]
     [InlineData("image.gif", "/uploads/trainer-images/image.gif", "image/gif", 10)]
     [InlineData("image.jpg", "/uploads/trainer-images/image.jpg", "image/jpeg", 0)]
     public void Trainer_image_rejects_invalid_metadata(
@@ -131,6 +133,8 @@ public sealed class DomainInvariantTests
     [Theory]
     [InlineData("../escape.jpg", "/uploads/gym-images/image.jpg", "image/jpeg", 10)]
     [InlineData("image.jpg", "https://example.test/image.jpg", "image/jpeg", 10)]
+    [InlineData("image.jpg", "//example.test/image.jpg", "image/jpeg", 10)]
+    [InlineData("image.jpg", "/uploads\\image.jpg", "image/jpeg", 10)]
     [InlineData("image.gif", "/uploads/gym-images/image.gif", "image/gif", 10)]
     [InlineData("image.jpg", "/uploads/gym-images/image.jpg", "image/jpeg", 0)]
     public void Gym_image_rejects_invalid_managed_metadata(
