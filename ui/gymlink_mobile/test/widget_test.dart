@@ -156,8 +156,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Stripe'), findsOneWidget);
-    expect(find.text('Označi kao plaćeno'), findsOneWidget);
+    expect(find.text('Označi kao plaćeno (lokalno)'), findsOneWidget);
     expect(find.text('Plati uživo'), findsOneWidget);
+    expect(find.textContaining('ALLOW_FAKE_PAYMENTS'), findsNothing);
     expect(find.textContaining('vanjski preglednik'), findsOneWidget);
     expect(find.textContaining('automatski ćete se vratiti'), findsOneWidget);
 
@@ -192,8 +193,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Stripe'), findsOneWidget);
-    expect(find.text('Označi kao plaćeno'), findsOneWidget);
-    expect(find.textContaining('ALLOW_FAKE_PAYMENTS'), findsOneWidget);
+    expect(find.text('Označi kao plaćeno (lokalno)'), findsOneWidget);
+    expect(find.textContaining('ALLOW_FAKE_PAYMENTS'), findsNothing);
 
     await tester.tap(find.byKey(const Key('membership-payment-manual')));
     await tester.pumpAndSettle();

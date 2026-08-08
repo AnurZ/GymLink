@@ -238,6 +238,31 @@ void main() {
     expect(find.byType(ResetPasswordScreen), findsOneWidget);
   });
 
+  testWidgets('password reset returns to desktop login', (tester) async {
+    final router = GoRouter(
+      initialLocation: '/reset-password',
+      routes: [
+        GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
+        GoRoute(
+          path: '/reset-password',
+          builder: (_, _) => const ResetPasswordScreen(initialEmail: ''),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      MaterialApp.router(theme: buildGymLinkTheme(), routerConfig: router),
+    );
+
+    final returnButton = find.text('Nazad na prijavu');
+    expect(returnButton, findsOneWidget);
+    await tester.ensureVisible(returnButton);
+    await tester.tap(returnButton);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(LoginScreen), findsOneWidget);
+  });
+
   testWidgets('desktop login exposes and opens password recovery', (
     tester,
   ) async {

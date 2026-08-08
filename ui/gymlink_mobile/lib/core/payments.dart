@@ -35,11 +35,7 @@ Future<MembershipPaymentMethod?> chooseMembershipPaymentMethod(
             child: ListTile(
               key: const Key('membership-payment-manual'),
               leading: const Icon(Icons.check_circle_outline),
-              title: const Text('Označi kao plaćeno'),
-              subtitle: const Text(
-                'Testno plaćanje bez Stripe transakcije. Dostupno samo kada '
-                'je ALLOW_FAKE_PAYMENTS uključen.',
-              ),
+              title: const Text('Označi kao plaćeno (lokalno)'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () =>
                   Navigator.pop(context, MembershipPaymentMethod.manual),
@@ -77,11 +73,7 @@ Future<ReservationPaymentMethod?> chooseReservationPaymentMethod(
             child: ListTile(
               key: const Key('reservation-payment-manual'),
               leading: const Icon(Icons.check_circle_outline),
-              title: const Text('Označi kao plaćeno'),
-              subtitle: const Text(
-                'Testno plaćanje bez Stripe transakcije. Dostupno samo kada '
-                'je ALLOW_FAKE_PAYMENTS uključen.',
-              ),
+              title: const Text('Označi kao plaćeno (lokalno)'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () =>
                   Navigator.pop(context, ReservationPaymentMethod.manual),

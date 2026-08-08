@@ -138,6 +138,8 @@ services:
       Smtp__Host: mailpit
       Smtp__Port: "1025"
       Smtp__UseSsl: "false"
+      Smtp__Username: ""
+      Smtp__Password: ""
       PasswordReset__CodePepper: ${PasswordReset__CodePepper:?Add PasswordReset__CodePepper to .env}
       Stripe__Enabled: ${Stripe__Enabled:-true}
     networks:

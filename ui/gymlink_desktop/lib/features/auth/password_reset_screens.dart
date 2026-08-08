@@ -228,6 +228,10 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
             onPressed: _busy ? null : _submit,
             child: Text(_busy ? 'Spremanje...' : 'Promijeni lozinku'),
           ),
+          TextButton(
+            onPressed: _busy ? null : () => context.go('/login'),
+            child: const Text('Nazad na prijavu'),
+          ),
         ],
       ),
     ),

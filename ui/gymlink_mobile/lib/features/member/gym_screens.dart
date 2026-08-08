@@ -606,16 +606,17 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
     if (paymentMethod == null) return;
     if (!mounted) return;
     final isManual = paymentMethod == MembershipPaymentMethod.manual;
-    if (!await confirmAction(
-      context,
-      title: 'Plaćanje članarine',
-      message: isManual
-          ? 'Označi članarinu ${plan['name']} kao testno plaćenu?'
-          : 'Otvori Stripe plaćanje za ${plan['name']} '
-                '(${plan['price']} ${plan['currency']})?',
-      action: isManual ? 'Označi kao plaćeno' : 'Nastavi na plaćanje',
-    )) {
-      return;
+    if (!isManual) {
+      if (!await confirmAction(
+        context,
+        title: 'Plaćanje članarine',
+        message:
+            'Otvori Stripe plaćanje za ${plan['name']} '
+            '(${plan['price']} ${plan['currency']})?',
+        action: 'Nastavi na plaćanje',
+      )) {
+        return;
+      }
     }
     setState(() => _purchasingPlanId = plan['id'].toString());
     try {
