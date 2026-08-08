@@ -1,6 +1,12 @@
 ## Docker Build
 
-To build GymLink using Docker, copy `.env.example` to `.env`, enter the required local configuration values, and run `docker compose up --build -d` from the repository root. Swagger is available at `http://localhost:62287/swagger`, RabbitMQ Management at `http://localhost:15672`, and Mailpit at `http://localhost:8025`. Internet access is required on the Android emulator for maps, address search, external gym images, and Stripe test payments.
+To build GymLink using Docker, copy `.env.example` to `.env`, enter the required local configuration values, and run `docker compose up --build -d` from the repository root. Swagger is available at `http://localhost:62287/swagger` and RabbitMQ Management at `http://localhost:15672`. Internet access is required for Gmail SMTP, maps, address search, external gym images, and Stripe test payments.
+
+## Password-reset email
+
+The normal Compose stack sends password-reset codes through authenticated Gmail SMTP. Enable Google 2-Step Verification for the sender account, create a dedicated 16-character [Google App Password](https://support.google.com/mail/answer/185833?hl=en-EN), and set `Smtp__Host=smtp.gmail.com`, `Smtp__Port=465`, `Smtp__UseSsl=true`, `Smtp__Username`, `Smtp__Password`, and `Smtp__SenderEmail` in the private `.env`. Use the full Gmail address for both username and sender email. Never commit or share the App Password.
+
+Mailpit is intentionally excluded from normal startup. For isolated local delivery testing, run `docker compose -f docker-compose.yml -f docker-compose.mailpit.yml up --build -d`; this override redirects only the Worker to unauthenticated Mailpit and exposes its UI at `http://localhost:8025`. The release verification script applies this override automatically so automated tests never send real email.
 
 ## GymLink
 
@@ -52,7 +58,7 @@ The Android application build for Members and Trainers is located at `artifacts/
 
 Docker Compose uses real Stripe sandbox Checkout by default. Stripe payments use the `sk_test_...` credentials from the private `.env`, open Stripe Checkout in the browser, and appear in the Stripe test dashboard. The standard test card is `4242 4242 4242 4242` with any future expiry date and CVC. For live webhook delivery, run `stripe listen --forward-to http://localhost:62287/api/webhooks/stripe` and place its current `whsec_...` value in `.env`; the success return also verifies the Checkout session directly with Stripe.
 
-Setting `ALLOW_FAKE_PAYMENTS=true` exposes a separate **Označi kao plaćeno** choice in the Android payment menu. That action calls the guarded manual-payment endpoint and changes the server-owned payment and target status without creating a Stripe transaction. It is an explicit evaluator fallback, not an automatic failover and not evidence of a real charge. Set `ALLOW_FAKE_PAYMENTS=false` to reject all manual-payment requests. Mailpit displays password-reset emails sent by the Worker at `http://localhost:8025`.
+Setting `ALLOW_FAKE_PAYMENTS=true` exposes a separate **Označi kao plaćeno** choice in the Android payment menu. That action calls the guarded manual-payment endpoint and changes the server-owned payment and target status without creating a Stripe transaction. It is an explicit evaluator fallback, not an automatic failover and not evidence of a real charge. Set `ALLOW_FAKE_PAYMENTS=false` to reject all manual-payment requests.
 
 ## App Behavior
 
@@ -60,4 +66,4 @@ The Windows application is available only to Central Administrators and Gym Admi
 
 ## RabbitMQ
 
-RabbitMQ carries notification and password-reset messages from the API transactional outbox to the separate GymLink Worker. The Worker processes persistent notifications and sends password-reset email to Mailpit, with retry, idempotent processing, manual acknowledgements, and dead-letter queues for invalid messages.
+RabbitMQ carries notification and password-reset messages from the API transactional outbox to the separate GymLink Worker. The Worker processes persistent notifications and sends password-reset email through the configured Gmail SMTP account, with retry, idempotent processing, manual acknowledgements, and dead-letter queues for invalid messages. Mailpit is used only through the explicit audit override.

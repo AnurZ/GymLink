@@ -30,6 +30,7 @@ $ProgressPreference = 'SilentlyContinue'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..')).Path
 $composeFile = Join-Path $repositoryRoot 'docker-compose.yml'
+$mailpitComposeFile = Join-Path $repositoryRoot 'docker-compose.mailpit.yml'
 $environmentFile = Join-Path $repositoryRoot '.env'
 $solution = Join-Path $repositoryRoot 'backend/GymLink.sln'
 $mobileRoot = Join-Path $repositoryRoot 'ui/gymlink_mobile'
@@ -199,6 +200,17 @@ function Set-IsolatedComposeEnvironment {
     $env:GYMLINK_MAILPIT_SMTP_PORT = $MailpitSmtpPort.ToString()
     $env:GYMLINK_MAILPIT_UI_PORT = $MailpitUiPort.ToString()
     $env:GYMLINK_COMPOSE_SEED_ENABLED = 'true'
+    $env:Smtp__Username = 'audit@gymlink.local'
+    $env:Smtp__Password = 'audit-only-not-a-real-credential'
+    $env:Smtp__SenderEmail = 'audit@gymlink.local'
+}
+
+function Get-ComposeArguments {
+    return @(
+        'compose', '-p', $ProjectName,
+        '-f', $composeFile,
+        '-f', $mailpitComposeFile
+    )
 }
 
 function Get-AuditContainerIds {
@@ -224,25 +236,35 @@ function Remove-AuditStack {
 
     $ids = Get-AuditContainerIds
     foreach ($id in $ids) {
-        $label = (& docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' $id).Trim()
-        if ($LASTEXITCODE -ne 0 -or $label -ne $ProjectName) {
+        $inspection = (& docker inspect $id 2>&1 | Out-String)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to inspect audit container $id."
+        }
+        $container = @($inspection | ConvertFrom-Json)[0]
+        $label = $container.Config.Labels.'com.docker.compose.project'
+        if ($label -ne $ProjectName) {
             throw "Container $id does not belong exclusively to $ProjectName; cleanup refused."
         }
     }
 
     $volumes = @(Get-AuditVolumeNames)
     foreach ($volume in $volumes) {
-        $label = (& docker volume inspect --format '{{ index .Labels "com.docker.compose.project" }}' $volume).Trim()
-        if ($LASTEXITCODE -ne 0 -or $label -ne $ProjectName) {
+        $inspection = (& docker volume inspect $volume 2>&1 | Out-String)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to inspect audit volume $volume."
+        }
+        $volumeDetails = @($inspection | ConvertFrom-Json)[0]
+        $label = $volumeDetails.Labels.'com.docker.compose.project'
+        if ($label -ne $ProjectName) {
             throw "Volume $volume does not belong exclusively to $ProjectName; cleanup refused."
         }
     }
 
-    Invoke-Native docker @('compose', '-p', $ProjectName, '-f', $composeFile, 'down', '--volumes', '--remove-orphans')
+    Invoke-Compose @('down', '--volumes', '--remove-orphans')
 }
 
 function Invoke-Compose([string[]]$Arguments) {
-    Invoke-Native docker (@('compose', '-p', $ProjectName, '-f', $composeFile) + $Arguments)
+    Invoke-Native docker ((Get-ComposeArguments) + $Arguments)
 }
 
 function Get-BasicAuthHeaders {
@@ -264,7 +286,11 @@ function Get-Queue([string]$QueueName) {
 
 function Publish-MalformedMessage([string]$RoutingKey) {
     $body = @{
-        properties = @{ content_type = 'application/json'; type = 'GymLink.ReleaseAudit.Malformed' }
+        properties = @{
+            content_type = 'application/json'
+            type = 'GymLink.ReleaseAudit.Malformed'
+            delivery_mode = 2
+        }
         routing_key = $RoutingKey
         payload = '{malformed-release-audit-message'
         payload_encoding = 'string'
@@ -315,11 +341,13 @@ function Assert-SeedLogin([string]$Identifier, [string]$ExpectedRole) {
 }
 
 function Invoke-DatabaseScalar([string]$Query) {
-    $output = Get-NativeOutput docker @(
-        'compose', '-p', $ProjectName, '-f', $composeFile,
+    if ($Query.Contains("'")) {
+        throw 'Audit SQL scalar queries must not contain single quotes.'
+    }
+    $output = Get-NativeOutput docker ((Get-ComposeArguments) + @(
         'exec', '-T', 'sqlserver', 'sh', '-lc',
-        "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P `"`$MSSQL_SA_PASSWORD`" -C -h -1 -W -Q `"$Query`""
-    )
+        "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P `"`$MSSQL_SA_PASSWORD`" -C -d 230038 -h -1 -W -Q '$Query'"
+    ))
     return $output.Trim()
 }
 
@@ -444,7 +472,7 @@ function Invoke-DockerVerification {
         } `
         -FailureMessage 'The Compose API did not become healthy within five minutes.'
 
-    $psJson = Get-NativeOutput docker @('compose', '-p', $ProjectName, '-f', $composeFile, 'ps', '--format', 'json')
+    $psJson = Get-NativeOutput docker ((Get-ComposeArguments) + @('ps', '--format', 'json'))
     $serviceRows = @($psJson -split "`r?`n" | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
     foreach ($requiredService in @('sqlserver', 'rabbitmq', 'mailpit', 'api', 'worker')) {
         $row = $serviceRows | Where-Object { $_.Service -eq $requiredService }
@@ -521,6 +549,15 @@ function Invoke-DockerVerification {
             catch { return $false }
         } `
         -FailureMessage 'Database 230038 did not recover after SQL Server restart.'
+    Wait-Until -TimeoutSeconds 120 -IntervalSeconds 3 `
+        -Condition {
+            try {
+                $health = Invoke-RestMethod -Uri "http://127.0.0.1:$ApiPort/health"
+                return $null -ne $health
+            }
+            catch { return $false }
+        } `
+        -FailureMessage 'The Compose API did not recover after SQL Server restart.'
     Assert-SeedLogin 'centraladmin' 'CentralAdmin'
 }
 

@@ -44,26 +44,6 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  mailpit:
-    image: axllent/mailpit:v1.30.6
-    environment:
-      MP_DATABASE: /data/mailpit.db
-      MP_MAX_MESSAGES: 5000
-    ports:
-      - "${GYMLINK_MAILPIT_SMTP_PORT:-1025}:1025"
-      - "${GYMLINK_MAILPIT_UI_PORT:-8025}:8025"
-    volumes:
-      - gymlink-mailpit-data:/data
-    networks:
-      - gymlink-internal
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8025/readyz"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
-    restart: unless-stopped
-
   api:
     build:
       context: .
@@ -88,9 +68,6 @@ services:
       RabbitMq__Password: ${GYMLINK_RABBITMQ_PASSWORD}
       RabbitMq__NotificationDeadLetterQueue: gymlink.notifications.dead-letter.v1
       RabbitMq__EmailDeadLetterQueue: gymlink.email.dead-letter.v1
-      Smtp__Host: mailpit
-      Smtp__Port: "1025"
-      Smtp__UseSsl: "false"
       Stripe__Enabled: ${Stripe__Enabled:-true}
       Stripe__SuccessUrl: ${Stripe__SuccessUrl:-http://10.0.2.2:62287/payments/stripe/success}
       Stripe__CancelUrl: ${Stripe__CancelUrl:-http://10.0.2.2:62287/payments/stripe/cancel}
@@ -135,11 +112,13 @@ services:
       RabbitMq__Password: ${GYMLINK_RABBITMQ_PASSWORD}
       RabbitMq__NotificationDeadLetterQueue: gymlink.notifications.dead-letter.v1
       RabbitMq__EmailDeadLetterQueue: gymlink.email.dead-letter.v1
-      Smtp__Host: mailpit
-      Smtp__Port: "1025"
-      Smtp__UseSsl: "false"
-      Smtp__Username: ""
-      Smtp__Password: ""
+      Smtp__Host: ${Smtp__Host:-smtp.gmail.com}
+      Smtp__Port: ${Smtp__Port:-465}
+      Smtp__UseSsl: ${Smtp__UseSsl:-true}
+      Smtp__Username: ${Smtp__Username:?Add the Gmail sender address to .env}
+      Smtp__Password: ${Smtp__Password:?Add a Gmail App Password to .env}
+      Smtp__SenderEmail: ${Smtp__SenderEmail:?Add the Gmail sender address to .env}
+      Smtp__SenderName: ${Smtp__SenderName:-GymLink}
       PasswordReset__CodePepper: ${PasswordReset__CodePepper:?Add PasswordReset__CodePepper to .env}
       Stripe__Enabled: ${Stripe__Enabled:-true}
     networks:
@@ -148,8 +127,6 @@ services:
       api:
         condition: service_healthy
       rabbitmq:
-        condition: service_healthy
-      mailpit:
         condition: service_healthy
     restart: unless-stopped
 
@@ -160,6 +137,5 @@ networks:
 volumes:
   gymlink-sqlserver-data:
   gymlink-rabbitmq-data:
-  gymlink-mailpit-data:
   gymlink-trainer-images:
   gymlink-gym-images:
