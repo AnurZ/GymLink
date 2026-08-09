@@ -96,6 +96,9 @@ class _GymAdminReportsScreenState extends State<GymAdminReportsScreen> {
     }
   }
 
+  Future<void> _refreshAll() =>
+      Future.wait([_loadSummary(), _loadMonths(), _loadDistribution()]);
+
   Future<void> _export(String type) async {
     if (_exporting) return;
     setState(() => _exporting = true);
@@ -179,6 +182,8 @@ class _GymAdminReportsScreenState extends State<GymAdminReportsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final refreshing =
+        _summaryLoading || _monthsLoading || _distributionLoading;
     final chartWidth = math.max(
       360.0,
       (MediaQuery.sizeOf(context).width - 390) / 2,
@@ -205,6 +210,18 @@ class _GymAdminReportsScreenState extends State<GymAdminReportsScreen> {
                 ],
               ),
             ),
+            OutlinedButton.icon(
+              key: const Key('refresh-gym-statistics'),
+              onPressed: refreshing ? null : _refreshAll,
+              icon: refreshing
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh),
+              label: const Text('Osvježi'),
+            ),
+            const SizedBox(width: 12),
             PopupMenuButton<String>(
               key: const Key('export-pdf-menu'),
               enabled: !_exporting,

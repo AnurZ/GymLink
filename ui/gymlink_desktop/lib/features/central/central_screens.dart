@@ -367,8 +367,11 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  Future<bool> _load({bool preserveDataOnError = false}) async {
+    setState(() {
+      _loading = true;
+      if (!preserveDataOnError) _error = null;
+    });
     try {
       final api = context.read<ApiClient>();
       _items = (await api.page(
@@ -376,8 +379,10 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
         query: {'query': _search.text.trim(), 'status': _status},
       )).items;
       _error = null;
+      return true;
     } catch (error) {
-      _error = error;
+      if (!preserveDataOnError) _error = error;
+      return false;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -438,12 +443,19 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
         '/api/admin/tenants/${item['tenantId']}/$action',
         body: {'reason': reason},
       );
-      await _load();
+      final refreshed = await _load(preserveDataOnError: true);
       if (mounted) context.read<CentralAdminRefresh>().dataChanged();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Status teretane je uspješno promijenjen.'),
+          SnackBar(
+            content: Text(
+              refreshed
+                  ? 'Status teretane je uspješno promijenjen.'
+                  : 'Promjena je sačuvana, ali lista nije osvježena. Pokušajte ponovo.',
+            ),
+            action: refreshed
+                ? null
+                : SnackBarAction(label: 'Pokušaj ponovo', onPressed: _load),
           ),
         );
       }

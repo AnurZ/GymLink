@@ -24,6 +24,15 @@ final class ApiProblem implements Exception {
   final String message;
   final Map<String, List<String>> fieldErrors;
 
+  String? get firstFieldError {
+    for (final values in fieldErrors.values) {
+      if (values.isNotEmpty && values.first.trim().isNotEmpty) {
+        return values.first;
+      }
+    }
+    return null;
+  }
+
   factory ApiProblem.fromResponse(http.Response response) {
     Map<String, dynamic> json = const {};
     try {

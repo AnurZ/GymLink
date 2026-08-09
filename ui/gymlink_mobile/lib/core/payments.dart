@@ -54,7 +54,7 @@ Future<MembershipPaymentMethod?> chooseMembershipPaymentMethod(
                 leading: const Icon(Icons.payments_outlined),
                 title: const Text('Plati uživo'),
                 subtitle: const Text(
-                  'Zahtjev čeka GymAdmin potvrdu nakon plaćanja u teretani.',
+                  'Nakon što platite članarinu u teretani, administrator će vam odobriti članstvo.',
                 ),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () =>

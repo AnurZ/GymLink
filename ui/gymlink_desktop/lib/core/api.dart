@@ -5,8 +5,6 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
-import 'app_errors.dart';
-
 abstract interface class AuthTokenSource {
   String? get accessToken;
   Future<bool> refresh();
@@ -237,13 +235,7 @@ class ApiClient {
         );
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        final problem = ApiProblem.fromResponse(response);
-        if (method != 'GET') AppErrorReporter.reportUnexpected(problem.message);
-        throw problem;
-      }
-      if (method != 'GET' &&
-          (path.startsWith('/api/admin/') || path.startsWith('/api/tenant/'))) {
-        AppErrorReporter.reportSuccess();
+        throw ApiProblem.fromResponse(response);
       }
       return response.body.trim().isEmpty ? null : jsonDecode(response.body);
     } on ApiProblem {
@@ -326,11 +318,8 @@ class ApiClient {
         await _tokens.invalidate();
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        final problem = ApiProblem.fromResponse(response);
-        AppErrorReporter.reportUnexpected(problem.message);
-        throw problem;
+        throw ApiProblem.fromResponse(response);
       }
-      AppErrorReporter.reportSuccess();
       if (response.body.trim().isEmpty) return null;
       return jsonDecode(response.body);
     } on ApiProblem {

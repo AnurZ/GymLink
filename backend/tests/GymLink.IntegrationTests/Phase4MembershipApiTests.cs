@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using GymLink.Application.Catalog;
 using GymLink.Application.Common;
@@ -478,17 +479,53 @@ public sealed class Phase4MembershipApiTests
             await using var factory = CreateFactory(connectionString);
             using var client = factory.CreateClient();
             var member = await RegisterAsync(client, "Cash Membership Member");
+            var numericMember = await RegisterAsync(client, "Numeric Cash Member");
+            var stripeMember = await RegisterAsync(client, "Stripe Membership Member");
             var admin = await LoginAsync(client, "admin.respect");
             var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
 
-            Authorize(client, member);
-            var response = await client.PostAsJsonAsync(
+            Authorize(client, numericMember);
+            var numericResponse = await client.PostAsJsonAsync(
                 "/api/membership-requests",
                 new
                 {
                     membershipPlanId = planId,
-                    paymentMethod = MembershipPaymentMethod.PayInPerson,
+                    paymentMethod = (int)MembershipPaymentMethod.PayInPerson,
                 });
+            numericResponse.EnsureSuccessStatusCode();
+
+            Authorize(client, stripeMember);
+            var stripeResponse = await client.PostAsJsonAsync(
+                "/api/membership-requests",
+                new { membershipPlanId = planId });
+            stripeResponse.EnsureSuccessStatusCode();
+
+            Authorize(client, member);
+            var unsupported = await client.PostAsJsonAsync(
+                "/api/membership-requests",
+                new
+                {
+                    membershipPlanId = planId,
+                    paymentMethod = 99,
+                });
+            Assert.Equal(HttpStatusCode.BadRequest, unsupported.StatusCode);
+            using (var problem = JsonDocument.Parse(await unsupported.Content.ReadAsStringAsync()))
+            {
+                Assert.Equal(
+                    "unsupported_membership_payment_method",
+                    problem.RootElement.GetProperty("title").GetString());
+            }
+
+            var response = await client.PostAsync(
+                "/api/membership-requests",
+                new StringContent(
+                    JsonSerializer.Serialize(new
+                    {
+                        membershipPlanId = planId,
+                        paymentMethod = "PayInPerson",
+                    }),
+                    Encoding.UTF8,
+                    "application/json"));
             response.EnsureSuccessStatusCode();
             var request = await response.Content.ReadFromJsonAsync<MembershipRequestDto>();
             Assert.NotNull(request);
@@ -499,15 +536,45 @@ public sealed class Phase4MembershipApiTests
 
             Authorize(client, admin);
             var tenantPage = await client.GetFromJsonAsync<PagedResult<MembershipRequestDto>>(
-                "/api/tenant/membership-requests?paymentMethod=PayInPerson&page=1&pageSize=10");
+                "/api/tenant/membership-requests?paymentMethod=PayInPerson&member=Cash%20Membership%20Member&page=1&pageSize=10");
             Assert.NotNull(tenantPage);
             var tenantRequest = Assert.Single(tenantPage.Items);
             Assert.Equal(["approve", "reject", "view"], tenantRequest.AllowedActions);
+            var groupedCash =
+                await client.GetFromJsonAsync<PagedResult<MembershipRequestDto>>(
+                    "/api/tenant/membership-requests?paymentCategory=PayInPerson&member=Cash%20Membership%20Member&page=1&pageSize=10");
+            Assert.NotNull(groupedCash);
+            Assert.Equal(request.Id, Assert.Single(groupedCash.Items).Id);
+            var groupedStripe =
+                await client.GetFromJsonAsync<PagedResult<MembershipRequestDto>>(
+                    "/api/tenant/membership-requests?paymentCategory=Stripe&page=1&pageSize=100");
+            Assert.NotNull(groupedStripe);
+            Assert.NotEmpty(groupedStripe.Items);
+            Assert.All(groupedStripe.Items, item => Assert.Contains(
+                item.PaymentMethod,
+                new[]
+                {
+                    MembershipPaymentMethod.Stripe,
+                    MembershipPaymentMethod.StripeFallback,
+                }));
 
             var approval = await client.PostAsJsonAsync(
                 $"/api/tenant/membership-requests/{request.Id}/approve",
                 new { concurrencyToken = tenantRequest.ConcurrencyToken });
             approval.EnsureSuccessStatusCode();
+            var approvedRequest =
+                await approval.Content.ReadFromJsonAsync<MembershipRequestDto>();
+            var linkedMembership = Assert.IsType<MembershipRequestMembershipDto>(
+                approvedRequest?.Membership);
+            Assert.Equal(MembershipStatus.Active, linkedMembership.Status);
+            Assert.False(linkedMembership.IsPaid);
+            Assert.Contains("cancel", linkedMembership.AllowedActions);
+
+            var activeRequests =
+                await client.GetFromJsonAsync<PagedResult<MembershipRequestDto>>(
+                    "/api/tenant/membership-requests?membershipStatus=Active&member=Cash%20Membership%20Member&page=1&pageSize=10");
+            Assert.NotNull(activeRequests);
+            Assert.Equal(request.Id, Assert.Single(activeRequests.Items).Id);
 
             Authorize(client, member);
             var membership = Assert.Single((await GetMineAsync(client)).Items);

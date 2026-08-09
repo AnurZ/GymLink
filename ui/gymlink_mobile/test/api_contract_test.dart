@@ -22,6 +22,7 @@ void main() {
     expect(problem.code, 'validation_failed');
     expect(problem.message, 'Provjerite unos.');
     expect(problem.fieldErrors['Email'], ['Email nije ispravan.']);
+    expect(problem.firstFieldError, 'Email nije ispravan.');
   });
 
   test('missing endpoint explains that the API must be restarted', () {

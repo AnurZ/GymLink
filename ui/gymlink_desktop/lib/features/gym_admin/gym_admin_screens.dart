@@ -17,6 +17,14 @@ const _membershipStatuses = [
   'Cancelled',
   'Suspended',
 ];
+const _paymentStatuses = [
+  'Created',
+  'Processing',
+  'Succeeded',
+  'Failed',
+  'PartiallyRefunded',
+  'Refunded',
+];
 const _reservationStatuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
 const _visibleReservationStatuses = [1, 2, 3];
 
@@ -152,7 +160,8 @@ class _TenantMembershipRequestsScreenState
   bool _loading = true;
   Object? _error;
   int? _status;
-  int? _paymentMethod;
+  int? _paymentCategory;
+  int? _membershipStatus;
   int _page = 1;
   int _totalCount = 0;
   static const _pageSize = 20;
@@ -174,7 +183,8 @@ class _TenantMembershipRequestsScreenState
         query: {
           'member': _search.text.trim(),
           'status': _status,
-          'paymentMethod': _paymentMethod,
+          'paymentCategory': _paymentCategory,
+          'membershipStatus': _membershipStatus,
           'page': _page,
           'pageSize': _pageSize,
         },
@@ -228,40 +238,101 @@ class _TenantMembershipRequestsScreenState
     }
   }
 
+  Future<void> _membershipAction(
+    Map<String, dynamic> membership,
+    String action,
+  ) async {
+    final api = context.read<ApiClient>();
+    final reason = action == 'expire'
+        ? null
+        : await _reasonDialog(context, 'Razlog promjene članstva');
+    if (action != 'expire' && reason == null) return;
+    if (!mounted) return;
+    try {
+      await api.post(
+        '/api/tenant/memberships/${membership['id']}/$action',
+        body: {
+          'concurrencyToken': membership['concurrencyToken'],
+          'reason': ?reason,
+        },
+      );
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Status članstva je uspješno promijenjen.'),
+          ),
+        );
+      }
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+      if (error.status == 409) await _load();
+    }
+  }
+
   Future<void> _showDetails(Map<String, dynamic> item) => showDialog<void>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Detalji zahtjeva'),
-      content: SizedBox(
-        width: 520,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _requestDetail('Korisnik', item['memberDisplayName']),
-            _requestDetail('Email', item['memberEmail']),
-            _requestDetail('Vrsta članarine', item['planName']),
-            _requestDetail('Iznos', '${item['price']} ${item['currency']}'),
-            _requestDetail('Datum', _date(item['requestedAtUtc'])),
-            _requestDetail(
-              'Način plaćanja',
-              _membershipPaymentLabel(item['paymentMethod']),
-            ),
-            _requestDetail(
-              'Status',
-              enumLabel(item['status'], _requestStatuses),
-            ),
-            if (item['decisionReason'] != null)
-              _requestDetail('Razlog odluke', item['decisionReason']),
-          ],
+    builder: (context) {
+      final membership = item['membership'] is Map
+          ? Map<String, dynamic>.from(item['membership'] as Map)
+          : null;
+      return AlertDialog(
+        title: const Text('Detalji zahtjeva'),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _requestDetail('Korisnik', item['memberDisplayName']),
+              _requestDetail('Email', item['memberEmail']),
+              _requestDetail('Vrsta članarine', item['planName']),
+              _requestDetail('Iznos', '${item['price']} ${item['currency']}'),
+              _requestDetail('Datum', _date(item['requestedAtUtc'])),
+              _requestDetail(
+                'Način plaćanja',
+                _membershipPaymentLabel(item['paymentMethod']),
+              ),
+              _requestDetail(
+                'Status',
+                enumLabel(item['status'], _requestStatuses),
+              ),
+              if (item['decisionReason'] != null)
+                _requestDetail('Razlog odluke', item['decisionReason']),
+              if (membership != null) ...[
+                const Divider(height: 24),
+                _requestDetail(
+                  'Status članstva',
+                  enumLabel(membership['status'], _membershipStatuses),
+                ),
+                _requestDetail('Početak', _date(membership['startsAtUtc'])),
+                _requestDetail('Kraj', _date(membership['endsAtUtc'])),
+                _requestDetail(
+                  'Status plaćanja',
+                  membership['paymentStatus'] == null
+                      ? 'Plaćanje uživo'
+                      : enumLabel(
+                          membership['paymentStatus'],
+                          _paymentStatuses,
+                        ),
+                ),
+                if (membership['statusReason'] != null)
+                  _requestDetail('Razlog statusa', membership['statusReason']),
+              ],
+            ],
+          ),
         ),
-      ),
-      actions: [
-        FilledButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Zatvori'),
-        ),
-      ],
-    ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Zatvori'),
+          ),
+        ],
+      );
+    },
   );
 
   Widget _requestDetail(String label, Object? value) => Padding(
@@ -281,44 +352,105 @@ class _TenantMembershipRequestsScreenState
   @override
   Widget build(BuildContext context) => Column(
     children: [
-      Row(
+      Wrap(
+        spacing: 12,
+        runSpacing: 12,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Expanded(
-            child: _FilterBar(
-              search: _search,
-              hint: 'Pretraži člana...',
-              status: _status,
-              statuses: _requestStatuses,
-              onStatus: (value) {
-                _status = value;
+          SizedBox(
+            width: 300,
+            child: TextField(
+              controller: _search,
+              onSubmitted: (_) {
                 _page = 1;
                 _load();
               },
-              onSearch: () {
+              decoration: const InputDecoration(
+                hintText: 'Pretraži člana...',
+                prefixIcon: Icon(Icons.search),
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 210,
+            child: DropdownButtonFormField<int?>(
+              key: const Key('membership-request-status-filter'),
+              initialValue: _status,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Status zahtjeva'),
+              items: [
+                const DropdownMenuItem(
+                  value: null,
+                  child: Text('Svi zahtjevi'),
+                ),
+                ...List.generate(
+                  _requestStatuses.length,
+                  (index) => DropdownMenuItem(
+                    value: index,
+                    child: Text(_requestStatuses[index]),
+                  ),
+                ),
+              ],
+              onChanged: (value) {
+                _status = value;
                 _page = 1;
                 _load();
               },
             ),
           ),
-          const SizedBox(width: 12),
           SizedBox(
             width: 210,
             child: DropdownButtonFormField<int?>(
-              initialValue: _paymentMethod,
+              key: const Key('membership-payment-method-filter'),
+              initialValue: _paymentCategory,
               isExpanded: true,
               decoration: const InputDecoration(labelText: 'Način plaćanja'),
               items: const [
                 DropdownMenuItem(value: null, child: Text('Sve metode')),
                 DropdownMenuItem(value: 0, child: Text('Stripe')),
-                DropdownMenuItem(value: 1, child: Text('Stripe fallback')),
-                DropdownMenuItem(value: 2, child: Text('Plati uživo')),
+                DropdownMenuItem(value: 1, child: Text('Plati uživo')),
               ],
               onChanged: (value) {
-                _paymentMethod = value;
+                _paymentCategory = value;
                 _page = 1;
                 _load();
               },
             ),
+          ),
+          SizedBox(
+            width: 210,
+            child: DropdownButtonFormField<int?>(
+              key: const Key('linked-membership-status-filter'),
+              initialValue: _membershipStatus,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Status članstva'),
+              items: [
+                const DropdownMenuItem(
+                  value: null,
+                  child: Text('Sva članstva'),
+                ),
+                ...List.generate(
+                  _membershipStatuses.length,
+                  (index) => DropdownMenuItem(
+                    value: index,
+                    child: Text(_membershipStatuses[index]),
+                  ),
+                ),
+              ],
+              onChanged: (value) {
+                _membershipStatus = value;
+                _page = 1;
+                _load();
+              },
+            ),
+          ),
+          IconButton.filledTonal(
+            tooltip: 'Osvježi',
+            onPressed: () {
+              _page = 1;
+              _load();
+            },
+            icon: const Icon(Icons.refresh),
           ),
         ],
       ),
@@ -335,6 +467,8 @@ class _TenantMembershipRequestsScreenState
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: DataTable(
+                        dataRowMinHeight: 64,
+                        dataRowMaxHeight: 72,
                         columns: const [
                           DataColumn(label: Text('Korisnik')),
                           DataColumn(label: Text('Email')),
@@ -342,13 +476,25 @@ class _TenantMembershipRequestsScreenState
                           DataColumn(label: Text('Iznos')),
                           DataColumn(label: Text('Datum')),
                           DataColumn(label: Text('Način plaćanja')),
-                          DataColumn(label: Text('Status')),
+                          DataColumn(label: Text('Status zahtjeva')),
+                          DataColumn(label: Text('Status / period članstva')),
                           DataColumn(label: Text('Akcije')),
                         ],
                         rows: _items.map((item) {
                           final actions =
                               (item['allowedActions'] as List? ?? const [])
                                   .map((value) => value.toString())
+                                  .toSet();
+                          final membership = item['membership'] is Map
+                              ? Map<String, dynamic>.from(
+                                  item['membership'] as Map,
+                                )
+                              : null;
+                          final membershipActions =
+                              (membership?['allowedActions'] as List? ??
+                                      const [])
+                                  .map((value) => value.toString())
+                                  .where((action) => action != 'pay')
                                   .toSet();
                           return DataRow(
                             cells: [
@@ -376,6 +522,30 @@ class _TenantMembershipRequestsScreenState
                                 ),
                               ),
                               DataCell(
+                                membership == null
+                                    ? Text(
+                                        _missingMembershipLabel(item['status']),
+                                      )
+                                    : Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          StatusPill(
+                                            enumLabel(
+                                              membership['status'],
+                                              _membershipStatuses,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            '${_date(membership['startsAtUtc'])} – ${_date(membership['endsAtUtc'])}',
+                                          ),
+                                        ],
+                                      ),
+                              ),
+                              DataCell(
                                 Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
@@ -396,6 +566,28 @@ class _TenantMembershipRequestsScreenState
                                           Icons.cancel_outlined,
                                           color: Colors.red,
                                         ),
+                                      ),
+                                    if (membership != null &&
+                                        membershipActions.isNotEmpty)
+                                      PopupMenuButton<String>(
+                                        tooltip: 'Akcije članstva',
+                                        onSelected: (action) =>
+                                            _membershipAction(
+                                              membership,
+                                              action,
+                                            ),
+                                        itemBuilder: (_) => membershipActions
+                                            .map(
+                                              (action) => PopupMenuItem(
+                                                value: action,
+                                                child: Text(
+                                                  _membershipActionLabel(
+                                                    action,
+                                                  ),
+                                                ),
+                                              ),
+                                            )
+                                            .toList(),
                                       ),
                                     IconButton(
                                       tooltip: 'Detalji',
@@ -447,120 +639,35 @@ class _TenantMembershipRequestsScreenState
   );
 }
 
-String _membershipPaymentLabel(Object? value) =>
-    enumLabel(value, const ['Stripe', 'Stripe fallback', 'Plati uživo']);
-
-class TenantMembershipsScreen extends StatefulWidget {
-  const TenantMembershipsScreen({super.key});
-  @override
-  State<TenantMembershipsScreen> createState() =>
-      _TenantMembershipsScreenState();
+String _membershipPaymentLabel(Object? value) {
+  if (value is num) {
+    return value.toInt() == 2 ? 'Plati uživo' : 'Stripe';
+  }
+  final normalized = value?.toString().replaceAll('_', '').toLowerCase();
+  if (normalized == 'payinperson') return 'Plati uživo';
+  if (normalized?.contains('stripe') == true) return 'Stripe';
+  return 'API nije ažuriran';
 }
 
-class _TenantMembershipsScreenState extends State<TenantMembershipsScreen> {
-  final _search = TextEditingController();
-  List<Map<String, dynamic>> _items = const [];
-  bool _loading = true;
-  Object? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
+String _missingMembershipLabel(Object? requestStatus) {
+  final normalized = requestStatus?.toString().toLowerCase();
+  if (requestStatus == 0 || normalized == 'pending') return 'Nije aktivirano';
+  if (requestStatus == 2 ||
+      requestStatus == 3 ||
+      normalized == 'rejected' ||
+      normalized == 'cancelled') {
+    return 'Nema članstva';
   }
-
-  Future<void> _load() async {
-    setState(() => _loading = true);
-    try {
-      _items = (await context.read<ApiClient>().page(
-        '/api/tenant/memberships',
-        query: {'member': _search.text.trim()},
-      )).items;
-      _error = null;
-    } catch (error) {
-      _error = error;
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _action(Map<String, dynamic> item, String action) async {
-    final api = context.read<ApiClient>();
-    final reason = action == 'expire'
-        ? null
-        : await _reasonDialog(context, 'Razlog promjene');
-    if (action != 'expire' && reason == null) return;
-    try {
-      await api.post(
-        '/api/tenant/memberships/${item['id']}/$action',
-        body: {'concurrencyToken': item['concurrencyToken'], 'reason': ?reason},
-      );
-      await _load();
-    } on ApiProblem catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      _FilterBar(search: _search, hint: 'Pretraži člana...', onSearch: _load),
-      const SizedBox(height: 16),
-      Expanded(
-        child: AsyncPanel(
-          loading: _loading,
-          error: _error,
-          onRetry: _load,
-          child: _items.isEmpty
-              ? const EmptyState('Nema članstava za izabrane filtere.')
-              : Card(
-                  child: ListView.separated(
-                    itemCount: _items.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final item = _items[index];
-                      final actions =
-                          (item['allowedActions'] as List? ?? const [])
-                              .map((value) => value.toString())
-                              .toList();
-                      return ListTile(
-                        title: Text(item['memberDisplayName'].toString()),
-                        subtitle: Text(
-                          '${item['planName']} · ${_date(item['startsAtUtc'])} – ${_date(item['endsAtUtc'])}',
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            StatusPill(
-                              enumLabel(item['status'], _membershipStatuses),
-                            ),
-                            PopupMenuButton<String>(
-                              enabled: actions.isNotEmpty,
-                              onSelected: (action) => _action(item, action),
-                              itemBuilder: (_) => actions
-                                  .map(
-                                    (action) => PopupMenuItem(
-                                      value: action,
-                                      child: Text(action),
-                                    ),
-                                  )
-                                  .toList(),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-        ),
-      ),
-    ],
-  );
+  return 'Podaci nisu dostupni — ponovo pokrenite API';
 }
+
+String _membershipActionLabel(String action) => switch (action) {
+  'cancel' => 'Otkaži',
+  'suspend' => 'Suspenduj',
+  'reactivate' => 'Ponovo aktiviraj',
+  'expire' => 'Označi isteklim',
+  _ => action,
+};
 
 class TrainerManagementScreen extends StatefulWidget {
   const TrainerManagementScreen({super.key});
@@ -1923,67 +2030,6 @@ class _GalleryImageTile extends StatelessWidget {
         ),
       ),
     ),
-  );
-}
-
-class _FilterBar extends StatelessWidget {
-  const _FilterBar({
-    required this.search,
-    required this.hint,
-    required this.onSearch,
-    this.status,
-    this.statuses,
-    this.onStatus,
-  });
-  final TextEditingController search;
-  final String hint;
-  final VoidCallback onSearch;
-  final int? status;
-  final List<String>? statuses;
-  final ValueChanged<int?>? onStatus;
-
-  @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      SizedBox(
-        width: 380,
-        child: TextField(
-          controller: search,
-          onSubmitted: (_) => onSearch(),
-          decoration: InputDecoration(
-            hintText: hint,
-            prefixIcon: const Icon(Icons.search),
-          ),
-        ),
-      ),
-      if (statuses != null) ...[
-        const SizedBox(width: 12),
-        SizedBox(
-          width: 250,
-          child: DropdownButtonFormField<int?>(
-            initialValue: status,
-            decoration: const InputDecoration(labelText: 'Status'),
-            items: [
-              const DropdownMenuItem(value: null, child: Text('Svi statusi')),
-              ...List.generate(
-                statuses!.length,
-                (index) => DropdownMenuItem(
-                  value: index,
-                  child: Text(statuses![index]),
-                ),
-              ),
-            ],
-            onChanged: onStatus,
-          ),
-        ),
-      ],
-      const Spacer(),
-      IconButton.filledTonal(
-        tooltip: 'Osvježi',
-        onPressed: onSearch,
-        icon: const Icon(Icons.refresh),
-      ),
-    ],
   );
 }
 

@@ -220,7 +220,7 @@ void main() {
     expect(selected, ReservationPaymentMethod.payInPerson);
   });
 
-  testWidgets('membership payment sheet exposes guarded manual payment', (
+  testWidgets('membership payment sheet explains pay in person', (
     tester,
   ) async {
     MembershipPaymentMethod? selected;
@@ -245,13 +245,140 @@ void main() {
     expect(find.text('Stripe'), findsOneWidget);
     expect(find.text('Stripe fallback (testno)'), findsOneWidget);
     expect(find.text('Plati uživo'), findsOneWidget);
+    expect(
+      find.text(
+        'Nakon što platite članarinu u teretani, administrator će vam odobriti članstvo.',
+      ),
+      findsOneWidget,
+    );
     expect(find.textContaining('ALLOW_FAKE_PAYMENTS'), findsNothing);
 
-    await tester.tap(find.byKey(const Key('membership-payment-manual')));
+    final payInPerson = find.byKey(const Key('membership-payment-in-person'));
+    await tester.ensureVisible(payInPerson);
+    await tester.tap(payInPerson);
     await tester.pumpAndSettle();
 
-    expect(selected, MembershipPaymentMethod.stripeFallback);
+    expect(selected, MembershipPaymentMethod.payInPerson);
   });
+
+  testWidgets(
+    'pay in person sends compatible method and shows field validation',
+    (tester) async {
+      tester.view.physicalSize = const Size(400, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      Map<String, dynamic>? submittedBody;
+      var postAttempts = 0;
+      var created = false;
+      final client = MockClient((request) async {
+        if (request.method == 'POST' &&
+            request.url.path == '/api/membership-requests') {
+          submittedBody = Map<String, dynamic>.from(
+            jsonDecode(request.body) as Map,
+          );
+          postAttempts++;
+          if (postAttempts == 1) {
+            return _jsonResponse({
+              'title': 'validation_failed',
+              'detail': 'One or more validation errors occurred.',
+              'errors': {
+                'PaymentMethod': ['Odaberite podržan način plaćanja.'],
+              },
+            }, statusCode: 400);
+          }
+          created = true;
+          return _jsonResponse({
+            'id': 'request-1',
+            'status': 0,
+            'paymentMethod': 2,
+          }, statusCode: 201);
+        }
+        final body = switch (request.url.path) {
+          '/api/gyms/gym-1' => {
+            'id': 'gym-1',
+            'name': 'Test Gym',
+            'description': 'Test description',
+            'address': 'Testna 1',
+            'city': 'Sarajevo',
+            'averageRating': 4.5,
+            'reviewCount': 2,
+            'imageUrls': <String>[],
+          },
+          '/api/gyms/gym-1/membership-plans' => [
+            {
+              'id': 'plan-1',
+              'name': 'Mjesečna',
+              'durationDays': 30,
+              'price': 50,
+              'currency': 'BAM',
+            },
+          ],
+          '/api/gyms/gym-1/trainers' => <Object>[],
+          '/api/gyms/gym-1/reviews' => _page(<Object>[]),
+          '/api/me/memberships' => _page(<Object>[]),
+          '/api/me/membership-requests' => _page(
+            created
+                ? [
+                    {
+                      'id': 'request-1',
+                      'gymId': 'gym-1',
+                      'status': 0,
+                      'paymentMethod': 2,
+                    },
+                  ]
+                : <Object>[],
+          ),
+          _ => throw StateError('Unexpected request: ${request.url}'),
+        };
+        return _jsonResponse(body);
+      });
+      final api = ApiClient(
+        _TestTokenSource(),
+        httpClient: client,
+        baseUrlOverride: 'http://test.local',
+      );
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        Provider<ApiClient>.value(
+          value: api,
+          child: MaterialApp(
+            theme: buildGymLinkTheme(),
+            home: const GymDetailsScreen(gymId: 'gym-1'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(ListView), const Offset(0, -420));
+      await tester.pumpAndSettle();
+
+      Future<void> selectPayInPerson() async {
+        await tester.tap(find.text('50 BAM'));
+        await tester.pumpAndSettle();
+        final payInPerson = find.byKey(
+          const Key('membership-payment-in-person'),
+        );
+        await tester.ensureVisible(payInPerson);
+        await tester.tap(payInPerson);
+        await tester.pumpAndSettle();
+      }
+
+      await selectPayInPerson();
+      expect(find.text('Odaberite podržan način plaćanja.'), findsOneWidget);
+      expect(find.textContaining('One or more validation'), findsNothing);
+
+      await selectPayInPerson();
+      expect(submittedBody?['paymentMethod'], 2);
+      expect(postAttempts, 2);
+      expect(
+        find.textContaining(
+          'zahtjev za članstvo koji čeka obradu',
+          findRichText: true,
+        ),
+        findsWidgets,
+      );
+    },
+  );
 
   testWidgets('pay-in-person booking shows a confirmed success state', (
     tester,

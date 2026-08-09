@@ -1,12 +1,21 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 using GymLink.Application.Common;
 using GymLink.Domain.Enums;
 
 namespace GymLink.Application.Memberships;
 
+public enum MembershipPaymentCategory
+{
+    Stripe,
+    PayInPerson,
+}
+
 public sealed record CreateMembershipRequest
 {
     public required Guid MembershipPlanId { get; init; }
+
+    [JsonConverter(typeof(JsonStringEnumConverter<MembershipPaymentMethod>))]
     public MembershipPaymentMethod PaymentMethod { get; init; } = MembershipPaymentMethod.Stripe;
 }
 
@@ -14,6 +23,8 @@ public sealed record MembershipRequestSearchRequest : PagedRequest
 {
     public MembershipRequestStatus? Status { get; init; }
     public MembershipPaymentMethod? PaymentMethod { get; init; }
+    public MembershipPaymentCategory? PaymentCategory { get; init; }
+    public MembershipStatus? MembershipStatus { get; init; }
     public Guid? MembershipPlanId { get; init; }
     public Guid? GymId { get; init; }
 
@@ -68,6 +79,20 @@ public sealed record MembershipRequestDto(
     DateTime RequestedAtUtc,
     DateTime? DecidedAtUtc,
     string? DecisionReason,
+    MembershipRequestMembershipDto? Membership,
+    IReadOnlyList<string> AllowedActions,
+    string ConcurrencyToken);
+
+public sealed record MembershipRequestMembershipDto(
+    Guid Id,
+    MembershipStatus Status,
+    DateTime? StartsAtUtc,
+    DateTime? EndsAtUtc,
+    Guid? PaymentId,
+    PaymentStatus? PaymentStatus,
+    bool IsPaid,
+    DateTime? StatusChangedAtUtc,
+    string? StatusReason,
     IReadOnlyList<string> AllowedActions,
     string ConcurrencyToken);
 

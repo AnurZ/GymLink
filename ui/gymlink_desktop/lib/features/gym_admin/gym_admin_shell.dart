@@ -15,14 +15,9 @@ class GymAdminShell extends StatelessWidget {
     destinations: [
       DesktopDestination('Pregled', Icons.home_outlined, GymDashboardScreen()),
       DesktopDestination(
-        'Zahtjevi za članstvo',
-        Icons.group_add_outlined,
-        TenantMembershipRequestsScreen(),
-      ),
-      DesktopDestination(
-        'Članstva',
+        'Članarine',
         Icons.card_membership_outlined,
-        TenantMembershipsScreen(),
+        TenantMembershipRequestsScreen(),
       ),
       DesktopDestination(
         'Treneri i usluge',

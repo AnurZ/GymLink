@@ -25,6 +25,13 @@ internal sealed class MembershipRequestService(
         CreateMembershipRequest request,
         CancellationToken cancellationToken)
     {
+        if (!Enum.IsDefined(request.PaymentMethod))
+        {
+            throw new ApplicationRuleException(
+                "unsupported_membership_payment_method",
+                "The selected membership payment method is not supported.");
+        }
+
         var userId = RequireUser();
         var target = await (
                 from plan in dbContext.MembershipPlans.IgnoreQueryFilters().AsNoTracking()
@@ -282,6 +289,9 @@ internal sealed class MembershipRequestService(
         var source = ignoreQueryFilters
             ? dbContext.MembershipRequests.IgnoreQueryFilters().AsNoTracking()
             : dbContext.MembershipRequests.AsNoTracking();
+        var membershipSource = ignoreQueryFilters
+            ? dbContext.Memberships.IgnoreQueryFilters().AsNoTracking()
+            : dbContext.Memberships.AsNoTracking();
         var query =
             from entity in source
             join member in dbContext.UserProfiles.AsNoTracking()
@@ -297,6 +307,15 @@ internal sealed class MembershipRequestService(
                   (!request.Status.HasValue || entity.Status == request.Status) &&
                   (!request.PaymentMethod.HasValue ||
                    entity.PaymentMethod == request.PaymentMethod) &&
+                  (!request.PaymentCategory.HasValue ||
+                   (request.PaymentCategory == MembershipPaymentCategory.PayInPerson
+                       ? entity.PaymentMethod == MembershipPaymentMethod.PayInPerson
+                       : entity.PaymentMethod == MembershipPaymentMethod.Stripe ||
+                         entity.PaymentMethod == MembershipPaymentMethod.StripeFallback)) &&
+                  (!request.MembershipStatus.HasValue ||
+                   membershipSource.Any(membership =>
+                       membership.MembershipRequestId == entity.Id &&
+                       membership.Status == request.MembershipStatus)) &&
                   (!request.MembershipPlanId.HasValue ||
                    entity.MembershipPlanId == request.MembershipPlanId) &&
                   (!request.GymId.HasValue || entity.GymId == request.GymId) &&
@@ -319,10 +338,16 @@ internal sealed class MembershipRequestService(
         var emails = await identityAccounts.GetEmailsAsync(
             page.Items.Select(x => x.MemberUserId).Distinct().ToArray(),
             cancellationToken);
+        var memberships = await LoadLinkedMembershipsAsync(
+            page.Items.Select(x => x.Id).ToArray(),
+            ignoreQueryFilters,
+            tenantAdmin,
+            cancellationToken);
         return new(
             page.Items.Select(x => x with
             {
                 MemberEmail = emails.GetValueOrDefault(x.MemberUserId, string.Empty),
+                Membership = memberships.GetValueOrDefault(x.Id),
             }).ToArray(),
             page.Page,
             page.PageSize,
@@ -364,7 +389,16 @@ internal sealed class MembershipRequestService(
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw RequestNotFound();
         var account = await identityAccounts.FindByIdAsync(result.MemberUserId, cancellationToken);
-        return result with { MemberEmail = account?.Email ?? string.Empty };
+        var memberships = await LoadLinkedMembershipsAsync(
+            [result.Id],
+            ignoreQueryFilters,
+            tenantAdmin,
+            cancellationToken);
+        return result with
+        {
+            MemberEmail = account?.Email ?? string.Empty,
+            Membership = memberships.GetValueOrDefault(result.Id),
+        };
     }
 
     private static MembershipRequestDto MapRequest(
@@ -391,12 +425,99 @@ internal sealed class MembershipRequestService(
             entity.RequestedAtUtc,
             entity.DecidedAtUtc,
             entity.DecisionReason,
+            null,
             entity.Status == MembershipRequestStatus.Pending
                 ? tenantAdmin && entity.PaymentMethod == MembershipPaymentMethod.PayInPerson
                     ? ["approve", "reject", "view"]
                     : tenantAdmin ? ["view"] : ["cancel", "view"]
                 : ["view"],
             Convert.ToBase64String(entity.RowVersion));
+
+    private async Task<IReadOnlyDictionary<Guid, MembershipRequestMembershipDto>>
+        LoadLinkedMembershipsAsync(
+            Guid[] requestIds,
+            bool ignoreQueryFilters,
+            bool tenantAdmin,
+            CancellationToken cancellationToken)
+    {
+        if (requestIds.Length == 0)
+        {
+            return new Dictionary<Guid, MembershipRequestMembershipDto>();
+        }
+
+        var source = ignoreQueryFilters
+            ? dbContext.Memberships.IgnoreQueryFilters().AsNoTracking()
+            : dbContext.Memberships.AsNoTracking();
+        var memberships = await source
+            .Where(entity => requestIds.Contains(entity.MembershipRequestId))
+            .Select(entity => new LinkedMembershipProjection(
+                entity.MembershipRequestId,
+                entity.Id,
+                entity.Status,
+                entity.StartsAtUtc,
+                entity.EndsAtUtc,
+                entity.PaymentId,
+                dbContext.Payments.IgnoreQueryFilters()
+                    .Where(payment =>
+                        payment.Purpose == PaymentPurpose.Membership &&
+                        payment.TargetId == entity.Id)
+                    .OrderByDescending(payment => payment.CreatedAtUtc)
+                    .Select(payment => (PaymentStatus?)payment.Status)
+                    .FirstOrDefault(),
+                entity.StatusChangedAtUtc,
+                entity.StatusReason,
+                entity.RowVersion))
+            .ToArrayAsync(cancellationToken);
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        return memberships.ToDictionary(
+            entity => entity.MembershipRequestId,
+            entity => new MembershipRequestMembershipDto(
+                entity.Id,
+                entity.Status,
+                entity.StartsAtUtc,
+                entity.EndsAtUtc,
+                entity.PaymentId,
+                entity.PaymentStatus,
+                entity.PaymentId.HasValue,
+                entity.StatusChangedAtUtc,
+                entity.StatusReason,
+                LinkedMembershipAllowedActions(entity, tenantAdmin, now),
+                Convert.ToBase64String(entity.RowVersion)));
+    }
+
+    private static IReadOnlyList<string> LinkedMembershipAllowedActions(
+        LinkedMembershipProjection entity,
+        bool tenantAdmin,
+        DateTime now) =>
+        entity.Status switch
+        {
+            MembershipStatus.PendingPayment
+                when entity.PaymentStatus is PaymentStatus.Created or PaymentStatus.Processing =>
+                ["pay"],
+            MembershipStatus.PendingPayment => ["pay", "cancel"],
+            MembershipStatus.Active when tenantAdmin && entity.EndsAtUtc <= now =>
+                entity.PaymentId.HasValue
+                    ? ["suspend", "expire"]
+                    : ["cancel", "suspend", "expire"],
+            MembershipStatus.Active when tenantAdmin =>
+                entity.PaymentId.HasValue ? ["suspend"] : ["cancel", "suspend"],
+            MembershipStatus.Active when entity.PaymentId.HasValue => [],
+            MembershipStatus.Active => ["cancel"],
+            MembershipStatus.Suspended when tenantAdmin => ["reactivate"],
+            _ => [],
+        };
+
+    private sealed record LinkedMembershipProjection(
+        Guid MembershipRequestId,
+        Guid Id,
+        MembershipStatus Status,
+        DateTime? StartsAtUtc,
+        DateTime? EndsAtUtc,
+        Guid? PaymentId,
+        PaymentStatus? PaymentStatus,
+        DateTime? StatusChangedAtUtc,
+        string? StatusReason,
+        byte[] RowVersion);
 
     private async Task<bool> HasCurrentMembershipAsync(
         Guid tenantId,

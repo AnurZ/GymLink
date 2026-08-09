@@ -77,6 +77,14 @@ void main() {
       expect(find.text('142'), findsWidgets);
       expect(find.text('Broj članova po mjesecima'), findsOneWidget);
       expect(find.text('Tipovi članstva'), findsOneWidget);
+      api.requestedPaths.clear();
+      await tester.tap(find.byKey(const Key('refresh-gym-statistics')));
+      await tester.pumpAndSettle();
+      expect(api.requestedPaths, [
+        '/api/tenant/statistics/summary',
+        '/api/tenant/statistics/members-by-month',
+        '/api/tenant/statistics/membership-plan-distribution',
+      ]);
       final exportTrigger = tester.widget<AnimatedContainer>(
         find.byKey(const Key('export-pdf-trigger')),
       );
@@ -345,43 +353,115 @@ void main() {
     expect(api.requestedStatuses, [null, 1]);
   });
 
-  testWidgets('Figure 5 membership requests use columns and payment method', (
+  testWidgets(
+    'unified memberships use request and membership columns/actions',
+    (tester) async {
+      tester.view.physicalSize = const Size(1500, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _GymAdminMembershipRequestsApi();
+      await tester.pumpWidget(
+        Provider<ApiClient>.value(
+          value: api,
+          child: MaterialApp(
+            theme: buildGymLinkTheme(),
+            home: const Scaffold(body: TenantMembershipRequestsScreen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      for (final heading in [
+        'Korisnik',
+        'Email',
+        'Vrsta članarine',
+        'Iznos',
+        'Datum',
+        'Način plaćanja',
+        'Status zahtjeva',
+        'Status / period članstva',
+        'Akcije',
+      ]) {
+        expect(find.text(heading), findsWidgets);
+      }
+      expect(find.text('Cash Member'), findsOneWidget);
+      expect(find.text('cash@gymlink.local'), findsOneWidget);
+      expect(find.text('Plati uživo'), findsWidgets);
+      expect(find.text('Stripe'), findsWidgets);
+      expect(find.text('Stripe fallback'), findsNothing);
+      await tester.tap(
+        find.byKey(const Key('membership-payment-method-filter')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Stripe fallback'), findsNothing);
+      await tester.tap(find.text('Stripe').last);
+      await tester.pumpAndSettle();
+      expect(api.requestedPaymentCategories.last, 0);
+      expect(find.byTooltip('Aktiviraj nakon naplate'), findsOneWidget);
+      expect(find.byTooltip('Odbij'), findsOneWidget);
+      expect(find.byTooltip('Detalji'), findsNWidgets(2));
+      expect(find.text('Active'), findsOneWidget);
+      expect(find.byTooltip('Akcije članstva'), findsOneWidget);
+      final horizontalTable = find.byWidgetPredicate(
+        (widget) =>
+            widget is SingleChildScrollView &&
+            widget.scrollDirection == Axis.horizontal,
+      );
+      await tester.drag(horizontalTable, const Offset(-1200, 0));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Akcije članstva'));
+      await tester.pumpAndSettle();
+      expect(find.text('Suspenduj'), findsOneWidget);
+      expect(find.text('Otkaži'), findsOneWidget);
+      await tester.tap(find.text('Suspenduj'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Odustani'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const Key('linked-membership-status-filter')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Active').last);
+      await tester.pumpAndSettle();
+      expect(api.requestedMembershipStatuses.last, 1);
+    },
+  );
+
+  testWidgets('successful tenant mutation with failed refresh keeps the view', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(1500, 900);
+    tester.view.physicalSize = const Size(1600, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final api = _GymAdminMembershipRequestsApi();
-    await tester.pumpWidget(
-      Provider<ApiClient>.value(
-        value: api,
-        child: MaterialApp(
-          theme: buildGymLinkTheme(),
-          home: const Scaffold(body: TenantMembershipRequestsScreen()),
-        ),
-      ),
-    );
+    final api = _CentralAdminApi(successfulActivationWithRefreshFailure: true);
+    await tester.pumpWidget(_centralHarness(api));
     await tester.pumpAndSettle();
 
-    for (final heading in [
-      'Korisnik',
-      'Email',
-      'Vrsta članarine',
-      'Iznos',
-      'Datum',
-      'Način plaćanja',
-      'Status',
-      'Akcije',
-    ]) {
-      expect(find.text(heading), findsWidgets);
-    }
-    expect(find.text('Cash Member'), findsOneWidget);
-    expect(find.text('cash@gymlink.local'), findsOneWidget);
-    expect(find.text('Plati uživo'), findsWidgets);
-    expect(find.byTooltip('Aktiviraj nakon naplate'), findsOneWidget);
-    expect(find.byTooltip('Odbij'), findsOneWidget);
-    expect(find.byTooltip('Detalji'), findsOneWidget);
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Aktiviraj'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Potvrdi'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Razlog'),
+      'Spremna za rad',
+    );
+    await tester.tap(find.text('Potvrdi'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Promjena je sačuvana, ali lista nije osvježena. Pokušajte ponovo.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Nova teretana'), findsOneWidget);
+    expect(find.textContaining('Prikaz nije moguće učitati'), findsNothing);
+    expect(find.text('Status teretane je uspješno promijenjen.'), findsNothing);
   });
 
   testWidgets('gym creation searches locations only after explicit action', (
@@ -1068,6 +1148,7 @@ class _ReportingApi extends ApiClient {
   final bool failMonths;
   final bool emptyCharts;
   final List<String> downloadedPaths = [];
+  final List<String> requestedPaths = [];
   static const report = DownloadedFile(
     bytes: [0x25, 0x50, 0x44, 0x46],
     fileName: 'gymlink-clanstva.pdf',
@@ -1081,6 +1162,7 @@ class _ReportingApi extends ApiClient {
     Map<String, Object?> query = const {},
     bool authenticated = true,
   }) async {
+    requestedPaths.add(path);
     if (path == '/api/tenant/statistics/summary') {
       return {
         'activeMemberCount': 142,
@@ -1258,11 +1340,13 @@ class _CentralAdminApi extends ApiClient {
     this.assignmentConflictCode,
     this.activationConflictCode,
     this.creationConflictCode,
+    this.successfulActivationWithRefreshFailure = false,
   }) : super(_TestTokens());
 
   final String? assignmentConflictCode;
   final String? activationConflictCode;
   final String? creationConflictCode;
+  final bool successfulActivationWithRefreshFailure;
   Map<String, Object?>? lastLocationQuery;
   Map<String, Object?>? lastReverseQuery;
   Map<String, dynamic>? assignmentBody;
@@ -1276,9 +1360,19 @@ class _CentralAdminApi extends ApiClient {
     Map<String, Object?> query = const {},
   }) async {
     if (path == '/api/admin/gyms') {
+      if (successfulActivationWithRefreshFailure && activationAttempts > 0) {
+        throw ApiProblem(
+          status: 503,
+          code: 'refresh_failed',
+          message: 'Refresh failed',
+        );
+      }
       final activationReady =
           activationConflictCode != null && activationAttempts == 0;
-      final hasAdmin = _assigned || activationConflictCode != null;
+      final hasAdmin =
+          _assigned ||
+          activationConflictCode != null ||
+          successfulActivationWithRefreshFailure;
       return PagedData(
         items: [
           {
@@ -1289,7 +1383,10 @@ class _CentralAdminApi extends ApiClient {
             'cityName': 'Sarajevo',
             'status': 0,
             'activeGymAdminCount': hasAdmin ? 1 : 0,
-            'canActivate': activationReady || _assigned,
+            'canActivate':
+                activationReady ||
+                _assigned ||
+                successfulActivationWithRefreshFailure,
             'missingActivationRequirements': activationReady || _assigned
                 ? const <String>[]
                 : activationConflictCode != null
@@ -1416,11 +1513,14 @@ class _CentralAdminApi extends ApiClient {
   }) async {
     if (path == '/api/admin/tenants/tenant-1/activate') {
       activationAttempts++;
-      throw ApiProblem(
-        status: 409,
-        code: activationConflictCode ?? 'tenant_catalog_incomplete',
-        message: 'Backend conflict',
-      );
+      if (activationConflictCode != null) {
+        throw ApiProblem(
+          status: 409,
+          code: activationConflictCode!,
+          message: 'Backend conflict',
+        );
+      }
+      return const {};
     }
     if (path == '/api/admin/gyms') {
       creationBody = Map<String, dynamic>.from(body! as Map);
@@ -1546,12 +1646,17 @@ class _GymAdminReservationsApi extends ApiClient {
 class _GymAdminMembershipRequestsApi extends ApiClient {
   _GymAdminMembershipRequestsApi() : super(_TestTokens());
 
+  final List<int?> requestedMembershipStatuses = [];
+  final List<int?> requestedPaymentCategories = [];
+
   @override
   Future<PagedData> page(
     String path, {
     Map<String, Object?> query = const {},
   }) async {
     if (path == '/api/tenant/membership-requests') {
+      requestedMembershipStatuses.add(query['membershipStatus'] as int?);
+      requestedPaymentCategories.add(query['paymentCategory'] as int?);
       return const PagedData(
         items: [
           {
@@ -1567,10 +1672,33 @@ class _GymAdminMembershipRequestsApi extends ApiClient {
             'allowedActions': ['approve', 'reject', 'view'],
             'concurrencyToken': 'token',
           },
+          {
+            'id': 'request-2',
+            'memberDisplayName': 'Active Member',
+            'memberEmail': 'active@gymlink.local',
+            'planName': 'Godišnja',
+            'price': 500,
+            'currency': 'BAM',
+            'requestedAtUtc': '2026-08-08T10:00:00Z',
+            'paymentMethod': 1,
+            'status': 1,
+            'allowedActions': ['view'],
+            'concurrencyToken': 'request-token',
+            'membership': {
+              'id': 'membership-1',
+              'status': 1,
+              'startsAtUtc': '2026-08-08T10:00:00Z',
+              'endsAtUtc': '2027-08-08T10:00:00Z',
+              'paymentStatus': null,
+              'isPaid': false,
+              'allowedActions': ['cancel', 'suspend'],
+              'concurrencyToken': 'membership-token',
+            },
+          },
         ],
         page: 1,
         pageSize: 20,
-        totalCount: 1,
+        totalCount: 2,
       );
     }
     throw StateError('Unexpected page request: $path');

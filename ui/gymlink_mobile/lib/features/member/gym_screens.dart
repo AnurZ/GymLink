@@ -673,8 +673,20 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
       'Već imate trenutno članstvo u ovoj teretani.',
     'membership_request_already_pending' =>
       'Za ovu teretanu već imate zahtjev koji čeka obradu.',
+    'validation_failed' when _usesOutdatedMembershipContract(error) =>
+      'API nije ažuriran. Ponovo pokrenite najnoviju verziju API-ja i pokušajte ponovo.',
+    'validation_failed' when error.firstFieldError != null =>
+      error.firstFieldError!,
+    'unsupported_membership_payment_method' =>
+      'Odabrani način plaćanja nije podržan. Ažurirajte aplikaciju i pokušajte ponovo.',
     _ => error.message,
   };
+
+  bool _usesOutdatedMembershipContract(ApiProblem error) =>
+      error.fieldErrors.keys.any((key) {
+        final normalized = key.trim().toLowerCase();
+        return normalized == 'request' || normalized.startsWith(r'$.');
+      });
 
   Future<void> _reviewGym() async {
     final api = context.read<ApiClient>();
