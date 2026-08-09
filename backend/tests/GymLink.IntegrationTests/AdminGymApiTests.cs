@@ -111,15 +111,19 @@ public sealed class AdminGymApiTests
                 plan.IsActive = false;
                 await makeIncomplete.SaveChangesAsync();
             }
-            var incomplete = await client.PostAsync(
+            var missingReason = await client.PostAsJsonAsync(
                 $"/api/admin/tenants/{secondGym.TenantId}/activate",
-                content: null);
+                new { reason = "" });
+            Assert.Equal(HttpStatusCode.BadRequest, missingReason.StatusCode);
+            var incomplete = await client.PostAsJsonAsync(
+                $"/api/admin/tenants/{secondGym.TenantId}/activate",
+                new { reason = "Catalog readiness check" });
             Assert.Equal(HttpStatusCode.Conflict, incomplete.StatusCode);
             Assert.Equal("tenant_catalog_incomplete", await ProblemCodeAsync(incomplete));
 
-            var activate = await client.PostAsync(
+            var activate = await client.PostAsJsonAsync(
                 $"/api/admin/tenants/{gym.TenantId}/activate",
-                content: null);
+                new { reason = "Ready for public activation" });
             Assert.Equal(HttpStatusCode.OK, activate.StatusCode);
 
             var repeatedAssignment = await client.PostAsJsonAsync(

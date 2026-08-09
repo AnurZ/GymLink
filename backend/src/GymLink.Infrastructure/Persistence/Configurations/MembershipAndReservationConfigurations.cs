@@ -34,6 +34,7 @@ internal sealed class MembershipRequestConfiguration : EntityConfiguration<Membe
         ConfigureTenant(builder);
         ConfigureConcurrency(builder);
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
+        builder.Property(x => x.PaymentMethod).HasConversion<string>().HasMaxLength(32).IsRequired();
         builder.Property(x => x.DecisionReason).HasMaxLength(1000);
         builder.HasIndex(x => new { x.TenantId, x.MemberUserId, x.GymId })
             .IsUnique()

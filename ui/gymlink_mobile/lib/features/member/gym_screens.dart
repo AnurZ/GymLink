@@ -605,8 +605,9 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
     final paymentMethod = await chooseMembershipPaymentMethod(context);
     if (paymentMethod == null) return;
     if (!mounted) return;
-    final isManual = paymentMethod == MembershipPaymentMethod.manual;
-    if (!isManual) {
+    final isFallback = paymentMethod == MembershipPaymentMethod.stripeFallback;
+    final isPayInPerson = paymentMethod == MembershipPaymentMethod.payInPerson;
+    if (paymentMethod == MembershipPaymentMethod.stripe) {
       if (!await confirmAction(
         context,
         title: 'Plaćanje članarine',
@@ -620,7 +621,12 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
     }
     setState(() => _purchasingPlanId = plan['id'].toString());
     try {
-      if (isManual) {
+      if (isPayInPerson) {
+        await api.post(
+          '/api/membership-requests',
+          body: {'membershipPlanId': plan['id'], 'paymentMethod': 2},
+        );
+      } else if (isFallback) {
         await api.post(
           '/api/payments/manual/memberships/pay',
           body: {'membershipPlanId': plan['id']},
@@ -633,10 +639,14 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
         );
       }
       await _load();
-      if (isManual && mounted) {
+      if ((isFallback || isPayInPerson) && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Testno plaćanje je uspješno evidentirano.'),
+          SnackBar(
+            content: Text(
+              isPayInPerson
+                  ? 'Zahtjev je poslan. GymAdmin će ga potvrditi nakon plaćanja uživo.'
+                  : 'Testno plaćanje je uspješno evidentirano.',
+            ),
           ),
         );
       }

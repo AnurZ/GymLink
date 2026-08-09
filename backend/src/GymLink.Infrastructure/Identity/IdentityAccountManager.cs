@@ -29,6 +29,21 @@ internal sealed class IdentityAccountManager(
         return user is null ? null : await ToAccountAsync(user);
     }
 
+    public async Task<IReadOnlyDictionary<Guid, string>> GetEmailsAsync(
+        IReadOnlyCollection<Guid> userIds,
+        CancellationToken cancellationToken)
+    {
+        if (userIds.Count == 0)
+        {
+            return new Dictionary<Guid, string>();
+        }
+
+        return await userManager.Users
+            .AsNoTracking()
+            .Where(x => userIds.Contains(x.Id) && x.Email != null)
+            .ToDictionaryAsync(x => x.Id, x => x.Email!, cancellationToken);
+    }
+
     public async Task<bool> CheckPasswordAsync(Guid userId, string password)
     {
         var user = await userManager.FindByIdAsync(userId.ToString());

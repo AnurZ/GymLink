@@ -36,6 +36,7 @@ internal sealed class PaymentService(
     {
         var membershipId = await EnsureMembershipForPlanAsync(
             membershipPlanId,
+            MembershipPaymentMethod.Stripe,
             cancellationToken);
         return await CreateMembershipCheckoutAsync(membershipId, cancellationToken);
     }
@@ -47,6 +48,7 @@ internal sealed class PaymentService(
         EnsureFakePaymentsEnabled();
         var membershipId = await EnsureMembershipForPlanAsync(
             membershipPlanId,
+            MembershipPaymentMethod.StripeFallback,
             cancellationToken);
         return await CompleteManualPaymentAsync(
             PaymentPurpose.Membership,
@@ -54,13 +56,20 @@ internal sealed class PaymentService(
             cancellationToken);
     }
 
-    public Task<PaymentDto> CompleteManualMembershipPaymentAsync(
+    public async Task<PaymentDto> CompleteManualMembershipPaymentAsync(
         Guid membershipId,
-        CancellationToken cancellationToken) =>
-        CompleteManualPaymentAsync(
+        CancellationToken cancellationToken)
+    {
+        EnsureFakePaymentsEnabled();
+        await SetMembershipPaymentMethodAsync(
+            membershipId,
+            MembershipPaymentMethod.StripeFallback,
+            cancellationToken);
+        return await CompleteManualPaymentAsync(
             PaymentPurpose.Membership,
             membershipId,
             cancellationToken);
+    }
 
     public Task<PaymentDto> CompleteManualReservationPaymentAsync(
         Guid reservationId,
@@ -72,6 +81,7 @@ internal sealed class PaymentService(
 
     private async Task<Guid> EnsureMembershipForPlanAsync(
         Guid membershipPlanId,
+        MembershipPaymentMethod paymentMethod,
         CancellationToken cancellationToken)
     {
         var userId = RequireUser();
@@ -108,6 +118,13 @@ internal sealed class PaymentService(
                 if (current.Status == MembershipStatus.PendingPayment &&
                     current.MembershipPlanId == plan.Id)
                 {
+                    var currentRequest = await dbContext.MembershipRequests.IgnoreQueryFilters()
+                        .SingleAsync(x => x.Id == current.MembershipRequestId, ct);
+                    currentRequest.PaymentMethod = paymentMethod;
+                    using (tenantMutationScope.Begin(plan.TenantId))
+                    {
+                        await dbContext.SaveChangesAsync(ct);
+                    }
                     return current.Id;
                 }
 
@@ -137,8 +154,10 @@ internal sealed class PaymentService(
                 MemberUserId = userId,
                 GymId = plan.GymId,
                 MembershipPlanId = plan.Id,
+                PaymentMethod = paymentMethod,
                 RequestedAtUtc = now,
             };
+            request.PaymentMethod = paymentMethod;
             request.Approve(userId, now);
             var membership = Membership.CreatePendingPayment(
                 plan.TenantId,
@@ -166,10 +185,19 @@ internal sealed class PaymentService(
         }, cancellationToken);
     }
 
-    public Task<CheckoutSessionDto> CreateMembershipCheckoutAsync(
+    public async Task<CheckoutSessionDto> CreateMembershipCheckoutAsync(
         Guid membershipId,
-        CancellationToken cancellationToken) =>
-        CreateCheckoutAsync(PaymentPurpose.Membership, membershipId, cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        await SetMembershipPaymentMethodAsync(
+            membershipId,
+            MembershipPaymentMethod.Stripe,
+            cancellationToken);
+        return await CreateCheckoutAsync(
+            PaymentPurpose.Membership,
+            membershipId,
+            cancellationToken);
+    }
 
     public Task<CheckoutSessionDto> CreateReservationCheckoutAsync(
         Guid reservationId,
@@ -794,6 +822,36 @@ internal sealed class PaymentService(
         currentUser.IsAuthenticated && currentUser.UserId.HasValue
             ? currentUser.UserId.Value
             : throw new AuthorizationDeniedException();
+
+    private async Task SetMembershipPaymentMethodAsync(
+        Guid membershipId,
+        MembershipPaymentMethod paymentMethod,
+        CancellationToken cancellationToken)
+    {
+        var userId = RequireUser();
+        var target = await (
+                from membership in dbContext.Memberships.IgnoreQueryFilters()
+                join request in dbContext.MembershipRequests.IgnoreQueryFilters()
+                    on membership.MembershipRequestId equals request.Id
+                where membership.Id == membershipId && membership.MemberUserId == userId
+                select new { Membership = membership, Request = request })
+            .SingleOrDefaultAsync(cancellationToken)
+            ?? throw new NotFoundException(
+                "membership_not_found",
+                "The membership was not found.");
+        if (target.Membership.Status != MembershipStatus.PendingPayment)
+        {
+            throw new ConflictException(
+                "membership_not_pending_payment",
+                "Only a membership awaiting payment can change payment method.");
+        }
+
+        target.Request.PaymentMethod = paymentMethod;
+        using (tenantMutationScope.Begin(target.Membership.TenantId))
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+    }
 
     private void EnsureFakePaymentsEnabled()
     {

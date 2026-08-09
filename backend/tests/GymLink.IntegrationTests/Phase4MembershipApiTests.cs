@@ -462,6 +462,72 @@ public sealed class Phase4MembershipApiTests
         }
     }
 
+    [Fact]
+    public async Task Pay_in_person_waits_for_tenant_admin_and_activates_without_payment()
+    {
+        var databaseName = $"GymLink_Phase4_Cash_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+
+        try
+        {
+            await using (var migrationContext = CreateContext(connectionString))
+            {
+                await migrationContext.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            var member = await RegisterAsync(client, "Cash Membership Member");
+            var admin = await LoginAsync(client, "admin.respect");
+            var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
+
+            Authorize(client, member);
+            var response = await client.PostAsJsonAsync(
+                "/api/membership-requests",
+                new
+                {
+                    membershipPlanId = planId,
+                    paymentMethod = MembershipPaymentMethod.PayInPerson,
+                });
+            response.EnsureSuccessStatusCode();
+            var request = await response.Content.ReadFromJsonAsync<MembershipRequestDto>();
+            Assert.NotNull(request);
+            Assert.Equal(MembershipPaymentMethod.PayInPerson, request.PaymentMethod);
+            Assert.Equal(MembershipRequestStatus.Pending, request.Status);
+            Assert.Equal(member.User.Email, request.MemberEmail);
+            Assert.Empty((await GetMineAsync(client)).Items);
+
+            Authorize(client, admin);
+            var tenantPage = await client.GetFromJsonAsync<PagedResult<MembershipRequestDto>>(
+                "/api/tenant/membership-requests?paymentMethod=PayInPerson&page=1&pageSize=10");
+            Assert.NotNull(tenantPage);
+            var tenantRequest = Assert.Single(tenantPage.Items);
+            Assert.Equal(["approve", "reject", "view"], tenantRequest.AllowedActions);
+
+            var approval = await client.PostAsJsonAsync(
+                $"/api/tenant/membership-requests/{request.Id}/approve",
+                new { concurrencyToken = tenantRequest.ConcurrencyToken });
+            approval.EnsureSuccessStatusCode();
+
+            Authorize(client, member);
+            var membership = Assert.Single((await GetMineAsync(client)).Items);
+            Assert.Equal(MembershipStatus.Active, membership.Status);
+            Assert.False(membership.IsPaid);
+            Assert.Null(membership.PaymentId);
+            Assert.NotNull(membership.StartsAtUtc);
+            Assert.NotNull(membership.EndsAtUtc);
+
+            await using var verification = CreateContext(connectionString);
+            Assert.False(await verification.Payments.IgnoreQueryFilters().AnyAsync(
+                x => x.TargetId == membership.Id));
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
+
     private static async Task<MembershipRequestDto> CreateRequestAsync(
         HttpClient client,
         Guid planId)

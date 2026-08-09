@@ -16,6 +16,7 @@ internal sealed class MembershipRequestService(
     ICurrentUser currentUser,
     ITenantContext tenantContext,
     ITenantMutationScope tenantMutationScope,
+    IIdentityAccountManager identityAccounts,
     IMembershipWorkflowEventRecorder eventRecorder,
     IRecommendationActivityRecorder recommendationActivity,
     TimeProvider timeProvider) : IMembershipRequestService
@@ -70,6 +71,7 @@ internal sealed class MembershipRequestService(
             MemberUserId = userId,
             GymId = target.Plan.GymId,
             MembershipPlanId = target.Plan.Id,
+            PaymentMethod = request.PaymentMethod,
             RequestedAtUtc = now,
         };
 
@@ -203,18 +205,31 @@ internal sealed class MembershipRequestService(
             }
 
             entity.Approve(actorId, now);
-            var membership = Membership.CreatePendingPayment(
-                tenantId,
-                entity.MemberUserId,
-                entity.GymId,
-                entity.MembershipPlanId,
-                entity.Id,
-                plan.Name,
-                plan.DurationDays,
-                plan.Price,
-                plan.Currency,
-                actorId,
-                now);
+            var membership = entity.PaymentMethod == MembershipPaymentMethod.PayInPerson
+                ? new Membership(
+                    tenantId,
+                    entity.MemberUserId,
+                    entity.GymId,
+                    entity.MembershipPlanId,
+                    entity.Id,
+                    plan.Name,
+                    plan.DurationDays,
+                    plan.Price,
+                    plan.Currency,
+                    actorId,
+                    now)
+                : Membership.CreatePendingPayment(
+                    tenantId,
+                    entity.MemberUserId,
+                    entity.GymId,
+                    entity.MembershipPlanId,
+                    entity.Id,
+                    plan.Name,
+                    plan.DurationDays,
+                    plan.Price,
+                    plan.Currency,
+                    actorId,
+                    now);
             dbContext.Memberships.Add(membership);
             await eventRecorder.RecordAsync(new MembershipWorkflowEventIntent(
                 "membership.approved",
@@ -255,7 +270,7 @@ internal sealed class MembershipRequestService(
         return await GetTenantAsync(entity.Id, cancellationToken);
     }
 
-    private Task<PagedResult<MembershipRequestDto>> SearchAsync(
+    private async Task<PagedResult<MembershipRequestDto>> SearchAsync(
         MembershipRequestSearchRequest request,
         Guid? memberUserId,
         Guid? tenantId,
@@ -280,6 +295,8 @@ internal sealed class MembershipRequestService(
             where (!memberUserId.HasValue || entity.MemberUserId == memberUserId) &&
                   (!tenantId.HasValue || entity.TenantId == tenantId) &&
                   (!request.Status.HasValue || entity.Status == request.Status) &&
+                  (!request.PaymentMethod.HasValue ||
+                   entity.PaymentMethod == request.PaymentMethod) &&
                   (!request.MembershipPlanId.HasValue ||
                    entity.MembershipPlanId == request.MembershipPlanId) &&
                   (!request.GymId.HasValue || entity.GymId == request.GymId) &&
@@ -298,7 +315,18 @@ internal sealed class MembershipRequestService(
                 plan.Price,
                 plan.Currency,
                 tenantAdmin);
-        return query.ToPagedResultAsync(request, cancellationToken);
+        var page = await query.ToPagedResultAsync(request, cancellationToken);
+        var emails = await identityAccounts.GetEmailsAsync(
+            page.Items.Select(x => x.MemberUserId).Distinct().ToArray(),
+            cancellationToken);
+        return new(
+            page.Items.Select(x => x with
+            {
+                MemberEmail = emails.GetValueOrDefault(x.MemberUserId, string.Empty),
+            }).ToArray(),
+            page.Page,
+            page.PageSize,
+            page.TotalCount);
     }
 
     private async Task<MembershipRequestDto> GetProjectedAsync(
@@ -312,7 +340,7 @@ internal sealed class MembershipRequestService(
         var source = ignoreQueryFilters
             ? dbContext.MembershipRequests.IgnoreQueryFilters().AsNoTracking()
             : dbContext.MembershipRequests.AsNoTracking();
-        return await (
+        var result = await (
                 from entity in source
                 join member in dbContext.UserProfiles.AsNoTracking()
                     on entity.MemberUserId equals member.Id
@@ -335,6 +363,8 @@ internal sealed class MembershipRequestService(
                     tenantAdmin))
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw RequestNotFound();
+        var account = await identityAccounts.FindByIdAsync(result.MemberUserId, cancellationToken);
+        return result with { MemberEmail = account?.Email ?? string.Empty };
     }
 
     private static MembershipRequestDto MapRequest(
@@ -347,20 +377,25 @@ internal sealed class MembershipRequestService(
         bool tenantAdmin) =>
         new(
             entity.Id,
+            entity.MemberUserId,
             entity.MembershipPlanId,
             entity.GymId,
             memberName,
+            string.Empty,
             gymName,
             planName,
             price,
             currency,
+            entity.PaymentMethod,
             entity.Status,
             entity.RequestedAtUtc,
             entity.DecidedAtUtc,
             entity.DecisionReason,
             entity.Status == MembershipRequestStatus.Pending
-                ? tenantAdmin ? ["approve", "reject"] : ["cancel"]
-                : [],
+                ? tenantAdmin && entity.PaymentMethod == MembershipPaymentMethod.PayInPerson
+                    ? ["approve", "reject", "view"]
+                    : tenantAdmin ? ["view"] : ["cancel", "view"]
+                : ["view"],
             Convert.ToBase64String(entity.RowVersion));
 
     private async Task<bool> HasCurrentMembershipAsync(

@@ -228,12 +228,15 @@ class _MembershipDetailsScreenState extends State<MembershipDetailsScreen> {
 
   Future<void> _pay() async {
     final api = context.read<ApiClient>();
-    final paymentMethod = await chooseMembershipPaymentMethod(context);
+    final paymentMethod = await chooseMembershipPaymentMethod(
+      context,
+      allowPayInPerson: false,
+    );
     if (paymentMethod == null) return;
     if (!mounted) return;
     setState(() => _paying = true);
     try {
-      if (paymentMethod == MembershipPaymentMethod.manual) {
+      if (paymentMethod == MembershipPaymentMethod.stripeFallback) {
         await api.post(
           '/api/payments/manual/memberships/${widget.membershipId}/pay',
         );

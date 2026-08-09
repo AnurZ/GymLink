@@ -12,8 +12,11 @@ public sealed class AdminTenantsController(
     ITenantAdministrationService tenantAdministration) : ControllerBase
 {
     [HttpPost("{id:guid}/activate")]
-    public async Task<IActionResult> Activate(Guid id, CancellationToken cancellationToken) =>
-        Ok(await tenantAdministration.ActivateAsync(id, cancellationToken));
+    public async Task<IActionResult> Activate(
+        Guid id,
+        TenantStatusReasonRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(await tenantAdministration.ActivateAsync(id, request, cancellationToken));
 
     [HttpPost("{id:guid}/deactivate")]
     public async Task<IActionResult> Deactivate(

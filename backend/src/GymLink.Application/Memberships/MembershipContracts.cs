@@ -7,11 +7,13 @@ namespace GymLink.Application.Memberships;
 public sealed record CreateMembershipRequest
 {
     public required Guid MembershipPlanId { get; init; }
+    public MembershipPaymentMethod PaymentMethod { get; init; } = MembershipPaymentMethod.Stripe;
 }
 
 public sealed record MembershipRequestSearchRequest : PagedRequest
 {
     public MembershipRequestStatus? Status { get; init; }
+    public MembershipPaymentMethod? PaymentMethod { get; init; }
     public Guid? MembershipPlanId { get; init; }
     public Guid? GymId { get; init; }
 
@@ -52,13 +54,16 @@ public sealed record ReasonedConcurrencyRequest : ConcurrencyRequest
 
 public sealed record MembershipRequestDto(
     Guid Id,
+    Guid MemberUserId,
     Guid MembershipPlanId,
     Guid GymId,
     string MemberDisplayName,
+    string MemberEmail,
     string GymName,
     string PlanName,
     decimal Price,
     string Currency,
+    MembershipPaymentMethod PaymentMethod,
     MembershipRequestStatus Status,
     DateTime RequestedAtUtc,
     DateTime? DecidedAtUtc,

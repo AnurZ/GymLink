@@ -26,7 +26,10 @@ public sealed record TenantStatusDto(
 
 public interface ITenantAdministrationService
 {
-    Task<TenantStatusDto> ActivateAsync(Guid id, CancellationToken cancellationToken);
+    Task<TenantStatusDto> ActivateAsync(
+        Guid id,
+        TenantStatusReasonRequest request,
+        CancellationToken cancellationToken);
     Task<TenantStatusDto> DeactivateAsync(
         Guid id,
         TenantStatusReasonRequest request,
@@ -51,8 +54,17 @@ internal sealed class TenantAdministrationService(
     IRequestMetadata requestMetadata,
     TimeProvider timeProvider) : ITenantAdministrationService
 {
-    public Task<TenantStatusDto> ActivateAsync(Guid id, CancellationToken cancellationToken) =>
-        ChangeStatusAsync(id, TenantStatus.PendingActivation, TenantStatus.Active, null, true, cancellationToken);
+    public Task<TenantStatusDto> ActivateAsync(
+        Guid id,
+        TenantStatusReasonRequest request,
+        CancellationToken cancellationToken) =>
+        ChangeStatusAsync(
+            id,
+            TenantStatus.PendingActivation,
+            TenantStatus.Active,
+            RequireReason(request.Reason),
+            true,
+            cancellationToken);
 
     public Task<TenantStatusDto> DeactivateAsync(
         Guid id,
@@ -62,7 +74,7 @@ internal sealed class TenantAdministrationService(
             id,
             TenantStatus.Active,
             TenantStatus.Inactive,
-            request.Reason,
+            RequireReason(request.Reason),
             false,
             cancellationToken);
 
@@ -74,7 +86,7 @@ internal sealed class TenantAdministrationService(
             id,
             TenantStatus.Active,
             TenantStatus.Suspended,
-            request.Reason,
+            RequireReason(request.Reason),
             false,
             cancellationToken);
 
@@ -93,11 +105,12 @@ internal sealed class TenantAdministrationService(
 
             await EnsureCatalogReadyAsync(id, token);
             using var tenantWrite = tenantMutationScope.Begin(id);
-            ApplyStatus(tenant, TenantStatus.Active, request.Reason);
+            var reason = RequireReason(request.Reason);
+            ApplyStatus(tenant, TenantStatus.Active, reason);
             var gym = await dbContext.Gyms.IgnoreQueryFilters()
                 .SingleAsync(x => x.TenantId == id, token);
             gym.IsPubliclyVisible = true;
-            AddAudit(id, "tenant.reactivated", request.Reason);
+            AddAudit(id, "tenant.reactivated", reason);
             await NotifyGymAdminsAsync(tenant, token);
             await dbContext.SaveChangesAsync(token);
             return ToDto(tenant);
@@ -207,6 +220,19 @@ internal sealed class TenantAdministrationService(
     private Guid RequireUser() =>
         currentUser.UserId
         ?? throw new AuthenticationFailedException("authentication_required", "Authentication is required.");
+
+    private static string RequireReason(string? reason)
+    {
+        var normalized = reason?.Trim();
+        if (normalized is null || normalized.Length is < 2 or > 1000)
+        {
+            throw new DomainException(
+                "reason_required",
+                "A status-change reason between 2 and 1000 characters is required.");
+        }
+
+        return normalized;
+    }
 
     private static ConflictException InvalidTransition(TenantStatus current, TenantStatus target) =>
         new(

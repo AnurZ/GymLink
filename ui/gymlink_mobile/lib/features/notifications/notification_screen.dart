@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
@@ -47,6 +48,7 @@ class _NotificationScreenState extends State<NotificationScreen>
   int _page = 1;
   bool _busy = false;
   bool _hasMore = false;
+  bool _markingAll = false;
   bool? _isRead;
   String? _error;
 
@@ -99,35 +101,32 @@ class _NotificationScreenState extends State<NotificationScreen>
     }
   }
 
-  Future<void> _markRead(Map<String, dynamic> item) async {
-    if (item['isRead'] == true) return;
+  Future<void> _markAllRead() async {
+    if (_markingAll) return;
+    setState(() => _markingAll = true);
     try {
-      final updated = Map<String, dynamic>.from(
-        (await context.read<ApiClient>().post(
-              '/api/me/notifications/${item['id']}/read',
-              body: {'concurrencyToken': item['concurrencyToken']},
-            ))!
-            as Map,
-      );
+      await context.read<ApiClient>().post('/api/me/notifications/read-all');
       if (mounted) {
-        setState(() => item.addAll(updated));
-        context.read<NotificationController>().notificationMarkedRead();
+        context.read<NotificationController>().allNotificationsMarkedRead();
       }
+      await _load(reset: true);
     } on ApiProblem catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(error.message)));
       }
+    } finally {
+      if (mounted) setState(() => _markingAll = false);
     }
   }
 
-  Future<void> _markAllRead() async {
-    await context.read<ApiClient>().post('/api/me/notifications/read-all');
-    if (mounted) {
-      context.read<NotificationController>().allNotificationsMarkedRead();
-    }
-    await _load(reset: true);
+  Future<void> _openDetails(Map<String, dynamic> item) async {
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(builder: (_) => NotificationDetailScreen(item: item)),
+    );
+    if (mounted) await _load(reset: true);
   }
 
   @override
@@ -135,7 +134,15 @@ class _NotificationScreenState extends State<NotificationScreen>
     appBar: AppBar(
       title: const Text('Obavijesti'),
       actions: [
-        TextButton(onPressed: _markAllRead, child: const Text('Označi sve')),
+        TextButton(
+          onPressed:
+              _markingAll || !_items.any((item) => item['isRead'] != true)
+              ? null
+              : _markAllRead,
+          child: Text(
+            _markingAll ? 'Označavanje…' : 'Označi sve kao pročitano',
+          ),
+        ),
       ],
     ),
     body: RefreshIndicator(
@@ -176,30 +183,15 @@ class _NotificationScreenState extends State<NotificationScreen>
               child: ListTile(
                 leading: const Icon(Icons.notifications_outlined),
                 title: Text(item['title']?.toString() ?? 'Obavijest'),
-                subtitle: Text(item['text']?.toString() ?? ''),
+                subtitle: Text(
+                  '${_preview(item['text'])}\n${_notificationDate(item['createdAtUtc'])}',
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
                 trailing: item['isRead'] == true
                     ? null
                     : const Icon(Icons.circle, size: 10),
-                onTap: () async {
-                  await _markRead(item);
-                  if (!context.mounted) return;
-                  if (item['category'] == 'chat' &&
-                      item['targetType'] == 'conversation' &&
-                      item['targetId'] != null) {
-                    await openChatForConversation(
-                      context,
-                      item['targetId'].toString(),
-                    );
-                    return;
-                  }
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Cilj obavijesti više nije dostupan ili nema poseban prikaz.',
-                      ),
-                    ),
-                  );
-                },
+                onTap: () => _openDetails(item),
               ),
             ),
           if (_hasMore)
@@ -221,4 +213,109 @@ class _NotificationScreenState extends State<NotificationScreen>
       ),
     ),
   );
+}
+
+class NotificationDetailScreen extends StatefulWidget {
+  const NotificationDetailScreen({required this.item, super.key});
+
+  final Map<String, dynamic> item;
+
+  @override
+  State<NotificationDetailScreen> createState() =>
+      _NotificationDetailScreenState();
+}
+
+class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
+  String? _readError;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _markRead());
+  }
+
+  Future<void> _markRead() async {
+    if (widget.item['isRead'] == true) return;
+    try {
+      final updated = Map<String, dynamic>.from(
+        (await context.read<ApiClient>().post(
+              '/api/me/notifications/${widget.item['id']}/read',
+              body: {'concurrencyToken': widget.item['concurrencyToken']},
+            ))!
+            as Map,
+      );
+      if (!mounted) return;
+      setState(() => widget.item.addAll(updated));
+      context.read<NotificationController>().notificationMarkedRead();
+    } on ApiProblem catch (error) {
+      if (mounted) setState(() => _readError = error.message);
+    }
+  }
+
+  bool get _canOpenChat =>
+      widget.item['category'] == 'chat' &&
+      widget.item['targetType'] == 'conversation' &&
+      widget.item['targetId'] != null;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Detalji obavijesti')),
+    body: ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        Icon(
+          Icons.notifications_outlined,
+          size: 48,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+        const SizedBox(height: 20),
+        Text(
+          widget.item['title']?.toString() ?? 'Obavijest',
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          _notificationDate(widget.item['createdAtUtc']),
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 24),
+        Text(
+          widget.item['text']?.toString() ?? '',
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+        if (_readError != null) ...[
+          const SizedBox(height: 20),
+          Text(
+            _readError!,
+            style: const TextStyle(color: GymLinkColors.danger),
+          ),
+        ],
+        if (_canOpenChat) ...[
+          const SizedBox(height: 28),
+          FilledButton.icon(
+            onPressed: () => openChatForConversation(
+              context,
+              widget.item['targetId'].toString(),
+            ),
+            icon: const Icon(Icons.chat_bubble_outline),
+            label: const Text('Otvori razgovor'),
+          ),
+        ],
+      ],
+    ),
+  );
+}
+
+String _preview(Object? value) {
+  final text = value?.toString().trim() ?? '';
+  return text.length <= 110 ? text : '${text.substring(0, 107)}…';
+}
+
+String _notificationDate(Object? value) {
+  final date = DateTime.tryParse(value?.toString() ?? '');
+  return date == null
+      ? ''
+      : DateFormat('dd.MM.yyyy. HH:mm').format(date.toLocal());
 }

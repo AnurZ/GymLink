@@ -835,6 +835,7 @@ internal sealed class DevelopmentDataSeeder(
                 MemberUserId = member.Id,
                 GymId = seededGym.Gym.Id,
                 MembershipPlanId = seededGym.QuarterlyPlan.Id,
+                PaymentMethod = MembershipPaymentMethod.PayInPerson,
                 RequestedAtUtc = MembershipRequestedAtUtc,
             };
             request.Approve(seededGym.Admin.Id, MembershipActivatedAtUtc);
@@ -857,6 +858,10 @@ internal sealed class DevelopmentDataSeeder(
         {
             request = await dbContext.MembershipRequests.IgnoreQueryFilters()
                 .SingleAsync(x => x.Id == membership.MembershipRequestId, cancellationToken);
+            if (!membership.PaymentId.HasValue)
+            {
+                request.PaymentMethod = MembershipPaymentMethod.PayInPerson;
+            }
         }
 
         await EnsureAssignmentAsync(

@@ -209,14 +209,15 @@ class _RegistrationManagementScreenState
     final tenantId = item['createdTenantId'];
     if (tenantId == null) return;
     final api = context.read<ApiClient>();
-    final reason = action == 'activate'
-        ? null
-        : await _reasonDialog(context, 'Razlog promjene statusa');
-    if (action != 'activate' && reason == null) return;
+    final reason = await promptForReason(
+      context,
+      title: 'Razlog promjene statusa',
+    );
+    if (reason == null) return;
     try {
       await api.post(
         '/api/admin/tenants/$tenantId/$action',
-        body: reason == null ? null : {'reason': reason},
+        body: {'reason': reason},
       );
       if (mounted) {
         ScaffoldMessenger.of(
@@ -427,17 +428,25 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
       );
       if (!confirmed || !mounted) return;
     }
-    final reason = action == 'activate'
-        ? null
-        : await _reasonDialog(context, 'Razlog promjene statusa');
-    if (action != 'activate' && reason == null) return;
+    final reason = await promptForReason(
+      context,
+      title: 'Razlog promjene statusa',
+    );
+    if (reason == null) return;
     try {
       await api.post(
         '/api/admin/tenants/${item['tenantId']}/$action',
-        body: reason == null ? null : {'reason': reason},
+        body: {'reason': reason},
       );
       await _load();
       if (mounted) context.read<CentralAdminRefresh>().dataChanged();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Status teretane je uspješno promijenjen.'),
+          ),
+        );
+      }
     } on ApiProblem catch (error) {
       if (!mounted) return;
       if (error.status == 409 &&
@@ -2588,30 +2597,7 @@ class _ReferenceDialogState extends State<_ReferenceDialog> {
 }
 
 Future<String?> _reasonDialog(BuildContext context, String title) async {
-  final controller = TextEditingController();
-  final result = await showDialog<String>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: Text(title),
-      content: TextField(
-        controller: controller,
-        maxLength: 1000,
-        decoration: const InputDecoration(labelText: 'Razlog'),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Odustani'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, controller.text.trim()),
-          child: const Text('Potvrdi'),
-        ),
-      ],
-    ),
-  );
-  controller.dispose();
-  return result != null && result.length >= 2 ? result : null;
+  return promptForReason(context, title: title);
 }
 
 String _date(Object? value) => value == null

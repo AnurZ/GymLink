@@ -19,6 +19,7 @@ public sealed class MembershipRequest : TenantEntity, IConcurrencyTracked
     public Guid MemberUserId { get; set; }
     public Guid GymId { get; set; }
     public Guid MembershipPlanId { get; set; }
+    public MembershipPaymentMethod PaymentMethod { get; set; } = MembershipPaymentMethod.Stripe;
     public MembershipRequestStatus Status { get; private set; } = MembershipRequestStatus.Pending;
     public DateTime RequestedAtUtc { get; set; }
     public Guid? DecidedByUserId { get; private set; }

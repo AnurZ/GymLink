@@ -152,6 +152,10 @@ class _TenantMembershipRequestsScreenState
   bool _loading = true;
   Object? _error;
   int? _status;
+  int? _paymentMethod;
+  int _page = 1;
+  int _totalCount = 0;
+  static const _pageSize = 20;
 
   @override
   void initState() {
@@ -165,10 +169,18 @@ class _TenantMembershipRequestsScreenState
       _error = null;
     });
     try {
-      _items = (await context.read<ApiClient>().page(
+      final result = await context.read<ApiClient>().page(
         '/api/tenant/membership-requests',
-        query: {'member': _search.text.trim(), 'status': _status},
-      )).items;
+        query: {
+          'member': _search.text.trim(),
+          'status': _status,
+          'paymentMethod': _paymentMethod,
+          'page': _page,
+          'pageSize': _pageSize,
+        },
+      );
+      _items = result.items;
+      _totalCount = result.totalCount;
     } catch (error) {
       _error = error;
     } finally {
@@ -185,7 +197,7 @@ class _TenantMembershipRequestsScreenState
     } else if (!await confirmAction(
       context,
       title: 'Odobri članstvo',
-      message: 'Članstvo će biti aktivirano bez online naplate.',
+      message: 'Potvrdite da je članarina naplaćena uživo.',
     )) {
       return;
     }
@@ -195,6 +207,17 @@ class _TenantMembershipRequestsScreenState
         body: {'concurrencyToken': item['concurrencyToken'], 'reason': ?reason},
       );
       await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              approve
+                  ? 'Članstvo je uspješno aktivirano.'
+                  : 'Zahtjev je uspješno odbijen.',
+            ),
+          ),
+        );
+      }
     } on ApiProblem catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -205,19 +228,99 @@ class _TenantMembershipRequestsScreenState
     }
   }
 
+  Future<void> _showDetails(Map<String, dynamic> item) => showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Detalji zahtjeva'),
+      content: SizedBox(
+        width: 520,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _requestDetail('Korisnik', item['memberDisplayName']),
+            _requestDetail('Email', item['memberEmail']),
+            _requestDetail('Vrsta članarine', item['planName']),
+            _requestDetail('Iznos', '${item['price']} ${item['currency']}'),
+            _requestDetail('Datum', _date(item['requestedAtUtc'])),
+            _requestDetail(
+              'Način plaćanja',
+              _membershipPaymentLabel(item['paymentMethod']),
+            ),
+            _requestDetail(
+              'Status',
+              enumLabel(item['status'], _requestStatuses),
+            ),
+            if (item['decisionReason'] != null)
+              _requestDetail('Razlog odluke', item['decisionReason']),
+          ],
+        ),
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Zatvori'),
+        ),
+      ],
+    ),
+  );
+
+  Widget _requestDetail(String label, Object? value) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 150,
+          child: Text(label, style: const TextStyle(color: Colors.blueGrey)),
+        ),
+        Expanded(child: Text(value?.toString() ?? '—')),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) => Column(
     children: [
-      _FilterBar(
-        search: _search,
-        hint: 'Pretraži člana...',
-        status: _status,
-        statuses: _requestStatuses,
-        onStatus: (value) {
-          _status = value;
-          _load();
-        },
-        onSearch: _load,
+      Row(
+        children: [
+          Expanded(
+            child: _FilterBar(
+              search: _search,
+              hint: 'Pretraži člana...',
+              status: _status,
+              statuses: _requestStatuses,
+              onStatus: (value) {
+                _status = value;
+                _page = 1;
+                _load();
+              },
+              onSearch: () {
+                _page = 1;
+                _load();
+              },
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 210,
+            child: DropdownButtonFormField<int?>(
+              initialValue: _paymentMethod,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Način plaćanja'),
+              items: const [
+                DropdownMenuItem(value: null, child: Text('Sve metode')),
+                DropdownMenuItem(value: 0, child: Text('Stripe')),
+                DropdownMenuItem(value: 1, child: Text('Stripe fallback')),
+                DropdownMenuItem(value: 2, child: Text('Plati uživo')),
+              ],
+              onChanged: (value) {
+                _paymentMethod = value;
+                _page = 1;
+                _load();
+              },
+            ),
+          ),
+        ],
       ),
       const SizedBox(height: 16),
       Expanded(
@@ -228,52 +331,124 @@ class _TenantMembershipRequestsScreenState
           child: _items.isEmpty
               ? const EmptyState('Nema zahtjeva za izabrane filtere.')
               : Card(
-                  child: ListView.separated(
-                    itemCount: _items.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final item = _items[index];
-                      final pending = (item['status'] as num?)?.toInt() == 0;
-                      return ListTile(
-                        title: Text(item['memberDisplayName'].toString()),
-                        subtitle: Text(
-                          '${item['planName']} · ${item['price']} ${item['currency']} · ${_date(item['requestedAtUtc'])}',
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            StatusPill(
-                              enumLabel(item['status'], _requestStatuses),
-                            ),
-                            if (pending) ...[
-                              IconButton(
-                                tooltip: 'Odobri',
-                                onPressed: () => _decide(item, true),
-                                icon: const Icon(
-                                  Icons.check_circle_outline,
-                                  color: Colors.green,
+                  child: SingleChildScrollView(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        columns: const [
+                          DataColumn(label: Text('Korisnik')),
+                          DataColumn(label: Text('Email')),
+                          DataColumn(label: Text('Vrsta članarine')),
+                          DataColumn(label: Text('Iznos')),
+                          DataColumn(label: Text('Datum')),
+                          DataColumn(label: Text('Način plaćanja')),
+                          DataColumn(label: Text('Status')),
+                          DataColumn(label: Text('Akcije')),
+                        ],
+                        rows: _items.map((item) {
+                          final actions =
+                              (item['allowedActions'] as List? ?? const [])
+                                  .map((value) => value.toString())
+                                  .toSet();
+                          return DataRow(
+                            cells: [
+                              DataCell(
+                                Text(item['memberDisplayName'].toString()),
+                              ),
+                              DataCell(
+                                Text(item['memberEmail']?.toString() ?? '—'),
+                              ),
+                              DataCell(Text(item['planName'].toString())),
+                              DataCell(
+                                Text('${item['price']} ${item['currency']}'),
+                              ),
+                              DataCell(Text(_date(item['requestedAtUtc']))),
+                              DataCell(
+                                Text(
+                                  _membershipPaymentLabel(
+                                    item['paymentMethod'],
+                                  ),
                                 ),
                               ),
-                              IconButton(
-                                tooltip: 'Odbij',
-                                onPressed: () => _decide(item, false),
-                                icon: const Icon(
-                                  Icons.cancel_outlined,
-                                  color: Colors.red,
+                              DataCell(
+                                StatusPill(
+                                  enumLabel(item['status'], _requestStatuses),
+                                ),
+                              ),
+                              DataCell(
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (actions.contains('approve'))
+                                      IconButton(
+                                        tooltip: 'Aktiviraj nakon naplate',
+                                        onPressed: () => _decide(item, true),
+                                        icon: const Icon(
+                                          Icons.check_circle_outline,
+                                          color: Colors.green,
+                                        ),
+                                      ),
+                                    if (actions.contains('reject'))
+                                      IconButton(
+                                        tooltip: 'Odbij',
+                                        onPressed: () => _decide(item, false),
+                                        icon: const Icon(
+                                          Icons.cancel_outlined,
+                                          color: Colors.red,
+                                        ),
+                                      ),
+                                    IconButton(
+                                      tooltip: 'Detalji',
+                                      onPressed: () => _showDetails(item),
+                                      icon: const Icon(
+                                        Icons.visibility_outlined,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],
-                          ],
-                        ),
-                      );
-                    },
+                          );
+                        }).toList(),
+                      ),
+                    ),
                   ),
                 ),
         ),
       ),
+      if (_totalCount > _pageSize)
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            Text('Stranica $_page od ${(_totalCount / _pageSize).ceil()}'),
+            IconButton(
+              tooltip: 'Prethodna stranica',
+              onPressed: _page == 1
+                  ? null
+                  : () {
+                      setState(() => _page--);
+                      _load();
+                    },
+              icon: const Icon(Icons.chevron_left),
+            ),
+            IconButton(
+              tooltip: 'Sljedeća stranica',
+              onPressed: _page * _pageSize >= _totalCount
+                  ? null
+                  : () {
+                      setState(() => _page++);
+                      _load();
+                    },
+              icon: const Icon(Icons.chevron_right),
+            ),
+          ],
+        ),
     ],
   );
 }
+
+String _membershipPaymentLabel(Object? value) =>
+    enumLabel(value, const ['Stripe', 'Stripe fallback', 'Plati uživo']);
 
 class TenantMembershipsScreen extends StatefulWidget {
   const TenantMembershipsScreen({super.key});
@@ -2338,31 +2513,7 @@ class _GymEditorDialogState extends State<_GymEditorDialog> {
 }
 
 Future<String?> _reasonDialog(BuildContext context, String title) async {
-  final controller = TextEditingController();
-  final value = await showDialog<String>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: Text(title),
-      content: TextField(
-        controller: controller,
-        autofocus: true,
-        maxLength: 1000,
-        decoration: const InputDecoration(labelText: 'Razlog'),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Odustani'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, controller.text.trim()),
-          child: const Text('Potvrdi'),
-        ),
-      ],
-    ),
-  );
-  controller.dispose();
-  return value != null && value.length >= 2 ? value : null;
+  return promptForReason(context, title: title);
 }
 
 String _date(Object? value) => DateFormat(

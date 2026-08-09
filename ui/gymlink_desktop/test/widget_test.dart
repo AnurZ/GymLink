@@ -10,10 +10,39 @@ import 'package:gymlink_desktop/features/central/central_screens.dart';
 import 'package:gymlink_desktop/features/desktop_frame.dart';
 import 'package:gymlink_desktop/features/auth/password_reset_screens.dart';
 import 'package:gymlink_desktop/features/gym_admin/gym_admin_screens.dart';
+import 'package:gymlink_desktop/features/notifications/notification_screen.dart';
 import 'package:gymlink_desktop/features/reporting/reporting_screens.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  testWidgets('desktop notification opens detail before mark-read', (
+    tester,
+  ) async {
+    final api = _NotificationApi();
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const NotificationScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(api.readRequests, 0);
+    expect(find.text('Označi sve kao pročitano'), findsOneWidget);
+    await tester.tap(find.text('Članstvo aktivirano'));
+    await tester.pumpAndSettle();
+
+    expect(api.readRequests, 1);
+    expect(
+      find.widgetWithText(AlertDialog, 'Članstvo aktivirano'),
+      findsOneWidget,
+    );
+    expect(find.text('Članarina je aktivirana.'), findsWidgets);
+  });
+
   testWidgets(
     'Figure 7 statistics load independently and export both reports',
     (tester) async {
@@ -314,6 +343,45 @@ void main() {
     await tester.tap(find.text('Confirmed'));
     await tester.pumpAndSettle();
     expect(api.requestedStatuses, [null, 1]);
+  });
+
+  testWidgets('Figure 5 membership requests use columns and payment method', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1500, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _GymAdminMembershipRequestsApi();
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: TenantMembershipRequestsScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    for (final heading in [
+      'Korisnik',
+      'Email',
+      'Vrsta članarine',
+      'Iznos',
+      'Datum',
+      'Način plaćanja',
+      'Status',
+      'Akcije',
+    ]) {
+      expect(find.text(heading), findsWidgets);
+    }
+    expect(find.text('Cash Member'), findsOneWidget);
+    expect(find.text('cash@gymlink.local'), findsOneWidget);
+    expect(find.text('Plati uživo'), findsWidgets);
+    expect(find.byTooltip('Aktiviraj nakon naplate'), findsOneWidget);
+    expect(find.byTooltip('Odbij'), findsOneWidget);
+    expect(find.byTooltip('Detalji'), findsOneWidget);
   });
 
   testWidgets('gym creation searches locations only after explicit action', (
@@ -796,6 +864,16 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Potvrdi'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Potvrdi'));
+    await tester.pumpAndSettle();
+    expect(find.text('Unesite razlog (najmanje 2 znaka).'), findsOneWidget);
+    expect(api.activationAttempts, 0);
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Razlog'),
+      'Spremno za aktivaciju',
+    );
+    await tester.tap(find.text('Potvrdi'));
+    await tester.pumpAndSettle();
 
     expect(find.text('Aktivacija nije moguća'), findsOneWidget);
     expect(find.textContaining('aktivan plan članstva'), findsWidgets);
@@ -1049,6 +1127,54 @@ class _ReportingApi extends ApiClient {
   Future<DownloadedFile> download(String path) async {
     downloadedPaths.add(path);
     return report;
+  }
+}
+
+class _NotificationApi extends ApiClient {
+  _NotificationApi() : super(_TestTokens());
+
+  int readRequests = 0;
+
+  @override
+  Future<PagedData> page(
+    String path, {
+    Map<String, Object?> query = const {},
+  }) async => const PagedData(
+    items: [
+      {
+        'id': 'notice-1',
+        'category': 'membership.approved',
+        'title': 'Članstvo aktivirano',
+        'text': 'Članarina je aktivirana.',
+        'createdAtUtc': '2026-08-09T10:00:00Z',
+        'isRead': false,
+        'concurrencyToken': 'token-1',
+      },
+    ],
+    page: 1,
+    pageSize: 20,
+    totalCount: 1,
+  );
+
+  @override
+  Future<Object?> post(
+    String path, {
+    Object? body,
+    bool authenticated = true,
+  }) async {
+    if (path == '/api/me/notifications/notice-1/read') {
+      readRequests++;
+      return {
+        'id': 'notice-1',
+        'category': 'membership.approved',
+        'title': 'Članstvo aktivirano',
+        'text': 'Članarina je aktivirana.',
+        'createdAtUtc': '2026-08-09T10:00:00Z',
+        'isRead': true,
+        'concurrencyToken': 'token-2',
+      };
+    }
+    return null;
   }
 }
 
@@ -1412,6 +1538,40 @@ class _GymAdminReservationsApi extends ApiClient {
     if (path == '/api/tenant/reservations') {
       requestedStatuses.add(query['status'] as int?);
       return const PagedData(items: [], page: 1, pageSize: 20, totalCount: 0);
+    }
+    throw StateError('Unexpected page request: $path');
+  }
+}
+
+class _GymAdminMembershipRequestsApi extends ApiClient {
+  _GymAdminMembershipRequestsApi() : super(_TestTokens());
+
+  @override
+  Future<PagedData> page(
+    String path, {
+    Map<String, Object?> query = const {},
+  }) async {
+    if (path == '/api/tenant/membership-requests') {
+      return const PagedData(
+        items: [
+          {
+            'id': 'request-1',
+            'memberDisplayName': 'Cash Member',
+            'memberEmail': 'cash@gymlink.local',
+            'planName': 'Mjesečna',
+            'price': 50,
+            'currency': 'BAM',
+            'requestedAtUtc': '2026-08-09T10:00:00Z',
+            'paymentMethod': 2,
+            'status': 0,
+            'allowedActions': ['approve', 'reject', 'view'],
+            'concurrencyToken': 'token',
+          },
+        ],
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
+      );
     }
     throw StateError('Unexpected page request: $path');
   }

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
@@ -84,6 +85,7 @@ class _NotificationScreenState extends State<NotificationScreen>
   int _page = 1;
   bool _busy = false;
   bool _hasMore = false;
+  bool _markingAll = false;
   bool? _isRead;
   String? _error;
 
@@ -136,29 +138,29 @@ class _NotificationScreenState extends State<NotificationScreen>
     }
   }
 
-  Future<void> _markRead(Map<String, dynamic> item) async {
-    if (item['isRead'] == true) return;
+  Future<void> _markAllRead() async {
+    if (_markingAll) return;
+    setState(() => _markingAll = true);
     try {
-      final updated = Map<String, dynamic>.from(
-        (await context.read<ApiClient>().post(
-              '/api/me/notifications/${item['id']}/read',
-              body: {'concurrencyToken': item['concurrencyToken']},
-            ))!
-            as Map,
-      );
-      if (mounted) setState(() => item.addAll(updated));
+      await context.read<ApiClient>().post('/api/me/notifications/read-all');
+      await _load(reset: true);
     } on ApiProblem catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(error.message)));
       }
+    } finally {
+      if (mounted) setState(() => _markingAll = false);
     }
   }
 
-  Future<void> _markAllRead() async {
-    await context.read<ApiClient>().post('/api/me/notifications/read-all');
-    await _load(reset: true);
+  Future<void> _openDetails(Map<String, dynamic> item) async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _NotificationDetailDialog(item: item),
+    );
+    if (mounted) await _load(reset: true);
   }
 
   @override
@@ -166,7 +168,15 @@ class _NotificationScreenState extends State<NotificationScreen>
     appBar: AppBar(
       title: const Text('Obavijesti'),
       actions: [
-        TextButton(onPressed: _markAllRead, child: const Text('Označi sve')),
+        TextButton(
+          onPressed:
+              _markingAll || !_items.any((item) => item['isRead'] != true)
+              ? null
+              : _markAllRead,
+          child: Text(
+            _markingAll ? 'Označavanje…' : 'Označi sve kao pročitano',
+          ),
+        ),
         const SizedBox(width: 16),
       ],
     ),
@@ -211,21 +221,15 @@ class _NotificationScreenState extends State<NotificationScreen>
                   child: ListTile(
                     leading: const Icon(Icons.notifications_outlined),
                     title: Text(item['title']?.toString() ?? 'Obavijest'),
-                    subtitle: Text(item['text']?.toString() ?? ''),
+                    subtitle: Text(
+                      '${_notificationPreview(item['text'])}\n${_notificationDate(item['createdAtUtc'])}',
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     trailing: item['isRead'] == true
                         ? null
                         : const Icon(Icons.circle, size: 10),
-                    onTap: () async {
-                      await _markRead(item);
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Cilj obavijesti više nije dostupan ili nema poseban prikaz.',
-                          ),
-                        ),
-                      );
-                    },
+                    onTap: () => _openDetails(item),
                   ),
                 ),
               if (_hasMore)
@@ -249,4 +253,90 @@ class _NotificationScreenState extends State<NotificationScreen>
       ),
     ),
   );
+}
+
+class _NotificationDetailDialog extends StatefulWidget {
+  const _NotificationDetailDialog({required this.item});
+
+  final Map<String, dynamic> item;
+
+  @override
+  State<_NotificationDetailDialog> createState() =>
+      _NotificationDetailDialogState();
+}
+
+class _NotificationDetailDialogState extends State<_NotificationDetailDialog> {
+  String? _readError;
+  late final Map<String, dynamic> _item;
+
+  @override
+  void initState() {
+    super.initState();
+    _item = Map<String, dynamic>.from(widget.item);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _markRead());
+  }
+
+  Future<void> _markRead() async {
+    if (_item['isRead'] == true) return;
+    try {
+      final updated = Map<String, dynamic>.from(
+        (await context.read<ApiClient>().post(
+              '/api/me/notifications/${_item['id']}/read',
+              body: {'concurrencyToken': _item['concurrencyToken']},
+            ))!
+            as Map,
+      );
+      if (mounted) setState(() => _item.addAll(updated));
+    } on ApiProblem catch (error) {
+      if (mounted) setState(() => _readError = error.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(_item['title']?.toString() ?? 'Obavijest'),
+    content: SizedBox(
+      width: 560,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _notificationDate(_item['createdAtUtc']),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 18),
+          Text(
+            _item['text']?.toString() ?? '',
+            style: Theme.of(context).textTheme.bodyLarge,
+          ),
+          if (_readError != null) ...[
+            const SizedBox(height: 18),
+            Text(
+              _readError!,
+              style: const TextStyle(color: GymLinkColors.danger),
+            ),
+          ],
+        ],
+      ),
+    ),
+    actions: [
+      FilledButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Zatvori'),
+      ),
+    ],
+  );
+}
+
+String _notificationPreview(Object? value) {
+  final text = value?.toString().trim() ?? '';
+  return text.length <= 110 ? text : '${text.substring(0, 107)}…';
+}
+
+String _notificationDate(Object? value) {
+  final date = DateTime.tryParse(value?.toString() ?? '');
+  return date == null
+      ? ''
+      : DateFormat('dd.MM.yyyy. HH:mm').format(date.toLocal());
 }

@@ -35,6 +35,9 @@ public interface IIdentityAccountManager
 {
     Task<IdentityAccount?> FindByIdentifierAsync(string identifier, CancellationToken cancellationToken);
     Task<IdentityAccount?> FindByIdAsync(Guid userId, CancellationToken cancellationToken);
+    Task<IReadOnlyDictionary<Guid, string>> GetEmailsAsync(
+        IReadOnlyCollection<Guid> userIds,
+        CancellationToken cancellationToken);
     Task<bool> CheckPasswordAsync(Guid userId, string password);
     Task<IdentityOperationResult> CreateAsync(
         Guid userId,

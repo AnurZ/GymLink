@@ -5,13 +5,14 @@ import 'package:url_launcher/url_launcher.dart';
 import 'api.dart';
 import 'theme.dart';
 
-enum MembershipPaymentMethod { stripe, manual }
+enum MembershipPaymentMethod { stripe, stripeFallback, payInPerson }
 
 enum ReservationPaymentMethod { stripe, payInPerson, manual }
 
 Future<MembershipPaymentMethod?> chooseMembershipPaymentMethod(
-  BuildContext context,
-) => showModalBottomSheet<MembershipPaymentMethod>(
+  BuildContext context, {
+  bool allowPayInPerson = true,
+}) => showModalBottomSheet<MembershipPaymentMethod>(
   context: context,
   showDragHandle: true,
   builder: (context) => SafeArea(
@@ -35,12 +36,31 @@ Future<MembershipPaymentMethod?> chooseMembershipPaymentMethod(
             child: ListTile(
               key: const Key('membership-payment-manual'),
               leading: const Icon(Icons.check_circle_outline),
-              title: const Text('Označi kao plaćeno (lokalno)'),
+              title: const Text('Stripe fallback (testno)'),
+              subtitle: const Text(
+                'Dostupno kada je testno plaćanje omogućeno.',
+              ),
               trailing: const Icon(Icons.chevron_right),
-              onTap: () =>
-                  Navigator.pop(context, MembershipPaymentMethod.manual),
+              onTap: () => Navigator.pop(
+                context,
+                MembershipPaymentMethod.stripeFallback,
+              ),
             ),
           ),
+          if (allowPayInPerson)
+            Card(
+              child: ListTile(
+                key: const Key('membership-payment-in-person'),
+                leading: const Icon(Icons.payments_outlined),
+                title: const Text('Plati uživo'),
+                subtitle: const Text(
+                  'Zahtjev čeka GymAdmin potvrdu nakon plaćanja u teretani.',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () =>
+                    Navigator.pop(context, MembershipPaymentMethod.payInPerson),
+              ),
+            ),
         ],
       ),
     ),

@@ -13,6 +13,7 @@ import 'package:gymlink_mobile/features/auth/auth_screens.dart';
 import 'package:gymlink_mobile/features/member/gym_screens.dart';
 import 'package:gymlink_mobile/features/member/membership_screen.dart';
 import 'package:gymlink_mobile/features/member/reservation_screen.dart';
+import 'package:gymlink_mobile/features/notifications/notification_screen.dart';
 import 'package:gymlink_mobile/features/payments/payment_result_screen.dart';
 import 'package:gymlink_mobile/features/reservations/reservation_refresh_controller.dart';
 import 'package:gymlink_mobile/features/trainer/trainer_screens.dart';
@@ -21,6 +22,55 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  testWidgets('notification detail marks read only after it opens', (
+    tester,
+  ) async {
+    var readRequests = 0;
+    final api = ApiClient(
+      _TestTokenSource(),
+      baseUrlOverride: 'https://api.test',
+      httpClient: MockClient((request) async {
+        if (request.url.path == '/api/me/notifications/notice-1/read') {
+          readRequests++;
+          return http.Response(
+            jsonEncode({
+              'title': 'concurrency_conflict',
+              'detail': 'Obavijest je promijenjena. Osvježite listu.',
+            }),
+            409,
+            headers: {'content-type': 'application/problem+json'},
+          );
+        }
+        return http.Response('', 404);
+      }),
+    );
+    final item = <String, dynamic>{
+      'id': 'notice-1',
+      'title': 'Članstvo aktivirano',
+      'text': 'Teretana je odobrila aktivaciju članstva.',
+      'createdAtUtc': '2026-08-09T10:00:00Z',
+      'isRead': false,
+      'concurrencyToken': 'token',
+    };
+
+    expect(readRequests, 0);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(home: NotificationDetailScreen(item: item)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(readRequests, 1);
+    expect(find.text('Detalji obavijesti'), findsOneWidget);
+    expect(
+      find.text('Teretana je odobrila aktivaciju članstva.'),
+      findsOneWidget,
+    );
+    expect(item['isRead'], false);
+  });
+
   testWidgets('trainer image avatar falls back to initials', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
@@ -193,13 +243,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Stripe'), findsOneWidget);
-    expect(find.text('Označi kao plaćeno (lokalno)'), findsOneWidget);
+    expect(find.text('Stripe fallback (testno)'), findsOneWidget);
+    expect(find.text('Plati uživo'), findsOneWidget);
     expect(find.textContaining('ALLOW_FAKE_PAYMENTS'), findsNothing);
 
     await tester.tap(find.byKey(const Key('membership-payment-manual')));
     await tester.pumpAndSettle();
 
-    expect(selected, MembershipPaymentMethod.manual);
+    expect(selected, MembershipPaymentMethod.stripeFallback);
   });
 
   testWidgets('pay-in-person booking shows a confirmed success state', (

@@ -122,3 +122,68 @@ Future<bool> confirmAction(
       ),
     ) ??
     false;
+
+Future<String?> promptForReason(
+  BuildContext context, {
+  required String title,
+}) => showDialog<String>(
+  context: context,
+  barrierDismissible: false,
+  builder: (_) => _ReasonDialog(title: title),
+);
+
+class _ReasonDialog extends StatefulWidget {
+  const _ReasonDialog({required this.title});
+
+  final String title;
+
+  @override
+  State<_ReasonDialog> createState() => _ReasonDialogState();
+}
+
+class _ReasonDialogState extends State<_ReasonDialog> {
+  final _controller = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (_formKey.currentState?.validate() == true) {
+      Navigator.pop(context, _controller.text.trim());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.title),
+    content: Form(
+      key: _formKey,
+      child: TextFormField(
+        controller: _controller,
+        autofocus: true,
+        minLines: 2,
+        maxLines: 4,
+        maxLength: 1000,
+        decoration: const InputDecoration(
+          labelText: 'Razlog',
+          helperText: 'Najmanje 2 znaka',
+        ),
+        validator: (value) => (value?.trim().length ?? 0) < 2
+            ? 'Unesite razlog (najmanje 2 znaka).'
+            : null,
+        onFieldSubmitted: (_) => _submit(),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Odustani'),
+      ),
+      FilledButton(onPressed: _submit, child: const Text('Potvrdi')),
+    ],
+  );
+}
