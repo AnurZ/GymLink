@@ -8,6 +8,10 @@ The normal Compose stack sends password-reset codes through authenticated Gmail 
 
 Mailpit is intentionally excluded from normal startup. For isolated local delivery testing, run `docker compose -f docker-compose.yml -f docker-compose.mailpit.yml up --build -d`; this override redirects only the Worker to unauthenticated Mailpit and exposes its UI at `http://localhost:8025`. The release verification script applies this override automatically so automated tests never send real email.
 
+## Address search
+
+CentralAdmin address search uses Nominatim with `Geocoding__UserAgent=GymLink/1.0`. `Geocoding__ContactEmail` is optional; when supplied it must be a real contact address. Placeholder values such as `replace-with-your-email@example.com` are rejected during startup. If the provider is unavailable, gym creation remains available through the searchable active BiH city list, manual address field, and exact map-point selection.
+
 ## GymLink
 
 GymLink is a fitness platform that allows users to discover gyms and trainers, purchase gym memberships, book personal training appointments, review completed services, and receive explained recommendations. Members and Trainers use the Android application, while Gym Administrators and Central Administrators use the Windows desktop application. Members can chat with Trainers and receive notifications, Gym Administrators manage their gym, members, trainers, schedules, reservations, gallery, statistics, and PDF reports, while Central Administrators manage gyms, activation, reference data, role assignments, and system statistics.

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net.Mail;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json.Serialization;
@@ -7,6 +8,7 @@ using GymLink.Application.Administration;
 using GymLink.Application.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace GymLink.Infrastructure.Geocoding;
@@ -22,6 +24,21 @@ internal sealed class GeocodingOptions
     public int TimeoutSeconds { get; init; } = 10;
     public int CacheHours { get; init; } = 24;
     public int MinimumIntervalMilliseconds { get; init; } = 1000;
+
+    public bool IsValid() =>
+        Uri.TryCreate(BaseUrl, UriKind.Absolute, out _) &&
+        !string.IsNullOrWhiteSpace(UserAgent) &&
+        !IsPlaceholder(UserAgent) &&
+        (string.IsNullOrWhiteSpace(ContactEmail) ||
+         (!IsPlaceholder(ContactEmail) && MailAddress.TryCreate(ContactEmail, out _))) &&
+        TimeoutSeconds is > 0 and <= 60 &&
+        CacheHours is > 0 and <= 168 &&
+        MinimumIntervalMilliseconds >= 1000;
+
+    private static bool IsPlaceholder(string value) =>
+        value.Contains("replace-with", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("example.com", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("changeme", StringComparison.OrdinalIgnoreCase);
 }
 
 internal sealed class NominatimLocationSearchService(
@@ -29,11 +46,22 @@ internal sealed class NominatimLocationSearchService(
     IApplicationDbContext dbContext,
     IMemoryCache cache,
     IOptions<GeocodingOptions> options,
-    TimeProvider timeProvider) : ILocationSearchService
+    TimeProvider timeProvider,
+    ILogger<NominatimLocationSearchService> logger) : ILocationSearchService
 {
     private const int ResultLimit = 8;
     private static readonly SemaphoreSlim UpstreamLock = new(1, 1);
     private static DateTimeOffset _lastUpstreamRequest = DateTimeOffset.MinValue;
+    private static readonly Action<ILogger, string, int, Exception?> LogProviderStatus =
+        LoggerMessage.Define<string, int>(
+            LogLevel.Warning,
+            new EventId(7101, "NominatimStatus"),
+            "Nominatim {Operation} failed with HTTP status {StatusCode}.");
+    private static readonly Action<ILogger, string, Exception?> LogProviderUnavailable =
+        LoggerMessage.Define<string>(
+            LogLevel.Warning,
+            new EventId(7102, "NominatimUnavailable"),
+            "Nominatim {Operation} timed out or was unavailable.");
     private readonly GeocodingOptions _settings = options.Value;
 
     public async Task<IReadOnlyList<LocationSearchResultDto>> SearchAsync(
@@ -154,6 +182,7 @@ internal sealed class NominatimLocationSearchService(
                 .GetAsync(endpoint, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
+                LogProviderStatus(logger, "search", (int)response.StatusCode, null);
                 throw Unavailable();
             }
 
@@ -163,6 +192,7 @@ internal sealed class NominatimLocationSearchService(
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            LogProviderUnavailable(logger, "search", null);
             throw Unavailable();
         }
         catch (ExternalServiceUnavailableException)
@@ -172,6 +202,7 @@ internal sealed class NominatimLocationSearchService(
         catch (Exception exception) when (
             exception is HttpRequestException or NotSupportedException or System.Text.Json.JsonException)
         {
+            LogProviderUnavailable(logger, "search", exception);
             throw new ExternalServiceUnavailableException(
                 "location_search_unavailable",
                 "Location search is temporarily unavailable. Try again.",
@@ -230,6 +261,7 @@ internal sealed class NominatimLocationSearchService(
 
             if (!response.IsSuccessStatusCode)
             {
+                LogProviderStatus(logger, "reverse", (int)response.StatusCode, null);
                 throw Unavailable();
             }
 
@@ -238,6 +270,7 @@ internal sealed class NominatimLocationSearchService(
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            LogProviderUnavailable(logger, "reverse", null);
             throw Unavailable();
         }
         catch (ExternalServiceUnavailableException)
@@ -247,6 +280,7 @@ internal sealed class NominatimLocationSearchService(
         catch (Exception exception) when (
             exception is HttpRequestException or NotSupportedException or System.Text.Json.JsonException)
         {
+            LogProviderUnavailable(logger, "reverse", exception);
             throw new ExternalServiceUnavailableException(
                 "location_search_unavailable",
                 "Location search is temporarily unavailable. Try again.",

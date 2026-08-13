@@ -51,6 +51,7 @@ final class ChatController extends ChangeNotifier {
   String? _beforeId;
   String? listError;
   String? detailError;
+  String? imageUploadError;
   String _sessionUserId = '';
 
   String get currentUserId => _auth.session?.user['id']?.toString() ?? '';
@@ -252,7 +253,7 @@ final class ChatController extends ChangeNotifier {
     final conversation = activeConversation;
     if (conversation == null || bytes.isEmpty || sendingImage) return false;
     sendingImage = true;
-    detailError = null;
+    imageUploadError = null;
     notifyListeners();
     try {
       final saved = await _repository.sendImage(
@@ -265,7 +266,9 @@ final class ChatController extends ChangeNotifier {
       _acceptSaved(saved);
       return true;
     } on ApiProblem catch (error) {
-      detailError = error.message;
+      imageUploadError = error.code == 'invalid_chat_image'
+          ? 'Odabranu sliku nije moguće poslati. Odaberite JPG, PNG ili WebP fotografiju do 5 MB.'
+          : error.message;
       return false;
     } finally {
       sendingImage = false;

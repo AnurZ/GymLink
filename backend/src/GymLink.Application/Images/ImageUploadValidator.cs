@@ -52,6 +52,55 @@ internal static class ImageUploadValidator
         return expectedContentType;
     }
 
+    public static string ValidateDetectedContent(
+        byte[] content,
+        string fileName,
+        long maximumFileSizeBytes,
+        string errorCode)
+    {
+        ValidateCommon(content, fileName, maximumFileSizeBytes, errorCode);
+
+        if (SignatureMatches(content, "image/jpeg"))
+        {
+            return "image/jpeg";
+        }
+
+        if (SignatureMatches(content, "image/png"))
+        {
+            return "image/png";
+        }
+
+        if (SignatureMatches(content, "image/webp"))
+        {
+            return "image/webp";
+        }
+
+        throw InvalidImage(errorCode, "Only JPG, PNG, or WebP image content is allowed.");
+    }
+
+    private static void ValidateCommon(
+        byte[] content,
+        string fileName,
+        long maximumFileSizeBytes,
+        string errorCode)
+    {
+        if (content.Length == 0)
+        {
+            throw InvalidImage(errorCode, "Please select an image to upload.");
+        }
+
+        if (content.LongLength > maximumFileSizeBytes)
+        {
+            throw InvalidImage(errorCode, "The image must be 5 MiB or smaller.");
+        }
+
+        if (string.IsNullOrWhiteSpace(fileName) ||
+            !string.Equals(fileName, Path.GetFileName(fileName), StringComparison.Ordinal))
+        {
+            throw InvalidImage(errorCode, "The image filename is invalid.");
+        }
+    }
+
     private static bool SignatureMatches(byte[] content, string contentType) =>
         contentType switch
         {

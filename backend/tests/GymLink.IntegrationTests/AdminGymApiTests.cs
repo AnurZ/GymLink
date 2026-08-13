@@ -11,6 +11,7 @@ using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Domain.ReferenceData;
 using GymLink.Infrastructure.Persistence;
+using GymLink.Infrastructure.Geocoding;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -25,6 +26,32 @@ public sealed class AdminGymApiTests
 {
     private const string Password = "Test123!";
     private const string SigningKey = "integration-test-signing-key-at-least-32-bytes";
+
+    [Fact]
+    public void Geocoding_configuration_rejects_placeholders_and_allows_optional_email()
+    {
+        Assert.True(new GeocodingOptions
+        {
+            Enabled = true,
+            BaseUrl = "https://nominatim.openstreetmap.org",
+            UserAgent = "GymLink/1.0",
+            ContactEmail = string.Empty,
+            TimeoutSeconds = 10,
+            CacheHours = 24,
+            MinimumIntervalMilliseconds = 1000,
+        }.IsValid());
+
+        Assert.False(new GeocodingOptions
+        {
+            Enabled = true,
+            BaseUrl = "https://nominatim.openstreetmap.org",
+            UserAgent = "GymLink/1.0 (contact: replace-with-your-email@example.com)",
+            ContactEmail = "replace-with-your-email@example.com",
+            TimeoutSeconds = 10,
+            CacheHours = 24,
+            MinimumIntervalMilliseconds = 1000,
+        }.IsValid());
+    }
 
     [Fact]
     public async Task CentralAdmin_creates_complete_private_gym_and_can_activate_it()
@@ -432,6 +459,13 @@ public sealed class AdminGymApiTests
                 "/api/admin/locations/search?query=Mostar");
             Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
             Assert.Equal("location_search_unavailable", await ProblemCodeAsync(unavailable));
+
+            handler.StatusCode = HttpStatusCode.OK;
+            handler.ThrowTimeout = true;
+            var timeout = await client.GetAsync(
+                "/api/admin/locations/search?query=Zenica");
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, timeout.StatusCode);
+            Assert.Equal("location_search_unavailable", await ProblemCodeAsync(timeout));
         }
         finally
         {
@@ -710,6 +744,7 @@ public sealed class AdminGymApiTests
         public string UserAgent { get; private set; } = string.Empty;
         public HttpStatusCode StatusCode { get; set; } = HttpStatusCode.OK;
         public string ResponseBody { get; set; } = responseBody;
+        public bool ThrowTimeout { get; set; }
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -719,6 +754,11 @@ public sealed class AdminGymApiTests
             RequestCount++;
             RequestUri = request.RequestUri;
             UserAgent = request.Headers.UserAgent.ToString();
+            if (ThrowTimeout)
+            {
+                return Task.FromException<HttpResponseMessage>(new TaskCanceledException());
+            }
+
             return Task.FromResult(new HttpResponseMessage(StatusCode)
             {
                 Content = new StringContent(

@@ -142,6 +142,39 @@ void main() {
     },
   );
 
+  testWidgets('CentralAdmin reservations chart uses integer count scale', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: _CentralReportingApi(),
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: CentralStatisticsScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final scale = reservationCountAxis(31);
+    expect(scale.interval, 10);
+    expect(scale.maximum, 40);
+    final chart = tester.widget<BarChart>(find.byType(BarChart));
+    expect(chart.data.maxY, 40);
+    expect(chart.data.gridData.horizontalInterval, 10);
+    expect(
+      chart.data.barGroups.map((group) => group.barRods.single.color).toSet(),
+      {statisticsPalette.first},
+    );
+    expect(find.byKey(const Key('reservations-axis-title')), findsOneWidget);
+    expect(find.text('Period: 01.03.2026. – 31.08.2026.'), findsOneWidget);
+    expect(chart.data.barGroups.last.barRods.single.toY, 31);
+  });
+
   testWidgets(
     'report layout supports constrained width and explicit empty charts',
     (tester) async {
@@ -644,7 +677,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('latest map click wins and failed lookup blocks progress', (
+  testWidgets('latest map click wins and failed lookup enables manual fallback', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1600, 1000);
@@ -705,26 +738,22 @@ void main() {
     await tester.pump();
     expect(
       find.text(
-        'Za ovu tačku nije pronađena upotrebljiva adresa. Izaberite drugu lokaciju.',
+        'Adresa nije automatski pronađena. Unesite grad i adresu ručno; označene koordinate su sačuvane.',
       ),
       findsOneWidget,
     );
+    expect(find.byKey(const Key('gym-manual-city')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('gym-manual-city')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sarajevo').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Adresa'),
+      'Ručna adresa 12',
+    );
     await tester.tap(find.byKey(const Key('gym-create-continue')));
-    await tester.pump();
-    expect(find.text('Radno vrijeme'), findsNothing);
-
-    api.problem = const ApiProblem(
-      status: 400,
-      code: 'location_outside_bih',
-      message: 'Outside BiH',
-    );
-    await tester.tapAt(rect.center);
-    await tester.pump(const Duration(milliseconds: 700));
-    await tester.pump();
-    expect(
-      find.text('Odabrana lokacija mora biti u Bosni i Hercegovini.'),
-      findsOneWidget,
-    );
+    await tester.pumpAndSettle();
+    expect(find.text('Radno vrijeme'), findsOneWidget);
   });
 
   testWidgets('complete gym wizard sends activation-ready payload', (
@@ -734,7 +763,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final api = _CentralAdminApi();
+    final api = _CentralAdminApi(reverseUnavailable: true);
     await tester.pumpWidget(_centralHarness(api));
     await tester.pumpAndSettle();
 
@@ -750,6 +779,16 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('gym-create-continue')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('gym-manual-location-toggle')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('gym-manual-city')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sarajevo').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Adresa'),
+      'Zmaja od Bosne 12, ulaz B',
+    );
     final map = find.byKey(const Key('gym-location-map'));
     await tester.scrollUntilVisible(
       map,
@@ -759,10 +798,6 @@ void main() {
     await tester.tapAt(tester.getCenter(map));
     await tester.pump(const Duration(milliseconds: 301));
     await tester.pumpAndSettle();
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Odabrana adresa'),
-      'Zmaja od Bosne 12, ulaz B',
-    );
     final stepper = tester.widget<Stepper>(find.byType(Stepper));
     expect(stepper.controller, isNotNull);
     stepper.controller!.jumpTo(stepper.controller!.position.maxScrollExtent);
@@ -1284,6 +1319,36 @@ class _ReportingApi extends ApiClient {
   }
 }
 
+class _CentralReportingApi extends ApiClient {
+  _CentralReportingApi() : super(_TestTokens());
+
+  @override
+  Future<Object?> get(
+    String path, {
+    Map<String, Object?> query = const {},
+    bool authenticated = true,
+  }) async => switch (path) {
+    '/api/admin/statistics/summary' => {
+      'totalGyms': 4,
+      'activeUsers': 120,
+      'pendingActivationGyms': 1,
+      'reservationCount': 91,
+    },
+    '/api/admin/statistics/trends' => {
+      'window': {
+        'windowStart': '2026-03-01',
+        'windowEnd': '2026-08-31',
+        'timeZone': 'Europe/Sarajevo',
+      },
+      'reservationsByMonth': [
+        for (var month = 3; month <= 8; month++)
+          {'year': 2026, 'month': month, 'count': month == 8 ? 31 : month},
+      ],
+    },
+    _ => throw StateError('Unexpected get request: $path'),
+  };
+}
+
 class _NotificationApi extends ApiClient {
   _NotificationApi() : super(_TestTokens());
 
@@ -1413,12 +1478,14 @@ class _CentralAdminApi extends ApiClient {
     this.activationConflictCode,
     this.creationConflictCode,
     this.successfulActivationWithRefreshFailure = false,
+    this.reverseUnavailable = false,
   }) : super(_TestTokens());
 
   final String? assignmentConflictCode;
   final String? activationConflictCode;
   final String? creationConflictCode;
   final bool successfulActivationWithRefreshFailure;
+  final bool reverseUnavailable;
   Map<String, Object?>? lastLocationQuery;
   Map<String, Object?>? lastReverseQuery;
   Map<String, dynamic>? assignmentBody;
@@ -1566,6 +1633,13 @@ class _CentralAdminApi extends ApiClient {
     }
     if (path == '/api/admin/locations/reverse') {
       lastReverseQuery = Map<String, Object?>.from(query);
+      if (reverseUnavailable) {
+        throw const ApiProblem(
+          status: 503,
+          code: 'location_search_unavailable',
+          message: 'Unavailable',
+        );
+      }
       return const {
         'resultKey': 'way:200',
         'displayName': 'Zmaja od Bosne 12, Sarajevo, Bosna i Hercegovina',

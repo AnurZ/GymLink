@@ -301,18 +301,26 @@ internal sealed class ChatService(
             return existing;
         }
 
-        var contentType = ImageUploadValidator.Validate(
+        var contentType = ImageUploadValidator.ValidateDetectedContent(
             upload.Content,
-            upload.ContentType,
             upload.FileName,
             Message.MaximumImageFileSizeBytes,
             "invalid_chat_image");
+        var normalizedFileName = Path.ChangeExtension(
+            upload.FileName,
+            contentType switch
+            {
+                "image/jpeg" => ".jpg",
+                "image/png" => ".png",
+                "image/webp" => ".webp",
+                _ => throw new InvalidOperationException("Unsupported detected chat image type."),
+            });
         await using var content = new MemoryStream(upload.Content, writable: false);
         var stored = await fileStorage.SaveAsync(
             FileStorageArea.ChatImages,
             content,
             contentType,
-            upload.FileName,
+            normalizedFileName,
             cancellationToken);
 
         try

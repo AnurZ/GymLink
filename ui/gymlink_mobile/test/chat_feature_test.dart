@@ -384,9 +384,9 @@ void main() {
           home: ChatDetailScreen(
             conversation: conversation,
             pickImage: () async => XFile.fromData(
-              _pngBytes(),
-              name: 'chat.png',
-              mimeType: 'image/png',
+              _jpegBytes(),
+              name: 'downloaded.webp',
+              mimeType: 'image/webp',
             ),
           ),
         ),
@@ -397,9 +397,45 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repository.sentImageCount, 1);
+    expect(repository.sentImageFileName, endsWith('.jpg'));
+    expect(repository.sentImageContentType, 'image/jpeg');
+    expect(
+      normalizeChatImage(_jpegBytes(), 'downloaded.webp')!.fileName,
+      'downloaded.jpg',
+    );
     expect(find.byKey(const Key('chat-image-picker')), findsOneWidget);
     expect(find.byType(Image), findsOneWidget);
     expect(find.text('Slika'), findsNothing);
+  });
+
+  testWidgets('gallery read failure uses a concise snackbar', (tester) async {
+    final conversation = _conversation('conversation');
+    final repository = _FakeChatRepository(conversations: [conversation]);
+    final realtime = _FakeChatRealtime();
+    final controller = ChatController(repository, realtime, AuthController());
+    addTearDown(realtime.close);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: controller,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: ChatDetailScreen(
+            conversation: conversation,
+            pickImage: () async => throw StateError('picker failed'),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('chat-image-picker')));
+    await tester.pump();
+
+    expect(
+      find.text('Sliku nije moguće otvoriti. Odaberite drugu fotografiju.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('picker failed'), findsNothing);
   });
 
   testWidgets('Member and Trainer shells expose the conversation feature', (
@@ -587,6 +623,8 @@ final class _FakeChatRepository implements ChatRepositoryGateway {
   int _historyIndex = 0;
   final List<String> sentClientIds = [];
   int sentImageCount = 0;
+  String? sentImageFileName;
+  String? sentImageContentType;
   final List<(DateTime?, String?)> messageCursors = [];
 
   @override
@@ -662,6 +700,8 @@ final class _FakeChatRepository implements ChatRepositoryGateway {
     String contentType,
   ) async {
     sentImageCount++;
+    sentImageFileName = fileName;
+    sentImageContentType = contentType;
     return ChatMessageModel(
       id: 'saved-$clientMessageId',
       conversationId: conversationId,
@@ -682,6 +722,8 @@ Uint8List _pngBytes() => Uint8List.fromList(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   ),
 );
+
+Uint8List _jpegBytes() => Uint8List.fromList([0xff, 0xd8, 0xff, 0x00]);
 
 final class _FakeChatRealtime implements ChatRealtimeGateway {
   final _messages = StreamController<ChatMessageModel>.broadcast();

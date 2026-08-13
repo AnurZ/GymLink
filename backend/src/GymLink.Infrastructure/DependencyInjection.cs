@@ -74,12 +74,7 @@ public static class DependencyInjection
         services.AddOptions<GeocodingOptions>()
             .Bind(configuration.GetSection(GeocodingOptions.SectionName))
             .Validate(
-                options => !options.Enabled ||
-                    (Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out _) &&
-                     !string.IsNullOrWhiteSpace(options.UserAgent) &&
-                     options.TimeoutSeconds is > 0 and <= 60 &&
-                     options.CacheHours is > 0 and <= 168 &&
-                     options.MinimumIntervalMilliseconds >= 1000),
+                options => !options.Enabled || options.IsValid(),
                 "Enabled geocoding configuration is incomplete or invalid.")
             .ValidateOnStart();
         services.AddScoped<ILocationSearchService, NominatimLocationSearchService>();

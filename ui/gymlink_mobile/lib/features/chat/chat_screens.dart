@@ -14,6 +14,58 @@ import 'chat_repository.dart';
 
 final _chatTime = DateFormat('dd.MM. HH:mm');
 
+final class NormalizedChatImage {
+  const NormalizedChatImage({
+    required this.bytes,
+    required this.fileName,
+    required this.contentType,
+  });
+
+  final Uint8List bytes;
+  final String fileName;
+  final String contentType;
+}
+
+NormalizedChatImage? normalizeChatImage(Uint8List bytes, String originalName) {
+  final String? contentType;
+  final String extension;
+  if (bytes.length >= 3 &&
+      bytes[0] == 0xff &&
+      bytes[1] == 0xd8 &&
+      bytes[2] == 0xff) {
+    contentType = 'image/jpeg';
+    extension = 'jpg';
+  } else if (bytes.length >= 8 &&
+      bytes[0] == 0x89 &&
+      bytes[1] == 0x50 &&
+      bytes[2] == 0x4e &&
+      bytes[3] == 0x47 &&
+      bytes[4] == 0x0d &&
+      bytes[5] == 0x0a &&
+      bytes[6] == 0x1a &&
+      bytes[7] == 0x0a) {
+    contentType = 'image/png';
+    extension = 'png';
+  } else if (bytes.length >= 12 &&
+      String.fromCharCodes(bytes.sublist(0, 4)) == 'RIFF' &&
+      String.fromCharCodes(bytes.sublist(8, 12)) == 'WEBP') {
+    contentType = 'image/webp';
+    extension = 'webp';
+  } else {
+    return null;
+  }
+
+  final rawBaseName = originalName.trim().split(RegExp(r'[/\\]')).last;
+  final dot = rawBaseName.lastIndexOf('.');
+  final baseName = (dot > 0 ? rawBaseName.substring(0, dot) : rawBaseName)
+      .replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+  return NormalizedChatImage(
+    bytes: bytes,
+    fileName: '${baseName.isEmpty ? 'chat' : baseName}.$extension',
+    contentType: contentType,
+  );
+}
+
 Future<void> openChatForReservation(
   BuildContext context,
   String reservationId,
@@ -340,50 +392,52 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
   }
 
   Future<void> _sendImage() async {
-    final image =
-        await (widget.pickImage?.call() ??
-            ImagePicker().pickImage(
-              source: ImageSource.gallery,
-              maxWidth: 1600,
-              maxHeight: 1600,
-              imageQuality: 80,
-            ));
-    if (image == null || !mounted) return;
-    final pickedName = image.name.trim();
-    final extension = pickedName.contains('.')
-        ? pickedName.split('.').last.toLowerCase()
-        : '';
-    final contentType = switch (image.mimeType?.toLowerCase()) {
-      'image/jpeg' => 'image/jpeg',
-      'image/png' => 'image/png',
-      'image/webp' => 'image/webp',
-      _ => switch (extension) {
-        'jpg' || 'jpeg' => 'image/jpeg',
-        'png' => 'image/png',
-        'webp' => 'image/webp',
-        _ => null,
-      },
-    };
-    if (contentType == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Odaberite JPG, PNG ili WebP sliku.')),
+    try {
+      final image =
+          await (widget.pickImage?.call() ??
+              ImagePicker().pickImage(
+                source: ImageSource.gallery,
+                maxWidth: 1600,
+                maxHeight: 1600,
+                imageQuality: 80,
+              ));
+      if (image == null || !mounted) return;
+      final bytes = await image.readAsBytes();
+      if (!mounted) return;
+      if (bytes.length > 5 * 1024 * 1024) {
+        _showImageError('Slika mora biti manja od 5 MB.');
+        return;
+      }
+      final normalized = normalizeChatImage(bytes, image.name);
+      if (normalized == null) {
+        _showImageError(
+          'Odabranu sliku nije moguće obraditi. Odaberite JPG, PNG ili WebP fotografiju.',
+        );
+        return;
+      }
+      final sent = await _chatController.sendImage(
+        normalized.bytes,
+        normalized.fileName,
+        normalized.contentType,
       );
-      return;
-    }
-    final fileName = extension.isNotEmpty
-        ? pickedName
-        : 'chat.${contentType == 'image/jpeg' ? 'jpg' : contentType.split('/').last}';
-    final bytes = await image.readAsBytes();
-    if (bytes.length > 5 * 1024 * 1024) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Slika mora biti manja od 5 MB.')),
+      if (!sent && mounted) {
+        _showImageError(
+          _chatController.imageUploadError ??
+              'Slika trenutno nije poslana. Pokušajte ponovo.',
         );
       }
-      return;
+    } catch (_) {
+      if (mounted) {
+        _showImageError(
+          'Sliku nije moguće otvoriti. Odaberite drugu fotografiju.',
+        );
+      }
     }
-    await _chatController.sendImage(bytes, fileName, contentType);
   }
+
+  void _showImageError(String message) => ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(content: Text(message)));
 
   @override
   Widget build(BuildContext context) => Consumer<ChatController>(

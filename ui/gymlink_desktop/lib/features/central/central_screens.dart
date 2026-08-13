@@ -684,6 +684,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
   );
   Map<String, dynamic>? _city;
   List<Map<String, dynamic>> _locationResults = const [];
+  List<Map<String, dynamic>> _cities = const [];
   List<Map<String, dynamic>> _equipment = const [];
   List<Map<String, dynamic>> _trainingTypes = const [];
   final Set<String> _equipmentIds = {};
@@ -696,6 +697,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
   bool _loadingSetup = true;
   bool _locationLoading = false;
   bool _reverseLocationLoading = false;
+  bool _manualLocationMode = false;
   bool _adminLoading = false;
   String? _locationError;
   LatLng? _location;
@@ -740,11 +742,13 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
           '/api/admin/reference-data/training-types',
           query: {'isActive': true, 'pageSize': 100},
         ),
+        _loadActiveBihCities(api),
       ]);
       if (!mounted) return;
       setState(() {
-        _equipment = results[0].items;
-        _trainingTypes = results[1].items;
+        _equipment = (results[0] as PagedData).items;
+        _trainingTypes = (results[1] as PagedData).items;
+        _cities = results[2] as List<Map<String, dynamic>>;
         _loadingSetup = false;
       });
     } catch (error) {
@@ -755,6 +759,39 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
         });
       }
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadActiveBihCities(ApiClient api) async {
+    final countries = await api.page(
+      '/api/admin/reference-data/countries',
+      query: {'query': 'BIH', 'isActive': true, 'pageSize': 10},
+    );
+    final country = countries.items.where(
+      (item) => item['code']?.toString().toUpperCase() == 'BIH',
+    );
+    if (country.isEmpty) return const [];
+
+    final result = <Map<String, dynamic>>[];
+    var page = 1;
+    while (true) {
+      final cities = await api.page(
+        '/api/admin/reference-data/cities',
+        query: {
+          'countryId': country.first['id'],
+          'isActive': true,
+          'page': page,
+          'pageSize': 100,
+        },
+      );
+      result.addAll(cities.items);
+      if (page * cities.pageSize >= cities.totalCount) break;
+      page++;
+    }
+    result.sort(
+      (left, right) =>
+          left['name'].toString().compareTo(right['name'].toString()),
+    );
+    return result;
   }
 
   Future<void> _searchLocation() async {
@@ -792,16 +829,20 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
         setState(() {
           _locationResults = const [];
           _locationError = error.code == 'location_search_unavailable'
-              ? 'Pretraga lokacija trenutno nije dostupna. Pokušajte ponovo.'
+              ? 'Online pretraga trenutno nije dostupna. Unesite grad i adresu ručno te označite lokaciju na mapi.'
               : error.message;
+          if (error.code == 'location_search_unavailable') {
+            _manualLocationMode = true;
+          }
         });
       }
     } catch (_) {
       if (mounted) {
-        setState(
-          () => _locationError =
-              'Pretraga lokacija trenutno nije dostupna. Pokušajte ponovo.',
-        );
+        setState(() {
+          _locationError =
+              'Online pretraga trenutno nije dostupna. Unesite grad i adresu ručno te označite lokaciju na mapi.';
+          _manualLocationMode = true;
+        });
       }
     } finally {
       if (mounted) setState(() => _locationLoading = false);
@@ -822,6 +863,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
       _locationResults = const [];
       _locationError = null;
       _reverseLocationLoading = false;
+      _manualLocationMode = false;
     });
     _mapController.move(point, 15);
   }
@@ -831,8 +873,10 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
     final requestVersion = ++_locationRequestVersion;
     setState(() {
       _location = point;
-      _city = null;
-      _address.clear();
+      if (!_manualLocationMode) {
+        _city = null;
+        _address.clear();
+      }
       _locationResults = const [];
       _locationError = null;
       _reverseLocationLoading = true;
@@ -855,6 +899,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
         _city = {'id': result['cityId'], 'name': result['cityName']};
         _address.text = result['address'].toString();
         _locationError = null;
+        _manualLocationMode = false;
       });
     } on ApiProblem catch (error) {
       if (!mounted || requestVersion != _locationRequestVersion) return;
@@ -863,18 +908,23 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
           'location_outside_bih' =>
             'Odabrana lokacija mora biti u Bosni i Hercegovini.',
           'location_not_resolved' =>
-            'Za ovu tačku nije pronađena upotrebljiva adresa. Izaberite drugu lokaciju.',
+            'Adresa nije automatski pronađena. Unesite grad i adresu ručno; označene koordinate su sačuvane.',
           'location_search_unavailable' =>
-            'Pronalaženje adrese trenutno nije dostupno. Pokušajte ponovo.',
+            'Automatsko pronalaženje adrese trenutno nije dostupno. Unesite grad i adresu ručno; označene koordinate su sačuvane.',
           _ => error.message,
         };
+        if (error.code == 'location_not_resolved' ||
+            error.code == 'location_search_unavailable') {
+          _manualLocationMode = true;
+        }
       });
     } catch (_) {
       if (!mounted || requestVersion != _locationRequestVersion) return;
-      setState(
-        () => _locationError =
-            'Pronalaženje adrese trenutno nije dostupno. Pokušajte ponovo.',
-      );
+      setState(() {
+        _locationError =
+            'Automatsko pronalaženje adrese trenutno nije dostupno. Unesite grad i adresu ručno; označene koordinate su sačuvane.';
+        _manualLocationMode = true;
+      });
     } finally {
       if (mounted && requestVersion == _locationRequestVersion) {
         setState(() => _reverseLocationLoading = false);
@@ -1290,12 +1340,58 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
         const SizedBox(height: 6),
         Text(_locationError!, style: const TextStyle(color: Colors.red)),
       ],
+      const SizedBox(height: 4),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          key: const Key('gym-manual-location-toggle'),
+          onPressed: () => setState(() {
+            _manualLocationMode = !_manualLocationMode;
+            _locationResults = const [];
+          }),
+          icon: Icon(
+            _manualLocationMode
+                ? Icons.public
+                : Icons.edit_location_alt_outlined,
+          ),
+          label: Text(
+            _manualLocationMode
+                ? 'Koristi online pretragu'
+                : 'Unesi lokaciju ručno',
+          ),
+        ),
+      ),
+      if (_manualLocationMode) ...[
+        const SizedBox(height: 4),
+        DropdownMenu<String>(
+          key: const Key('gym-manual-city'),
+          expandedInsets: EdgeInsets.zero,
+          enableFilter: true,
+          enableSearch: true,
+          label: const Text('Grad/općina'),
+          hintText: 'Pretražite i odaberite grad',
+          initialSelection: _city?['id']?.toString(),
+          dropdownMenuEntries: _cities
+              .map(
+                (city) => DropdownMenuEntry<String>(
+                  value: city['id'].toString(),
+                  label: city['name'].toString(),
+                ),
+              )
+              .toList(growable: false),
+          onSelected: (id) => setState(() {
+            _city = id == null
+                ? null
+                : _cities.firstWhere((city) => city['id'].toString() == id);
+          }),
+        ),
+      ],
       const SizedBox(height: 10),
       TextFormField(
         controller: _address,
         maxLines: 2,
         decoration: InputDecoration(
-          labelText: 'Odabrana adresa',
+          labelText: _manualLocationMode ? 'Adresa' : 'Odabrana adresa',
           prefixIcon: const Icon(Icons.location_on_outlined),
           errorText: _serverError('Address'),
         ),
@@ -1303,6 +1399,13 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
       if (_city != null) ...[
         const SizedBox(height: 6),
         Text('Grad/općina: ${_city!['name']}'),
+      ],
+      if (_manualLocationMode) ...[
+        const SizedBox(height: 6),
+        const Text(
+          'Odaberite grad, unesite adresu i kliknite tačnu lokaciju na mapi.',
+          style: TextStyle(fontSize: 12, color: Colors.black54),
+        ),
       ],
     ],
   );

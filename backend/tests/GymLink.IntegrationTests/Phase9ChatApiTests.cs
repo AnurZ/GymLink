@@ -217,7 +217,11 @@ public sealed class Phase9ChatApiTests
                         invalidImageForm)).StatusCode);
             }
             var realtimeMessageId = Guid.NewGuid();
-            using var imageForm = CreateImageForm(realtimeMessageId);
+            using var imageForm = CreateImageForm(
+                realtimeMessageId,
+                [0xFF, 0xD8, 0xFF, 0x00],
+                "downloaded.webp",
+                "image/webp");
             var realtimeSend = await client.PostAsync(
                 $"/api/me/conversations/{opened.Id}/images",
                 imageForm);
@@ -231,7 +235,11 @@ public sealed class Phase9ChatApiTests
             Assert.Equal(realtimeMessageId, delivered.ClientMessageId);
             Assert.Equal(imageMessage.ImageUrl, delivered.ImageUrl);
 
-            using var duplicateImageForm = CreateImageForm(realtimeMessageId);
+            using var duplicateImageForm = CreateImageForm(
+                realtimeMessageId,
+                [0xFF, 0xD8, 0xFF, 0x00],
+                "downloaded.webp",
+                "image/webp");
             var duplicateImage = await client.PostAsync(
                 $"/api/me/conversations/{opened.Id}/images",
                 duplicateImageForm);
@@ -243,7 +251,7 @@ public sealed class Phase9ChatApiTests
             Authorize(client, trainer);
             var imageDownload = await client.GetAsync(imageMessage.ImageUrl);
             imageDownload.EnsureSuccessStatusCode();
-            Assert.Equal("image/png", imageDownload.Content.Headers.ContentType?.MediaType);
+            Assert.Equal("image/jpeg", imageDownload.Content.Headers.ContentType?.MediaType);
             Assert.True(imageDownload.Headers.CacheControl?.Private);
             Assert.Equal(
                 TimeSpan.FromDays(365),
@@ -652,14 +660,16 @@ public sealed class Phase9ChatApiTests
 
     private static MultipartFormDataContent CreateImageForm(
         Guid clientMessageId,
-        byte[]? content = null)
+        byte[]? content = null,
+        string fileName = "chat.png",
+        string contentType = "image/png")
     {
         var form = new MultipartFormDataContent();
         form.Add(new StringContent(clientMessageId.ToString()), "clientMessageId");
         var image = new ByteArrayContent(
             content ?? [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-        image.Headers.ContentType = new("image/png");
-        form.Add(image, "file", "chat.png");
+        image.Headers.ContentType = new(contentType);
+        form.Add(image, "file", fileName);
         return form;
     }
 }

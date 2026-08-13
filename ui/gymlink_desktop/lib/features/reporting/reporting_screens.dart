@@ -23,6 +23,35 @@ const statisticsPalette = <Color>[
   Color(0xFF16A34A),
 ];
 
+final class NiceAxisScale {
+  const NiceAxisScale({required this.interval, required this.maximum});
+
+  final double interval;
+  final double maximum;
+}
+
+NiceAxisScale reservationCountAxis(int maximumCount) {
+  if (maximumCount <= 0) {
+    return const NiceAxisScale(interval: 1, maximum: 4);
+  }
+  final rawInterval = maximumCount / 4;
+  final magnitude = math
+      .pow(10, (math.log(rawInterval) / math.ln10).floor())
+      .toDouble();
+  final normalized = rawInterval / magnitude;
+  final niceMultiplier = normalized <= 1
+      ? 1
+      : normalized <= 2
+      ? 2
+      : normalized <= 5
+      ? 5
+      : 10;
+  final interval = niceMultiplier * magnitude;
+  var maximum = (maximumCount / interval).ceil() * interval;
+  if (maximum <= maximumCount) maximum += interval;
+  return NiceAxisScale(interval: interval, maximum: maximum);
+}
+
 class GymAdminReportsScreen extends StatefulWidget {
   const GymAdminReportsScreen({super.key, this.saveReport, this.printReport});
 
@@ -425,6 +454,7 @@ class _CentralStatisticsScreenState extends State<CentralStatisticsScreen> {
         height: 390,
         child: _SectionCard(
           title: 'Rezervacije po mjesecima',
+          subtitle: _reportingPeriod(_trends?['window']),
           loading: _trendsLoading,
           error: _trendsError,
           onRetry: _loadTrends,
@@ -432,6 +462,7 @@ class _CentralStatisticsScreenState extends State<CentralStatisticsScreen> {
             data: _trends == null
                 ? null
                 : {'items': _trends!['reservationsByMonth']},
+            reservationCountStyle: true,
           ),
         ),
       ),
@@ -580,8 +611,12 @@ class _MetricCard extends StatelessWidget {
 }
 
 class _MonthlyBarChart extends StatelessWidget {
-  const _MonthlyBarChart({required this.data});
+  const _MonthlyBarChart({
+    required this.data,
+    this.reservationCountStyle = false,
+  });
   final Map<String, dynamic>? data;
+  final bool reservationCountStyle;
 
   @override
   Widget build(BuildContext context) {
@@ -590,18 +625,49 @@ class _MonthlyBarChart extends StatelessWidget {
         items.every((item) => (item['count'] as num? ?? 0) == 0)) {
       return const EmptyState('Nema podataka za posljednjih šest mjeseci.');
     }
+    final maximumCount = items
+        .map((item) => (item['count'] as num? ?? 0).toInt())
+        .reduce(math.max);
+    final scale = reservationCountAxis(maximumCount);
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 18, 12, 4),
       child: BarChart(
         BarChartData(
-          maxY:
-              items
-                  .map((x) => (x['count'] as num).toDouble())
-                  .reduce(math.max) *
-              1.2,
+          maxY: reservationCountStyle ? scale.maximum : maximumCount * 1.2,
           borderData: FlBorderData(show: false),
-          gridData: const FlGridData(show: true, drawVerticalLine: false),
-          barTouchData: BarTouchData(enabled: true),
+          gridData: FlGridData(
+            show: true,
+            drawVerticalLine: false,
+            horizontalInterval: reservationCountStyle ? scale.interval : null,
+            getDrawingHorizontalLine: (_) => FlLine(
+              color: Theme.of(context).dividerColor.withValues(alpha: .42),
+              strokeWidth: 1,
+            ),
+          ),
+          barTouchData: BarTouchData(
+            enabled: true,
+            touchTooltipData: BarTouchTooltipData(
+              fitInsideHorizontally: true,
+              fitInsideVertically: true,
+              tooltipPadding: reservationCountStyle
+                  ? const EdgeInsets.symmetric(horizontal: 4, vertical: 2)
+                  : null,
+              tooltipMargin: reservationCountStyle ? 4 : null,
+              getTooltipColor: reservationCountStyle
+                  ? (_) => Colors.transparent
+                  : null,
+              getTooltipItem: reservationCountStyle
+                  ? (group, groupIndex, rod, rodIndex) => BarTooltipItem(
+                      rod.toY.toInt().toString(),
+                      TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    )
+                  : null,
+            ),
+          ),
           titlesData: FlTitlesData(
             topTitles: const AxisTitles(
               sideTitles: SideTitles(showTitles: false),
@@ -609,6 +675,25 @@ class _MonthlyBarChart extends StatelessWidget {
             rightTitles: const AxisTitles(
               sideTitles: SideTitles(showTitles: false),
             ),
+            leftTitles: reservationCountStyle
+                ? AxisTitles(
+                    axisNameSize: 24,
+                    axisNameWidget: const Text(
+                      'Broj rezervacija',
+                      key: Key('reservations-axis-title'),
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 38,
+                      interval: scale.interval,
+                      getTitlesWidget: (value, meta) => SideTitleWidget(
+                        meta: meta,
+                        child: Text(value.toInt().toString()),
+                      ),
+                    ),
+                  )
+                : const AxisTitles(sideTitles: SideTitles(showTitles: true)),
             bottomTitles: AxisTitles(
               sideTitles: SideTitles(
                 showTitles: true,
@@ -631,13 +716,20 @@ class _MonthlyBarChart extends StatelessWidget {
             for (var i = 0; i < items.length; i++)
               BarChartGroupData(
                 x: i,
+                showingTooltipIndicators:
+                    reservationCountStyle &&
+                        (items[i]['count'] as num).toInt() > 0
+                    ? const [0]
+                    : const [],
                 barRods: [
                   BarChartRodData(
                     toY: (items[i]['count'] as num).toDouble(),
                     width: 34,
-                    color: statisticsPalette[i % statisticsPalette.length],
+                    color: reservationCountStyle
+                        ? statisticsPalette.first
+                        : statisticsPalette[i % statisticsPalette.length],
                     borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(4),
+                      top: Radius.circular(8),
                     ),
                   ),
                 ],
@@ -704,12 +796,14 @@ class _SectionCard extends StatelessWidget {
     required this.error,
     required this.onRetry,
     required this.child,
+    this.subtitle,
   });
   final String title;
   final bool loading;
   final Object? error;
   final VoidCallback onRetry;
   final Widget child;
+  final String? subtitle;
 
   @override
   Widget build(BuildContext context) => Card(
@@ -724,6 +818,14 @@ class _SectionCard extends StatelessWidget {
               context,
             ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
           ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              subtitle!,
+              key: const Key('statistics-reporting-window'),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
           const SizedBox(height: 8),
           Expanded(
             child: _Section(
@@ -780,6 +882,17 @@ List<Map<String, dynamic>> _items(Object? value) => (value as List? ?? const [])
     .whereType<Map>()
     .map((item) => Map<String, dynamic>.from(item))
     .toList(growable: false);
+
+String? _reportingPeriod(Object? value) {
+  if (value is! Map) return null;
+  final start = DateTime.tryParse(value['windowStart']?.toString() ?? '');
+  final end = DateTime.tryParse(value['windowEnd']?.toString() ?? '');
+  if (start == null || end == null) return null;
+  String format(DateTime date) =>
+      '${date.day.toString().padLeft(2, '0')}.'
+      '${date.month.toString().padLeft(2, '0')}.${date.year}.';
+  return 'Period: ${format(start)} – ${format(end)}';
+}
 
 const _monthLabels = [
   'Jan',
