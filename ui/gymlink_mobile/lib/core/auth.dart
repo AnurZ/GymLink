@@ -41,10 +41,12 @@ final class AuthController extends ChangeNotifier implements AuthTokenSource {
   final List<AuthenticatedConnection> _connections = [];
   UserSession? _session;
   bool _initializing = true;
+  bool _signingOut = false;
   ApiProblem? _error;
 
   UserSession? get session => _session;
   bool get initializing => _initializing;
+  bool get signingOut => _signingOut;
   ApiProblem? get error => _error;
   bool get isAuthenticated => _session != null;
 
@@ -142,6 +144,8 @@ final class AuthController extends ChangeNotifier implements AuthTokenSource {
   }
 
   Future<void> logout() async {
+    _signingOut = true;
+    notifyListeners();
     final refreshToken = _session?.refreshToken;
     try {
       if (refreshToken != null) {
@@ -152,6 +156,8 @@ final class AuthController extends ChangeNotifier implements AuthTokenSource {
       }
     } finally {
       await invalidate();
+      _signingOut = false;
+      notifyListeners();
     }
   }
 

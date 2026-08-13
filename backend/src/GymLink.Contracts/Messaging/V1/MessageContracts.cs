@@ -21,9 +21,12 @@ public sealed record PasswordResetRequestedV1(
     Guid UserId,
     Guid ChallengeId);
 
+public sealed record WelcomeEmailRequestedV1(Guid UserId);
+
 public static class MessageContractNames
 {
     public const int Version1 = 1;
     public const string NotificationRequestedV1 = "notification.requested.v1";
     public const string PasswordResetRequestedV1 = "password-reset.requested.v1";
+    public const string WelcomeEmailRequestedV1 = "welcome-email.requested.v1";
 }

@@ -19,6 +19,7 @@ void main() {
     final api = _api((request) async {
       expect(request.method, 'GET');
       expect(request.url.path, '/api/me/recommendations');
+      expect(request.url.queryParameters['limit'], '6');
       return _jsonResponse(_feedJson());
     });
 
@@ -117,6 +118,23 @@ void main() {
     });
 
     expect(RecommendationFeed.fromJson(json).items, hasLength(2));
+  });
+
+  test('load and refresh both request six recommendations', () async {
+    final requests = <http.Request>[];
+    final repository = RecommendationRepository(
+      _api((request) async {
+        requests.add(request);
+        return _jsonResponse(_feedJson());
+      }),
+    );
+
+    await repository.getFeed();
+    await repository.getFeed(force: true);
+
+    expect(requests, hasLength(2));
+    expect(requests[0].url.queryParameters['limit'], '6');
+    expect(requests[1].url.queryParameters['limit'], '6');
   });
 }
 

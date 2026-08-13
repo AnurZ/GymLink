@@ -2,6 +2,7 @@ using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.Messaging;
+using GymLink.Application.Memberships;
 using GymLink.Application.Recommendations;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
@@ -22,6 +23,7 @@ internal sealed class PaymentService(
     IRequestMetadata requestMetadata,
     IConversationProvisioner conversationProvisioner,
     IConversationRealtimeNotifier conversationNotifier,
+    IMemberAssignmentActivator memberAssignmentActivator,
     IRecommendationActivityRecorder recommendationActivity,
     IFakePaymentAvailability fakePayments,
     TimeProvider timeProvider,
@@ -633,7 +635,12 @@ internal sealed class PaymentService(
             if (membership.Status == MembershipStatus.PendingPayment)
             {
                 membership.ActivateFromPayment(payment.Id, now);
-                await ActivateMemberAssignmentAsync(payment, now, cancellationToken);
+                await memberAssignmentActivator.ActivateAsync(
+                    payment.TenantId,
+                    payment.UserId,
+                    now,
+                    "Membership payment confirmed.",
+                    cancellationToken);
                 await recommendationActivity.RecordWorkflowAsync(
                     payment.UserId,
                     payment.TenantId,
@@ -662,38 +669,6 @@ internal sealed class PaymentService(
         }
 
         return null;
-    }
-
-    private async Task ActivateMemberAssignmentAsync(
-        Payment payment,
-        DateTime now,
-        CancellationToken cancellationToken)
-    {
-        var assignment = await dbContext.UserGymAssignments.IgnoreQueryFilters()
-            .SingleOrDefaultAsync(
-                x => x.TenantId == payment.TenantId &&
-                     x.UserId == payment.UserId &&
-                     x.Role == RoleNames.Member,
-                cancellationToken);
-        if (assignment is null)
-        {
-            dbContext.UserGymAssignments.Add(new UserGymAssignment
-            {
-                TenantId = payment.TenantId,
-                UserId = payment.UserId,
-                Role = RoleNames.Member,
-                Status = AssignmentStatus.Active,
-                StartsAtUtc = now,
-                Reason = "Membership payment confirmed.",
-            });
-            return;
-        }
-
-        assignment.Status = AssignmentStatus.Active;
-        assignment.StartsAtUtc = now;
-        assignment.EndsAtUtc = null;
-        assignment.ApprovedByUserId = null;
-        assignment.Reason = "Membership payment confirmed.";
     }
 
     private async Task ExpireReservationAsync(

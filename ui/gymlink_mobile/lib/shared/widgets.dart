@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/api.dart';
 import '../core/theme.dart';
+import 'cached_network_image_view.dart';
 
 class TrainerImageAvatar extends StatelessWidget {
   const TrainerImageAvatar({
@@ -39,13 +40,12 @@ class TrainerImageAvatar extends StatelessWidget {
     return ClipOval(
       child: SizedBox.square(
         dimension: radius * 2,
-        child: imageUrl == null
-            ? fallback
-            : Image.network(
-                imageUrl!,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => fallback,
-              ),
+        child: CachedNetworkImageView(
+          imageUrl: imageUrl,
+          fallback: fallback,
+          decodeWidth: (radius * 2).round(),
+          decodeHeight: (radius * 2).round(),
+        ),
       ),
     );
   }

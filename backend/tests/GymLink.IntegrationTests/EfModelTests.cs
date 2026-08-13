@@ -275,6 +275,23 @@ public sealed class EfModelTests
             foreignKey => Assert.Equal(DeleteBehavior.Restrict, foreignKey.DeleteBehavior));
 
         var message = context.Model.FindEntityType(typeof(Message))!;
+        Assert.True(message.FindProperty(nameof(Message.ImageStorageKey))!.IsNullable);
+        Assert.Equal(
+            Message.MaximumImageStorageKeyLength,
+            message.FindProperty(nameof(Message.ImageStorageKey))!.GetMaxLength());
+        Assert.True(message.FindProperty(nameof(Message.ImageContentType))!.IsNullable);
+        Assert.Equal(
+            32,
+            message.FindProperty(nameof(Message.ImageContentType))!.GetMaxLength());
+        Assert.True(message.FindProperty(nameof(Message.ImageFileSizeBytes))!.IsNullable);
+        var designMessage = context.GetService<IDesignTimeModel>().Model
+            .FindEntityType(typeof(Message))!;
+        var constraintNames = designMessage.GetCheckConstraints()
+            .Select(x => x.Name)
+            .ToHashSet();
+        Assert.Contains("CK_Messages_ImageMetadata", constraintNames);
+        Assert.Contains("CK_Messages_ImageContentType", constraintNames);
+        Assert.Contains("CK_Messages_ImageFileSize", constraintNames);
         Assert.Contains(
             message.GetIndexes(),
             index => PropertyNames(index).SequenceEqual(

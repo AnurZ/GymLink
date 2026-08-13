@@ -17,6 +17,7 @@ internal sealed class MembershipRequestService(
     ITenantContext tenantContext,
     ITenantMutationScope tenantMutationScope,
     IIdentityAccountManager identityAccounts,
+    IMemberAssignmentActivator memberAssignmentActivator,
     IMembershipWorkflowEventRecorder eventRecorder,
     IRecommendationActivityRecorder recommendationActivity,
     TimeProvider timeProvider) : IMembershipRequestService
@@ -238,6 +239,15 @@ internal sealed class MembershipRequestService(
                     actorId,
                     now);
             dbContext.Memberships.Add(membership);
+            if (entity.PaymentMethod == MembershipPaymentMethod.PayInPerson)
+            {
+                await memberAssignmentActivator.ActivateAsync(
+                    tenantId,
+                    entity.MemberUserId,
+                    now,
+                    "Pay-in-person membership confirmed.",
+                    ct);
+            }
             await eventRecorder.RecordAsync(new MembershipWorkflowEventIntent(
                 "membership.approved",
                 membership.TenantId,

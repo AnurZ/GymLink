@@ -21,6 +21,10 @@ internal static class RabbitMqTopology
             settings.Exchange,
             MessageContractNames.PasswordResetRequestedV1),
         new(
+            settings.EmailQueue,
+            settings.Exchange,
+            MessageContractNames.WelcomeEmailRequestedV1),
+        new(
             settings.NotificationDeadLetterQueue,
             settings.DeadLetterExchange,
             MessageContractNames.NotificationRequestedV1),
@@ -28,6 +32,10 @@ internal static class RabbitMqTopology
             settings.EmailDeadLetterQueue,
             settings.DeadLetterExchange,
             MessageContractNames.PasswordResetRequestedV1),
+        new(
+            settings.EmailDeadLetterQueue,
+            settings.DeadLetterExchange,
+            MessageContractNames.WelcomeEmailRequestedV1),
     ];
 
     public static async Task DeclareAsync(

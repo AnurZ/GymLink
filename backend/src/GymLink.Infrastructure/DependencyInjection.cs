@@ -90,13 +90,14 @@ public static class DependencyInjection
                     options.RequestPath.StartsWith('/') &&
                     !options.RequestPath.EndsWith('/') &&
                     !string.IsNullOrWhiteSpace(options.GymRootPath) &&
+                    !string.IsNullOrWhiteSpace(options.ChatRootPath) &&
                     options.GymRequestPath.StartsWith('/') &&
                     !options.GymRequestPath.EndsWith('/') &&
                     !string.Equals(
                         options.RequestPath,
                         options.GymRequestPath,
                         StringComparison.OrdinalIgnoreCase),
-                "Valid and distinct Trainer/Gym file storage paths are required.")
+                "Valid Trainer/Gym/Chat file storage paths are required.")
             .ValidateOnStart();
         services.AddScoped<IFileStorage, FileSystemFileStorage>();
         AddStripePayments(services, configuration);

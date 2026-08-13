@@ -134,8 +134,8 @@ final class RecommendationRepository {
 
   Future<RecommendationFeed> getFeed({bool force = false}) async {
     final json = force
-        ? await _api.post('/api/me/recommendations/refresh?limit=10')
-        : await _api.get('/api/me/recommendations', query: {'limit': 10});
+        ? await _api.post('/api/me/recommendations/refresh?limit=6')
+        : await _api.get('/api/me/recommendations', query: {'limit': 6});
     return RecommendationFeed.fromJson(Map<String, dynamic>.from(json! as Map));
   }
 

@@ -27,6 +27,7 @@ internal sealed class DevelopmentDataSeeder(
 {
     private const string TrainerImageResourcePrefix =
         "GymLink.Infrastructure.Seeding.Assets.TrainerImages.";
+    private readonly List<string> supersededTrainerImageKeys = [];
 
     private static readonly DateTime MembershipRequestedAtUtc = Utc(2026, 7, 10, 10);
     private static readonly DateTime MembershipActivatedAtUtc = Utc(2026, 7, 15, 10);
@@ -150,6 +151,7 @@ internal sealed class DevelopmentDataSeeder(
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
+        await DeleteSupersededTrainerImagesAsync(cancellationToken);
 
         var memberships = new Dictionary<(string Member, string Gym), SeededMembership>();
         foreach (var definition in DevelopmentSeedCatalog.Memberships)
@@ -702,10 +704,14 @@ internal sealed class DevelopmentDataSeeder(
         SeedTrainer definition,
         CancellationToken cancellationToken)
     {
-        if (trainer.ImageUrl is not null)
+        if (trainer.ImageUrl is not null &&
+            trainer.ImageContentType == "image/jpeg" &&
+            trainer.ImageFileSizeBytes is > 0 and <= 150 * 1024)
         {
             return;
         }
+
+        var supersededStorageKey = trainer.ImageStorageKey;
 
         var resourceName = TrainerImageResourcePrefix + definition.ImageAssetName;
         await using var content = typeof(DevelopmentDataSeeder).Assembly
@@ -716,15 +722,34 @@ internal sealed class DevelopmentDataSeeder(
         var saved = await fileStorage.SaveAsync(
             FileStorageArea.TrainerImages,
             content,
-            "image/png",
+            "image/jpeg",
             definition.ImageAssetName,
             cancellationToken);
         trainer.SetImage(
             saved.StorageKey,
             saved.PublicUrl ?? throw new InvalidOperationException(
                 "Trainer seed image storage did not return a public URL."),
-            "image/png",
+            "image/jpeg",
             fileSizeBytes);
+        if (!string.IsNullOrWhiteSpace(supersededStorageKey) &&
+            !string.Equals(supersededStorageKey, saved.StorageKey, StringComparison.Ordinal))
+        {
+            supersededTrainerImageKeys.Add(supersededStorageKey);
+        }
+    }
+
+    private async Task DeleteSupersededTrainerImagesAsync(
+        CancellationToken cancellationToken)
+    {
+        foreach (var storageKey in supersededTrainerImageKeys.Distinct(StringComparer.Ordinal))
+        {
+            await fileStorage.DeleteAsync(
+                FileStorageArea.TrainerImages,
+                storageKey,
+                cancellationToken);
+        }
+
+        supersededTrainerImageKeys.Clear();
     }
 
     private async Task<TrainerServiceOffering> FindOrCreateOfferingAsync(

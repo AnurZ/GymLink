@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
+using GymLink.Application.Messaging;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Identity;
@@ -14,6 +15,8 @@ internal sealed class AuthenticationService(
     IAccessTokenIssuer tokenIssuer,
     IApplicationTransaction transaction,
     ICurrentUser currentUser,
+    IOutboxWriter outbox,
+    IRequestMetadata requestMetadata,
     IRefreshTokenSettings refreshTokenSettings,
     TimeProvider timeProvider) : IAuthenticationService
 {
@@ -42,6 +45,10 @@ internal sealed class AuthenticationService(
 
             var account = await accounts.FindByIdAsync(userId, token)
                 ?? throw new ConflictException("registration_failed", "The account could not be created.");
+            outbox.AddWelcomeEmail(
+                userId,
+                timeProvider.GetUtcNow().UtcDateTime,
+                requestMetadata.CorrelationId);
             return await CreateSessionAsync(account, null, token);
         }, cancellationToken);
 

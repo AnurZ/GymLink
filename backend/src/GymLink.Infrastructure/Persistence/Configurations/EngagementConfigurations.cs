@@ -56,6 +56,26 @@ internal sealed class MessageConfiguration : EntityConfiguration<Message>
     {
         ConfigureTenant(builder);
         builder.Property(x => x.Text).HasMaxLength(Message.MaximumTextLength).IsRequired();
+        builder.Property(x => x.ImageStorageKey)
+            .HasMaxLength(Message.MaximumImageStorageKeyLength);
+        builder.Property(x => x.ImageContentType).HasMaxLength(32);
+        builder.ToTable(table =>
+        {
+            table.HasCheckConstraint(
+                "CK_Messages_ImageMetadata",
+                "([ImageStorageKey] IS NULL AND [ImageContentType] IS NULL AND " +
+                "[ImageFileSizeBytes] IS NULL) OR " +
+                "([ImageStorageKey] IS NOT NULL AND [ImageContentType] IS NOT NULL AND " +
+                "[ImageFileSizeBytes] IS NOT NULL)");
+            table.HasCheckConstraint(
+                "CK_Messages_ImageContentType",
+                "[ImageContentType] IS NULL OR [ImageContentType] IN " +
+                "('image/jpeg', 'image/png', 'image/webp')");
+            table.HasCheckConstraint(
+                "CK_Messages_ImageFileSize",
+                $"[ImageFileSizeBytes] IS NULL OR ([ImageFileSizeBytes] > 0 AND " +
+                $"[ImageFileSizeBytes] <= {Message.MaximumImageFileSizeBytes})");
+        });
         builder.HasIndex(x => new { x.ConversationId, x.SentAtUtc, x.Id });
         builder.HasIndex(x => new
         {

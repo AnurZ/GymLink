@@ -80,7 +80,9 @@ class _TrainerAppointmentsScreenState extends State<TrainerAppointmentsScreen> {
       onRetry: _load,
       child: _items.isEmpty
           ? ListView(
+              padding: const EdgeInsets.all(16),
               children: const [
+                _AppointmentSortHint(),
                 SizedBox(
                   height: 500,
                   child: EmptyState(
@@ -93,40 +95,59 @@ class _TrainerAppointmentsScreenState extends State<TrainerAppointmentsScreen> {
             )
           : ListView(
               padding: const EdgeInsets.all(16),
-              children: _items
-                  .map(
-                    (item) => Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Card(
-                        child: ListTile(
-                          leading: const CircleAvatar(
-                            child: Icon(Icons.person),
-                          ),
-                          title: Text(item['memberName'].toString()),
-                          subtitle: Text(
-                            '${DateFormat('dd.MM.yyyy. HH:mm').format(DateTime.parse(item['startsAtUtc'].toString()).toLocal())}\n${item['offeringName']}',
-                          ),
-                          isThreeLine: true,
-                          trailing: StatusPill(
-                            enumLabel(item['status'], _reservationStatuses),
-                          ),
-                          onTap: () async {
-                            await Navigator.push(
-                              context,
-                              MaterialPageRoute<void>(
-                                builder: (_) =>
-                                    TrainerAppointmentDetails(item: item),
-                              ),
-                            );
-                            await _load();
-                          },
+              children: [
+                const _AppointmentSortHint(),
+                const SizedBox(height: 10),
+                ..._items.map(
+                  (item) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Card(
+                      child: ListTile(
+                        leading: const CircleAvatar(child: Icon(Icons.person)),
+                        title: Text(item['memberName'].toString()),
+                        subtitle: Text(
+                          '${DateFormat('dd.MM.yyyy. HH:mm').format(DateTime.parse(item['startsAtUtc'].toString()).toLocal())}\n${item['offeringName']}',
                         ),
+                        isThreeLine: true,
+                        trailing: StatusPill(
+                          enumLabel(item['status'], _reservationStatuses),
+                        ),
+                        onTap: () async {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  TrainerAppointmentDetails(item: item),
+                            ),
+                          );
+                          await _load();
+                        },
                       ),
                     ),
-                  )
-                  .toList(),
+                  ),
+                ),
+              ],
             ),
     ),
+  );
+}
+
+class _AppointmentSortHint extends StatelessWidget {
+  const _AppointmentSortHint();
+
+  @override
+  Widget build(BuildContext context) => Row(
+    key: const Key('trainer-appointments-sort-hint'),
+    children: [
+      Icon(Icons.sort, size: 18, color: Theme.of(context).colorScheme.outline),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(
+          'Sortirano po datumu: najnoviji termini prvo.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ),
+    ],
   );
 }
 

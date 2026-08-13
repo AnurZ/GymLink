@@ -174,6 +174,17 @@ public sealed class ConversationParticipant : TenantEntity
 public sealed class Message : TenantEntity
 {
     public const int MaximumTextLength = 2000;
+    public const int MaximumImageStorageKeyLength = 500;
+    public const long MaximumImageFileSizeBytes = 5 * 1024 * 1024;
+    public const string ImagePreviewText = "Slika";
+
+    private static readonly HashSet<string> AllowedImageContentTypes =
+        new(StringComparer.Ordinal)
+        {
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+        };
 
     private Message() { }
 
@@ -208,12 +219,74 @@ public sealed class Message : TenantEntity
         CreatedByUserId = senderUserId;
     }
 
+    public static Message CreateImage(
+        Guid tenantId,
+        Guid conversationId,
+        Guid senderUserId,
+        Guid clientMessageId,
+        string imageStorageKey,
+        string imageContentType,
+        long imageFileSizeBytes,
+        DateTime sentAtUtc)
+    {
+        var message = new Message(
+            tenantId,
+            conversationId,
+            senderUserId,
+            clientMessageId,
+            ImagePreviewText,
+            sentAtUtc);
+        message.SetImageMetadata(
+            imageStorageKey,
+            imageContentType,
+            imageFileSizeBytes);
+        return message;
+    }
+
     public Guid ConversationId { get; private set; }
     public Guid SenderUserId { get; private set; }
     public Guid ClientMessageId { get; private set; }
     public string Text { get; private set; } = string.Empty;
     public DateTime SentAtUtc { get; private set; }
     public DateTime? EditedAtUtc { get; private set; }
+    public string? ImageStorageKey { get; private set; }
+    public string? ImageContentType { get; private set; }
+    public long? ImageFileSizeBytes { get; private set; }
+
+    private void SetImageMetadata(
+        string storageKey,
+        string contentType,
+        long fileSizeBytes)
+    {
+        if (string.IsNullOrWhiteSpace(storageKey) ||
+            storageKey.Length > MaximumImageStorageKeyLength ||
+            Path.IsPathRooted(storageKey) ||
+            storageKey.Contains("..", StringComparison.Ordinal) ||
+            storageKey.Contains('\\'))
+        {
+            throw new DomainException(
+                "message_image_storage_key_invalid",
+                "The message image storage key is invalid.");
+        }
+
+        if (!AllowedImageContentTypes.Contains(contentType))
+        {
+            throw new DomainException(
+                "message_image_content_type_invalid",
+                "The message image content type is not supported.");
+        }
+
+        if (fileSizeBytes is <= 0 or > MaximumImageFileSizeBytes)
+        {
+            throw new DomainException(
+                "message_image_file_size_invalid",
+                "The message image file size is invalid.");
+        }
+
+        ImageStorageKey = storageKey;
+        ImageContentType = contentType;
+        ImageFileSizeBytes = fileSizeBytes;
+    }
 
     private static void EnsureRequired(Guid value, string parameterName)
     {

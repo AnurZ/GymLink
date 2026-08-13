@@ -22,6 +22,7 @@ public static class DependencyInjection
     public static IServiceCollection AddGymLinkPaymentWorkerApplication(
         this IServiceCollection services)
     {
+        services.AddScoped<IMemberAssignmentActivator, MemberAssignmentActivator>();
         services.AddScoped<IConversationProvisioner, ConversationProvisioner>();
         services.TryAddSingleton<
             IConversationRealtimeNotifier,
@@ -54,6 +55,7 @@ public static class DependencyInjection
         services.AddScoped<ITenantAdministrationService, TenantAdministrationService>();
         services.AddScoped<IUserAdministrationService, UserAdministrationService>();
         services.AddScoped<IGymAdminAssignmentCoordinator, GymAdminAssignmentCoordinator>();
+        services.AddScoped<IMemberAssignmentActivator, MemberAssignmentActivator>();
         services.AddScoped<IMembershipRequestService, MembershipRequestService>();
         services.AddScoped<IMembershipService, MembershipService>();
         services.AddScoped<IAvailabilityService, AvailabilityService>();

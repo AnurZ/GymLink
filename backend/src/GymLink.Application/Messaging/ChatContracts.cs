@@ -74,7 +74,19 @@ public sealed record ChatMessageDto(
     Guid SenderUserId,
     Guid ClientMessageId,
     string Text,
+    string? ImageUrl,
     DateTime SentAtUtc);
+
+public sealed record ChatImageUpload(
+    Guid ClientMessageId,
+    byte[] Content,
+    string ContentType,
+    string FileName);
+
+public sealed record ChatImageContent(
+    Stream Content,
+    string ContentType,
+    long FileSizeBytes);
 
 public sealed record MessageHistoryDto(
     IReadOnlyList<ChatMessageDto> Items,
@@ -110,6 +122,16 @@ public interface IChatService
     Task<ChatMessageDto> SendAsync(
         Guid conversationId,
         SendMessageRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ChatMessageDto> SendImageAsync(
+        Guid conversationId,
+        ChatImageUpload upload,
+        CancellationToken cancellationToken);
+
+    Task<ChatImageContent> GetImageAsync(
+        Guid conversationId,
+        Guid messageId,
         CancellationToken cancellationToken);
 
     Task<ConversationReadDto> MarkReadAsync(

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
 import '../../core/theme.dart';
+import '../../shared/cached_network_image_view.dart';
 import '../../shared/widgets.dart';
 import '../member/gym_screens.dart';
 import 'recommendation_controller.dart';
@@ -301,13 +302,12 @@ class _RecommendationCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(15),
       child: SizedBox.square(
         dimension: 90,
-        child: url == null
-            ? fallback
-            : Image.network(
-                url,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => fallback,
-              ),
+        child: CachedNetworkImageView(
+          imageUrl: url,
+          fallback: fallback,
+          decodeWidth: 180,
+          decodeHeight: 180,
+        ),
       ),
     );
   }

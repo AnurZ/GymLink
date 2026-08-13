@@ -64,12 +64,20 @@ public sealed class MessagingConfigurationTests
                     MessageContractNames.PasswordResetRequestedV1),
                 (binding.Queue, binding.Exchange, binding.RoutingKey)),
             binding => Assert.Equal(
+                (options.EmailQueue, options.Exchange,
+                    MessageContractNames.WelcomeEmailRequestedV1),
+                (binding.Queue, binding.Exchange, binding.RoutingKey)),
+            binding => Assert.Equal(
                 (options.NotificationDeadLetterQueue, options.DeadLetterExchange,
                     MessageContractNames.NotificationRequestedV1),
                 (binding.Queue, binding.Exchange, binding.RoutingKey)),
             binding => Assert.Equal(
                 (options.EmailDeadLetterQueue, options.DeadLetterExchange,
                     MessageContractNames.PasswordResetRequestedV1),
+                (binding.Queue, binding.Exchange, binding.RoutingKey)),
+            binding => Assert.Equal(
+                (options.EmailDeadLetterQueue, options.DeadLetterExchange,
+                    MessageContractNames.WelcomeEmailRequestedV1),
                 (binding.Queue, binding.Exchange, binding.RoutingKey)));
     }
 }

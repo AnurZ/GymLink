@@ -467,17 +467,17 @@ class _TenantMembershipRequestsScreenState
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: DataTable(
-                        dataRowMinHeight: 64,
-                        dataRowMaxHeight: 72,
+                        horizontalMargin: 12,
+                        columnSpacing: 18,
+                        dataRowMinHeight: 52,
+                        dataRowMaxHeight: 60,
                         columns: const [
-                          DataColumn(label: Text('Korisnik')),
-                          DataColumn(label: Text('Email')),
-                          DataColumn(label: Text('Vrsta članarine')),
-                          DataColumn(label: Text('Iznos')),
-                          DataColumn(label: Text('Datum')),
-                          DataColumn(label: Text('Način plaćanja')),
-                          DataColumn(label: Text('Status zahtjeva')),
-                          DataColumn(label: Text('Status / period članstva')),
+                          DataColumn(label: Text('Član')),
+                          DataColumn(label: Text('Članarina')),
+                          DataColumn(label: Text('Plaćanje')),
+                          DataColumn(label: Text('Zahtjev')),
+                          DataColumn(label: Text('Status članstva')),
+                          DataColumn(label: Text('Period')),
                           DataColumn(label: Text('Akcije')),
                         ],
                         rows: _items.map((item) {
@@ -499,16 +499,41 @@ class _TenantMembershipRequestsScreenState
                           return DataRow(
                             cells: [
                               DataCell(
-                                Text(item['memberDisplayName'].toString()),
+                                Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      item['memberDisplayName'].toString(),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    Text(
+                                      item['memberEmail']?.toString() ?? '—',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
+                                    ),
+                                  ],
+                                ),
                               ),
                               DataCell(
-                                Text(item['memberEmail']?.toString() ?? '—'),
+                                Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(item['planName'].toString()),
+                                    Text(
+                                      '${item['price']} ${item['currency']}',
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodySmall,
+                                    ),
+                                  ],
+                                ),
                               ),
-                              DataCell(Text(item['planName'].toString())),
-                              DataCell(
-                                Text('${item['price']} ${item['currency']}'),
-                              ),
-                              DataCell(Text(_date(item['requestedAtUtc']))),
                               DataCell(
                                 Text(
                                   _membershipPaymentLabel(
@@ -526,77 +551,77 @@ class _TenantMembershipRequestsScreenState
                                     ? Text(
                                         _missingMembershipLabel(item['status']),
                                       )
-                                    : Column(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          StatusPill(
-                                            enumLabel(
-                                              membership['status'],
-                                              _membershipStatuses,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            '${_date(membership['startsAtUtc'])} – ${_date(membership['endsAtUtc'])}',
-                                          ),
-                                        ],
+                                    : StatusPill(
+                                        enumLabel(
+                                          membership['status'],
+                                          _membershipStatuses,
+                                        ),
                                       ),
                               ),
                               DataCell(
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    if (actions.contains('approve'))
-                                      IconButton(
-                                        tooltip: 'Aktiviraj nakon naplate',
-                                        onPressed: () => _decide(item, true),
-                                        icon: const Icon(
-                                          Icons.check_circle_outline,
-                                          color: Colors.green,
+                                Text(
+                                  membership == null
+                                      ? '—'
+                                      : '${_date(membership['startsAtUtc'])} – ${_date(membership['endsAtUtc'])}',
+                                  maxLines: 1,
+                                ),
+                              ),
+                              DataCell(
+                                SizedBox(
+                                  width: 144,
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    mainAxisSize: MainAxisSize.max,
+                                    children: [
+                                      if (actions.contains('approve'))
+                                        IconButton(
+                                          tooltip: 'Aktiviraj nakon naplate',
+                                          onPressed: () => _decide(item, true),
+                                          icon: const Icon(
+                                            Icons.check_circle_outline,
+                                            color: Colors.green,
+                                          ),
                                         ),
-                                      ),
-                                    if (actions.contains('reject'))
-                                      IconButton(
-                                        tooltip: 'Odbij',
-                                        onPressed: () => _decide(item, false),
-                                        icon: const Icon(
-                                          Icons.cancel_outlined,
-                                          color: Colors.red,
+                                      if (actions.contains('reject'))
+                                        IconButton(
+                                          tooltip: 'Odbij',
+                                          onPressed: () => _decide(item, false),
+                                          icon: const Icon(
+                                            Icons.cancel_outlined,
+                                            color: Colors.red,
+                                          ),
                                         ),
-                                      ),
-                                    if (membership != null &&
-                                        membershipActions.isNotEmpty)
-                                      PopupMenuButton<String>(
-                                        tooltip: 'Akcije članstva',
-                                        onSelected: (action) =>
-                                            _membershipAction(
-                                              membership,
-                                              action,
-                                            ),
-                                        itemBuilder: (_) => membershipActions
-                                            .map(
-                                              (action) => PopupMenuItem(
-                                                value: action,
-                                                child: Text(
-                                                  _membershipActionLabel(
-                                                    action,
+                                      if (membership != null &&
+                                          membershipActions.isNotEmpty)
+                                        PopupMenuButton<String>(
+                                          tooltip: 'Akcije članstva',
+                                          onSelected: (action) =>
+                                              _membershipAction(
+                                                membership,
+                                                action,
+                                              ),
+                                          itemBuilder: (_) => membershipActions
+                                              .map(
+                                                (action) => PopupMenuItem(
+                                                  value: action,
+                                                  child: Text(
+                                                    _membershipActionLabel(
+                                                      action,
+                                                    ),
                                                   ),
                                                 ),
-                                              ),
-                                            )
-                                            .toList(),
+                                              )
+                                              .toList(),
+                                        ),
+                                      IconButton(
+                                        tooltip: 'Detalji',
+                                        onPressed: () => _showDetails(item),
+                                        icon: const Icon(
+                                          Icons.visibility_outlined,
+                                        ),
                                       ),
-                                    IconButton(
-                                      tooltip: 'Detalji',
-                                      onPressed: () => _showDetails(item),
-                                      icon: const Icon(
-                                        Icons.visibility_outlined,
-                                      ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               ),
                             ],
@@ -1308,6 +1333,7 @@ class TenantReservationsScreen extends StatefulWidget {
 class _TenantReservationsScreenState extends State<TenantReservationsScreen> {
   List<Map<String, dynamic>> _items = const [];
   bool _loading = true;
+  bool _refreshing = false;
   Object? _error;
   int? _status;
 
@@ -1317,18 +1343,45 @@ class _TenantReservationsScreenState extends State<TenantReservationsScreen> {
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  Future<void> _load({bool preserveData = false}) async {
+    setState(() {
+      if (preserveData && _items.isNotEmpty) {
+        _refreshing = true;
+      } else {
+        _loading = true;
+      }
+    });
     try {
-      _items = (await context.read<ApiClient>().page(
+      final items = (await context.read<ApiClient>().page(
         '/api/tenant/reservations',
         query: {'status': _status},
       )).items;
-      _error = null;
+      if (mounted) {
+        setState(() {
+          _items = items;
+          _error = null;
+        });
+      }
     } catch (error) {
-      _error = error;
+      if (!mounted) return;
+      if (preserveData && _items.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Osvježavanje nije uspjelo. Prikazani su prethodni podaci.',
+            ),
+          ),
+        );
+      } else {
+        _error = error;
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
     }
   }
 
@@ -1366,26 +1419,49 @@ class _TenantReservationsScreenState extends State<TenantReservationsScreen> {
     children: [
       Align(
         alignment: Alignment.centerLeft,
-        child: SizedBox(
-          width: 300,
-          child: DropdownButtonFormField<int?>(
-            key: const Key('reservation-status-filter'),
-            initialValue: _status,
-            decoration: const InputDecoration(labelText: 'Status'),
-            items: [
-              const DropdownMenuItem(value: null, child: Text('Svi statusi')),
-              ..._visibleReservationStatuses.map(
-                (status) => DropdownMenuItem(
-                  value: status,
-                  child: Text(_reservationStatuses[status]),
-                ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 300,
+              child: DropdownButtonFormField<int?>(
+                key: const Key('reservation-status-filter'),
+                initialValue: _status,
+                decoration: const InputDecoration(labelText: 'Status'),
+                items: [
+                  const DropdownMenuItem(
+                    value: null,
+                    child: Text('Svi statusi'),
+                  ),
+                  ..._visibleReservationStatuses.map(
+                    (status) => DropdownMenuItem(
+                      value: status,
+                      child: Text(_reservationStatuses[status]),
+                    ),
+                  ),
+                ],
+                onChanged: _refreshing
+                    ? null
+                    : (value) {
+                        _status = value;
+                        _load();
+                      },
               ),
-            ],
-            onChanged: (value) {
-              _status = value;
-              _load();
-            },
-          ),
+            ),
+            const SizedBox(width: 12),
+            FilledButton.tonalIcon(
+              key: const Key('refresh-reservations'),
+              onPressed: _loading || _refreshing
+                  ? null
+                  : () => _load(preserveData: true),
+              icon: _refreshing
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh),
+              label: const Text('Osvježi'),
+            ),
+          ],
         ),
       ),
       const SizedBox(height: 16),

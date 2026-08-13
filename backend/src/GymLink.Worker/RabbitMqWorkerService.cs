@@ -91,8 +91,11 @@ internal sealed class RabbitMqWorkerService(
             HandleAsync(
                 emailChannel,
                 delivery,
-                "reset-email",
-                ProcessResetEmailAsync,
+                EmailConsumer(delivery.RoutingKey),
+                (body, token) => ProcessEmailAsync(
+                    body,
+                    delivery.RoutingKey,
+                    token),
                 stoppingToken);
         await emailChannel.BasicConsumeAsync(
             options.Value.EmailQueue,
@@ -292,6 +295,65 @@ internal sealed class RabbitMqWorkerService(
         await db.SaveChangesAsync(cancellationToken);
         return envelope.MessageId;
     }
+
+    private Task<Guid> ProcessEmailAsync(
+        ReadOnlyMemory<byte> body,
+        string routingKey,
+        CancellationToken cancellationToken) =>
+        routingKey switch
+        {
+            MessageContractNames.PasswordResetRequestedV1 =>
+                ProcessResetEmailAsync(body, cancellationToken),
+            MessageContractNames.WelcomeEmailRequestedV1 =>
+                ProcessWelcomeEmailAsync(body, cancellationToken),
+            _ => throw new InvalidOperationException(
+                $"Unsupported email message type '{routingKey}'."),
+        };
+
+    private async Task<Guid> ProcessWelcomeEmailAsync(
+        ReadOnlyMemory<byte> body,
+        CancellationToken cancellationToken)
+    {
+        const string consumer = "welcome-email";
+        var envelope = Deserialize<WelcomeEmailRequestedV1>(body);
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<GymLinkDbContext>();
+        if (await IsCompletedAsync(db, envelope.MessageId, consumer, cancellationToken))
+        {
+            return envelope.MessageId;
+        }
+
+        var recipient = await (
+                from user in db.Set<GymLinkIdentityUser>().AsNoTracking()
+                join profile in db.UserProfiles.AsNoTracking() on user.Id equals profile.Id
+                where user.Id == envelope.Payload.UserId
+                select new { user.Email, profile.DisplayName })
+            .SingleOrDefaultAsync(cancellationToken);
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        if (recipient?.Email is not null)
+        {
+            await emailSender.SendWelcomeAsync(
+                recipient.Email,
+                recipient.DisplayName,
+                envelope.MessageId,
+                cancellationToken);
+        }
+
+        await CompleteInboxAsync(
+            db,
+            envelope.MessageId,
+            consumer,
+            envelope.MessageType,
+            now,
+            cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+        return envelope.MessageId;
+    }
+
+    private static string EmailConsumer(string routingKey) =>
+        routingKey == MessageContractNames.WelcomeEmailRequestedV1
+            ? "welcome-email"
+            : "reset-email";
 
     private async Task<int> RecordFailureAsync(
         Guid messageId,

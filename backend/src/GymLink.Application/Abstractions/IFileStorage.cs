@@ -13,12 +13,18 @@ public interface IFileStorage
         FileStorageArea area,
         string storageKey,
         CancellationToken cancellationToken);
+
+    Task<Stream?> OpenReadAsync(
+        FileStorageArea area,
+        string storageKey,
+        CancellationToken cancellationToken);
 }
 
 public enum FileStorageArea
 {
     TrainerImages,
     GymImages,
+    ChatImages,
 }
 
 public sealed record FileStorageResult(string StorageKey, string? PublicUrl);

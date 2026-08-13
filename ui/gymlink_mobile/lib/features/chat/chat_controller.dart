@@ -37,11 +37,13 @@ final class ChatController extends ChangeNotifier {
   final List<ChatMessageModel> messages = [];
   final Set<String> _seenMessageKeys = {};
   final Set<String> _listJoinedConversationIds = {};
+  final Map<String, Future<Uint8List?>> _imageLoads = {};
   String? _detailJoinedConversationId;
   ConversationModel? activeConversation;
   bool listLoading = false;
   bool detailLoading = false;
   bool sending = false;
+  bool sendingImage = false;
   bool hasMoreConversations = false;
   bool hasMoreMessages = false;
   int _conversationPage = 1;
@@ -131,6 +133,7 @@ final class ChatController extends ChangeNotifier {
     activeConversation = conversation;
     _notifications?.setActiveConversation(conversation.id);
     messages.clear();
+    _imageLoads.clear();
     detailError = null;
     detailLoading = true;
     notifyListeners();
@@ -185,7 +188,7 @@ final class ChatController extends ChangeNotifier {
   Future<void> _joinListConversations(
     Iterable<ConversationModel> values,
   ) async {
-    for (final conversation in values.where((item) => item.canSend)) {
+    for (final conversation in values) {
       if (!_listJoinedConversationIds.add(conversation.id)) continue;
       try {
         await _realtime.join(conversation.id);
@@ -235,10 +238,53 @@ final class ChatController extends ChangeNotifier {
   Future<bool> send(String rawText) async {
     final conversation = activeConversation;
     final text = rawText.trim();
-    if (conversation == null || text.isEmpty || !conversation.canSend) {
+    if (conversation == null || text.isEmpty) {
       return false;
     }
     return _sendWithId(conversation, _newGuid(), text);
+  }
+
+  Future<bool> sendImage(
+    List<int> bytes,
+    String fileName,
+    String contentType,
+  ) async {
+    final conversation = activeConversation;
+    if (conversation == null || bytes.isEmpty || sendingImage) return false;
+    sendingImage = true;
+    detailError = null;
+    notifyListeners();
+    try {
+      final saved = await _repository.sendImage(
+        conversation.id,
+        _newGuid(),
+        bytes,
+        fileName,
+        contentType,
+      );
+      _acceptSaved(saved);
+      return true;
+    } on ApiProblem catch (error) {
+      detailError = error.message;
+      return false;
+    } finally {
+      sendingImage = false;
+      notifyListeners();
+    }
+  }
+
+  Future<Uint8List?> imageFor(ChatMessageModel message) {
+    final imageUrl = message.imageUrl;
+    if (imageUrl == null) return Future.value();
+    return _imageLoads.putIfAbsent(message.id, () async {
+      try {
+        return await _repository.imageBytes(imageUrl);
+      } on ApiProblem catch (error) {
+        detailError = error.message;
+        notifyListeners();
+        return null;
+      }
+    });
   }
 
   Future<bool> _sendWithId(
@@ -298,7 +344,7 @@ final class ChatController extends ChangeNotifier {
   Future<void> retry(ChatMessageModel message) async {
     if (message.delivery != MessageDeliveryState.failed) return;
     final conversation = activeConversation;
-    if (conversation == null || !conversation.canSend) return;
+    if (conversation == null) return;
     await _sendWithId(conversation, message.clientMessageId, message.text);
   }
 
@@ -437,6 +483,7 @@ final class ChatController extends ChangeNotifier {
     await _releaseRealtimeSubscriptions();
     conversations.clear();
     messages.clear();
+    _imageLoads.clear();
     _seenMessageKeys.clear();
     activeConversation = null;
     listError = null;

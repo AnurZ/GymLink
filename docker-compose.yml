@@ -76,11 +76,13 @@ services:
       Seed__DefaultPassword: ${Seed__DefaultPassword:-Test123!}
       FileStorage__RootPath: /data/trainer-images
       FileStorage__GymRootPath: /data/gym-images
+      FileStorage__ChatRootPath: /data/chat-images
     ports:
       - "${GYMLINK_API_PORT:-62287}:8080"
     volumes:
       - gymlink-trainer-images:/data/trainer-images
       - gymlink-gym-images:/data/gym-images
+      - gymlink-chat-images:/data/chat-images
     networks:
       - gymlink-internal
     depends_on:
@@ -139,3 +141,4 @@ volumes:
   gymlink-rabbitmq-data:
   gymlink-trainer-images:
   gymlink-gym-images:
+  gymlink-chat-images:

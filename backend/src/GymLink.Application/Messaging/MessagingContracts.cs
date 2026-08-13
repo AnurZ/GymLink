@@ -23,6 +23,11 @@ public interface IOutboxWriter
         Guid challengeId,
         DateTime occurredAtUtc,
         string correlationId);
+
+    void AddWelcomeEmail(
+        Guid userId,
+        DateTime occurredAtUtc,
+        string correlationId);
 }
 
 public sealed record NotificationSearchRequest : PagedRequest

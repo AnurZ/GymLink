@@ -23,6 +23,10 @@ internal sealed class FileSystemFileStorage : IFileStorage
                 settings.GymRootPath,
                 settings.GymRequestPath,
                 environment.ContentRootPath),
+            [FileStorageArea.ChatImages] = CreateSettings(
+                settings.ChatRootPath,
+                null,
+                environment.ContentRootPath),
         };
         foreach (var area in areas.Values)
         {
@@ -53,7 +57,9 @@ internal sealed class FileSystemFileStorage : IFileStorage
         await content.CopyToAsync(output, cancellationToken);
         return new FileStorageResult(
             storageKey,
-            $"{settings.RequestPath}/{storageKey}");
+            settings.RequestPath is null
+                ? null
+                : $"{settings.RequestPath}/{storageKey}");
     }
 
     public Task DeleteAsync(
@@ -69,6 +75,25 @@ internal sealed class FileSystemFileStorage : IFileStorage
         }
 
         return Task.CompletedTask;
+    }
+
+    public Task<Stream?> OpenReadAsync(
+        FileStorageArea area,
+        string storageKey,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var path = ResolveStorageKey(GetArea(area).RootPath, storageKey);
+        Stream? stream = File.Exists(path)
+            ? new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 81920,
+                useAsync: true)
+            : null;
+        return Task.FromResult(stream);
     }
 
     private static string ResolveStorageKey(string rootPath, string storageKey)
@@ -99,14 +124,14 @@ internal sealed class FileSystemFileStorage : IFileStorage
 
     private static StorageAreaSettings CreateSettings(
         string configuredRootPath,
-        string configuredRequestPath,
+        string? configuredRequestPath,
         string contentRootPath) =>
         new(
             Path.GetFullPath(
                 Path.IsPathRooted(configuredRootPath)
                     ? configuredRootPath
                     : Path.Combine(contentRootPath, configuredRootPath)),
-            configuredRequestPath.TrimEnd('/'));
+            configuredRequestPath?.TrimEnd('/'));
 
     private static string ExtensionFor(string contentType) => contentType switch
     {
@@ -116,5 +141,5 @@ internal sealed class FileSystemFileStorage : IFileStorage
         _ => throw new ArgumentException("The content type is not supported.", nameof(contentType)),
     };
 
-    private sealed record StorageAreaSettings(string RootPath, string RequestPath);
+    private sealed record StorageAreaSettings(string RootPath, string? RequestPath);
 }

@@ -1,8 +1,10 @@
-using GymLink.Application.Reservations;
-using GymLink.Application.Messaging;
+using System.Globalization;
 using GymLink.Application.Abstractions;
+using GymLink.Application.Messaging;
+using GymLink.Application.Reservations;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
+using GymLink.Domain.Trainers;
 using GymLink.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -70,6 +72,7 @@ internal sealed class LoggingReservationWorkflowEventRecorder(
             recipients.Add(intent.ActorUserId);
         }
 
+        var text = await ResolveTextAsync(intent, reservation, cancellationToken);
         foreach (var recipient in recipients)
         {
             outbox.AddNotification(new(
@@ -77,7 +80,7 @@ internal sealed class LoggingReservationWorkflowEventRecorder(
                 intent.TenantId,
                 intent.Name,
                 Title(intent.Name),
-                Text(intent.Name),
+                text,
                 intent.Name.StartsWith("availability", StringComparison.Ordinal)
                     ? "availability"
                     : intent.Name.StartsWith("review", StringComparison.Ordinal)
@@ -87,6 +90,49 @@ internal sealed class LoggingReservationWorkflowEventRecorder(
                 intent.OccurredAtUtc,
                 requestMetadata.CorrelationId));
         }
+    }
+
+    private async Task<string> ResolveTextAsync(
+        ReservationWorkflowEventIntent intent,
+        GymLink.Domain.Reservations.AppointmentReservation? reservation,
+        CancellationToken cancellationToken)
+    {
+        if (intent.Name != "reservation.confirmed_pay_in_person" || reservation is null)
+        {
+            return Text(intent.Name);
+        }
+
+        var details = await (
+                from trainer in dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
+                join trainerUser in dbContext.UserProfiles.AsNoTracking()
+                    on trainer.UserId equals trainerUser.Id
+                join offering in dbContext.TrainerServiceOfferings
+                    .IgnoreQueryFilters()
+                    .AsNoTracking()
+                    on trainer.Id equals offering.TrainerProfileId
+                from member in dbContext.UserProfiles.AsNoTracking()
+                    .Where(x => x.Id == reservation.MemberUserId)
+                where trainer.Id == reservation.TrainerProfileId &&
+                      offering.Id == reservation.TrainerServiceOfferingId
+                select new ReservationNotificationDetails(
+                    member.DisplayName,
+                    trainerUser.DisplayName,
+                    offering.Name,
+                    reservation.StartsAtUtc))
+            .SingleOrDefaultAsync(cancellationToken);
+        if (details is null)
+        {
+            return "Termin je potvrđen.";
+        }
+
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(
+            TrainerAvailabilitySchedule.SarajevoTimeZoneId);
+        var localStart = TimeZoneInfo.ConvertTimeFromUtc(details.StartsAtUtc, timeZone);
+        var formatted = localStart.ToString(
+            "dd.MM.yyyy. 'u' HH:mm",
+            CultureInfo.GetCultureInfo("bs-BA"));
+        return $"Termin za korisnika {details.MemberName} kod trenera " +
+            $"{details.TrainerName} je potvrđen: {details.OfferingName}, {formatted}.";
     }
 
     private static string Title(string name) =>
@@ -102,11 +148,16 @@ internal sealed class LoggingReservationWorkflowEventRecorder(
         name switch
         {
             "reservation.created" => "Kreirana je nova rezervacija termina.",
-            "reservation.confirmed_pay_in_person" =>
-                "Termin je potvrđen. Plaćanje se vrši uživo na treningu.",
+            "reservation.confirmed_pay_in_person" => "Termin je potvrđen.",
             "reservation.status_changed" => "Status rezervacije je promijenjen.",
             "review.trainer_created" => "Objavljena je nova recenzija trenera.",
             "review.gym_created" => "Objavljena je nova recenzija teretane.",
             _ => "Dostupnost trenera je ažurirana.",
         };
+
+    private sealed record ReservationNotificationDetails(
+        string MemberName,
+        string TrainerName,
+        string OfferingName,
+        DateTime StartsAtUtc);
 }

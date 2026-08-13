@@ -34,6 +34,9 @@ public static class FileStorageApplicationExtensions
             FileProvider = new PhysicalFileProvider(rootPath),
             RequestPath = requestPath,
             ServeUnknownFileTypes = false,
+            OnPrepareResponse = context =>
+                context.Context.Response.Headers.CacheControl =
+                    "public,max-age=31536000,immutable",
         });
     }
 }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
@@ -190,6 +191,54 @@ final class ApiClient {
     contentType: contentType,
     fields: fields,
   );
+
+  Future<Uint8List> getBytes(String path) => _sendBytes(path);
+
+  Future<Uint8List> _sendBytes(String path, {bool retry = true}) async {
+    try {
+      final request = http.Request('GET', _uri(path));
+      request.headers['Accept'] = 'image/*';
+      if (_tokens.accessToken != null) {
+        request.headers['Authorization'] = 'Bearer ${_tokens.accessToken}';
+      }
+      final streamed = await _http
+          .send(request)
+          .timeout(const Duration(seconds: 20));
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode == 401 && retry) {
+        final refreshFuture = _refreshing ??= _tokens.refresh();
+        final refreshed = await refreshFuture.whenComplete(() {
+          _refreshing = null;
+        });
+        if (refreshed) return _sendBytes(path, retry: false);
+        await _tokens.invalidate();
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ApiProblem.fromResponse(response);
+      }
+      return response.bodyBytes;
+    } on ApiProblem {
+      rethrow;
+    } on TimeoutException {
+      throw ApiProblem(
+        status: 0,
+        code: 'request_timeout',
+        message: 'Zahtjev je istekao. Provjerite vezu i pokuÅ¡ajte ponovo.',
+      );
+    } on SocketException {
+      throw ApiProblem(
+        status: 0,
+        code: 'network_unavailable',
+        message: 'Nije moguÄ‡e povezati se sa serverom.',
+      );
+    } on http.ClientException {
+      throw ApiProblem(
+        status: 0,
+        code: 'network_error',
+        message: 'MreÅ¾ni zahtjev nije uspio. PokuÅ¡ajte ponovo.',
+      );
+    }
+  }
 
   String? mediaUrl(Object? value) {
     final raw = value?.toString().trim() ?? '';

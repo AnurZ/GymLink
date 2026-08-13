@@ -41,6 +41,17 @@ internal sealed class OutboxWriter(GymLinkDbContext dbContext) : IOutboxWriter
             occurredAtUtc,
             correlationId);
 
+    public void AddWelcomeEmail(
+        Guid userId,
+        DateTime occurredAtUtc,
+        string correlationId) =>
+        Add(
+            MessageContractNames.WelcomeEmailRequestedV1,
+            new WelcomeEmailRequestedV1(userId),
+            null,
+            occurredAtUtc,
+            correlationId);
+
     private void Add<T>(
         string routingKey,
         T payload,

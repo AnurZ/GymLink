@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../../core/api.dart';
 import 'chat_models.dart';
 
@@ -15,6 +17,14 @@ abstract interface class ChatRepositoryGateway {
     String clientMessageId,
     String text,
   );
+  Future<ChatMessageModel> sendImage(
+    String conversationId,
+    String clientMessageId,
+    List<int> bytes,
+    String fileName,
+    String contentType,
+  );
+  Future<Uint8List> imageBytes(String imageUrl);
   Future<void> markRead(String conversationId);
 }
 
@@ -79,4 +89,25 @@ final class ChatRepository implements ChatRepositoryGateway {
   @override
   Future<void> markRead(String conversationId) =>
       _api.post('/api/me/conversations/$conversationId/read');
+
+  @override
+  Future<ChatMessageModel> sendImage(
+    String conversationId,
+    String clientMessageId,
+    List<int> bytes,
+    String fileName,
+    String contentType,
+  ) async {
+    final json = await _api.postMultipart(
+      '/api/me/conversations/$conversationId/images',
+      bytes: bytes,
+      fileName: fileName,
+      contentType: contentType,
+      fields: {'clientMessageId': clientMessageId},
+    );
+    return ChatMessageModel.fromJson(Map<String, dynamic>.from(json! as Map));
+  }
+
+  @override
+  Future<Uint8List> imageBytes(String imageUrl) => _api.getBytes(imageUrl);
 }

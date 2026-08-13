@@ -34,27 +34,59 @@ internal interface IEmailSender
         string code,
         Guid messageId,
         CancellationToken cancellationToken);
+
+    Task SendWelcomeAsync(
+        string recipient,
+        string displayName,
+        Guid messageId,
+        CancellationToken cancellationToken);
 }
 
 internal sealed class SmtpEmailSender(
     IOptions<SmtpOptions> options) : IEmailSender
 {
-    public async Task SendResetCodeAsync(
+    public Task SendResetCodeAsync(
         string recipient,
         string code,
         Guid messageId,
+        CancellationToken cancellationToken) =>
+        SendAsync(
+            recipient,
+            new MimeMessage
+            {
+                MessageId = $"<{messageId:N}@gymlink.local>",
+                Subject = "GymLink kod za promjenu lozinke",
+                Body = new TextPart("plain")
+                {
+                    Text = $"Vaš GymLink kod za promjenu lozinke je: {code}\n\nKod vrijedi 15 minuta.",
+                },
+            },
+            cancellationToken);
+
+    public Task SendWelcomeAsync(
+        string recipient,
+        string displayName,
+        Guid messageId,
+        CancellationToken cancellationToken) =>
+        SendAsync(
+            recipient,
+            new MimeMessage
+            {
+                MessageId = $"<{messageId:N}@gymlink.local>",
+                Subject = "Dobro došli u GymLink",
+                Body = new TextPart("plain")
+                {
+                    Text = $"Zdravo {displayName},\n\nVaš GymLink račun je uspješno kreiran. Dobro došli!",
+                },
+            },
+            cancellationToken);
+
+    private async Task SendAsync(
+        string recipient,
+        MimeMessage message,
         CancellationToken cancellationToken)
     {
         var settings = options.Value;
-        var message = new MimeMessage
-        {
-            MessageId = $"<{messageId:N}@gymlink.local>",
-            Subject = "GymLink kod za promjenu lozinke",
-            Body = new TextPart("plain")
-            {
-                Text = $"Vaš GymLink kod za promjenu lozinke je: {code}\n\nKod vrijedi 15 minuta.",
-            },
-        };
         message.From.Add(new MailboxAddress(settings.SenderName, settings.SenderEmail));
         message.To.Add(MailboxAddress.Parse(recipient));
 

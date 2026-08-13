@@ -69,8 +69,8 @@ internal static class DevelopmentSeedCatalog
             "+387 36 323 333",
             "Sportsko-rekreacijski centar sa savremenom fitness opremom, individualnim i grupnim programima.",
             [
-                "https://images.unsplash.com/photo-1534438327276-14e5300c3a48",
-                "https://images.unsplash.com/photo-1545612036-2872840642dc?auto=format&fit=crop&w=1600&q=80",
+                "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=1200&q=75",
+                "https://images.unsplash.com/photo-1545612036-2872840642dc?auto=format&fit=crop&w=1200&q=75",
             ],
             "admin.arena",
             65m,
@@ -78,8 +78,8 @@ internal static class DevelopmentSeedCatalog
             ["Traka za trčanje", "Sobni bicikl", "Eliptični trenažer", "Slobodni utezi", "Smith mašina", "Squat rack", "Cable crossover", "Leg press", "Kettlebell set"],
             ["Personalni trening", "Funkcionalni trening", "Trening snage", "Kondicioni trening"],
             [
-                new("arenatrainer1", "Trening snage", "Trening snage 60 min", "Certificirani trener snage i kondicione pripreme.", "arenatrainer1.png"),
-                new("arenatrainer2", "Kondicioni trening", "Kondicioni trening 60 min", "Trenerica usmjerena na kondiciju i siguran individualni napredak.", "arenatrainer2.png"),
+                new("arenatrainer1", "Trening snage", "Trening snage 60 min", "Certificirani trener snage i kondicione pripreme.", "arenatrainer1.jpg"),
+                new("arenatrainer2", "Kondicioni trening", "Kondicioni trening 60 min", "Trenerica usmjerena na kondiciju i siguran individualni napredak.", "arenatrainer2.jpg"),
             ],
             SeedGymHours.Arena),
         new(
@@ -93,8 +93,8 @@ internal static class DevelopmentSeedCatalog
             "+387 61 748 894",
             "Fitness i wellness centar sa programima snage, funkcionalnog treninga, pilatesa i mobilnosti.",
             [
-                "https://images.unsplash.com/photo-1571902943202-507ec2618e8f",
-                "https://images.unsplash.com/photo-1590487988256-9ed24133863e?auto=format&fit=crop&w=1600&q=80",
+                "https://images.unsplash.com/photo-1571902943202-507ec2618e8f?auto=format&fit=crop&w=1200&q=75",
+                "https://images.unsplash.com/photo-1590487988256-9ed24133863e?auto=format&fit=crop&w=1200&q=75",
             ],
             "admin.perfectfit",
             60m,
@@ -102,8 +102,8 @@ internal static class DevelopmentSeedCatalog
             ["Traka za trčanje", "Sobni bicikl", "Slobodni utezi", "Smith mašina", "Cable crossover", "Leg press", "Kettlebell set"],
             ["Personalni trening", "Funkcionalni trening", "Pilates", "Mobilnost"],
             [
-                new("perfectfittrainer1", "Funkcionalni trening", "Funkcionalni trening 60 min", "Trener funkcionalnog treninga i individualne pripreme.", "perfectfittrainer1.png"),
-                new("perfectfittrainer2", "Pilates", "Pilates 60 min", "Trenerica pilatesa, posture i kontroliranog pokreta.", "perfectfittrainer2.png"),
+                new("perfectfittrainer1", "Funkcionalni trening", "Funkcionalni trening 60 min", "Trener funkcionalnog treninga i individualne pripreme.", "perfectfittrainer1.jpg"),
+                new("perfectfittrainer2", "Pilates", "Pilates 60 min", "Trenerica pilatesa, posture i kontroliranog pokreta.", "perfectfittrainer2.jpg"),
             ],
             SeedGymHours.PerfectFit),
         new(
@@ -117,8 +117,8 @@ internal static class DevelopmentSeedCatalog
             "+387 61 923 504",
             "Sportska akademija sa individualnim, funkcionalnim, kondicionim i borilačkim treninzima.",
             [
-                "https://images.unsplash.com/photo-1517836357463-d25dfeac3438",
-                "https://images.unsplash.com/photo-1576678927484-cc907957088c?auto=format&fit=crop&w=1600&q=80",
+                "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?auto=format&fit=crop&w=1200&q=75",
+                "https://images.unsplash.com/photo-1576678927484-cc907957088c?auto=format&fit=crop&w=1200&q=75",
             ],
             "admin.respect",
             60m,
@@ -126,8 +126,8 @@ internal static class DevelopmentSeedCatalog
             ["Traka za trčanje", "Sobni bicikl", "Slobodni utezi", "Squat rack", "Cable crossover", "Kettlebell set", "Vreća za boks"],
             ["Personalni trening", "Funkcionalni trening", "Kondicioni trening", "Kickboxing"],
             [
-                new("respecttrainer1", "Funkcionalni trening", "Funkcionalni trening 60 min", "Trener funkcionalne pripreme i rada jedan-na-jedan.", "respecttrainer1.png"),
-                new("respecttrainer2", "Kickboxing", "Kickboxing 60 min", "Trenerica kondicione pripreme i osnova kickboxinga.", "respecttrainer2.png"),
+                new("respecttrainer1", "Funkcionalni trening", "Funkcionalni trening 60 min", "Trener funkcionalne pripreme i rada jedan-na-jedan.", "respecttrainer1.jpg"),
+                new("respecttrainer2", "Kickboxing", "Kickboxing 60 min", "Trenerica kondicione pripreme i osnova kickboxinga.", "respecttrainer2.jpg"),
             ],
             SeedGymHours.Respect),
         new(
@@ -141,8 +141,8 @@ internal static class DevelopmentSeedCatalog
             "+387 60 306 7047",
             "Prostran fitness centar sa cjelodnevnim pristupom, spravama za snagu i grupnim treninzima.",
             [
-                "https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e",
-                "https://images.unsplash.com/photo-1689514226761-336eaf77e311?auto=format&fit=crop&w=1600&q=80",
+                "https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?auto=format&fit=crop&w=1200&q=75",
+                "https://images.unsplash.com/photo-1689514226761-336eaf77e311?auto=format&fit=crop&w=1200&q=75",
             ],
             "admin.oxide",
             70m,
@@ -150,8 +150,8 @@ internal static class DevelopmentSeedCatalog
             ["Traka za trčanje", "Sobni bicikl", "Eliptični trenažer", "Slobodni utezi", "Smith mašina", "Squat rack", "Cable crossover", "Leg press", "Kettlebell set"],
             ["Personalni trening", "Funkcionalni trening", "Trening snage", "Kondicioni trening"],
             [
-                new("oxidetrainer1", "Trening snage", "Trening snage 60 min", "Trener hipertrofije, snage i pravilne tehnike izvođenja vježbi.", "oxidetrainer1.png"),
-                new("oxidetrainer2", "Kondicioni trening", "Kondicioni trening 60 min", "Trenerica izdržljivosti i individualnog fitness programa.", "oxidetrainer2.png"),
+                new("oxidetrainer1", "Trening snage", "Trening snage 60 min", "Trener hipertrofije, snage i pravilne tehnike izvođenja vježbi.", "oxidetrainer1.jpg"),
+                new("oxidetrainer2", "Kondicioni trening", "Kondicioni trening 60 min", "Trenerica izdržljivosti i individualnog fitness programa.", "oxidetrainer2.jpg"),
             ],
             SeedGymHours.Oxide),
         new(
@@ -165,8 +165,8 @@ internal static class DevelopmentSeedCatalog
             "+387 60 327 9165",
             "Fitness studio usmjeren na individualni rad, funkcionalni trening, mobilnost i oporavak.",
             [
-                "https://images.unsplash.com/photo-1540497077202-7c8a3999166f",
-                "https://images.unsplash.com/photo-1434682772747-f16d3ea162c3?auto=format&fit=crop&w=1600&q=80",
+                "https://images.unsplash.com/photo-1540497077202-7c8a3999166f?auto=format&fit=crop&w=1200&q=75",
+                "https://images.unsplash.com/photo-1434682772747-f16d3ea162c3?auto=format&fit=crop&w=1200&q=75",
             ],
             "admin.fitfactory",
             55m,
@@ -174,8 +174,8 @@ internal static class DevelopmentSeedCatalog
             ["Traka za trčanje", "Sobni bicikl", "Slobodni utezi", "Cable crossover", "Leg press", "Kettlebell set"],
             ["Personalni trening", "Funkcionalni trening", "Kondicioni trening", "Mobilnost"],
             [
-                new("fitfactorytrainer1", "Funkcionalni trening", "Funkcionalni trening 60 min", "Trener funkcionalne pripreme i razvoja opće kondicije.", "fitfactorytrainer1.png"),
-                new("fitfactorytrainer2", "Mobilnost", "Mobilnost 60 min", "Trenerica mobilnosti, oporavka i pravilnih obrazaca pokreta.", "fitfactorytrainer2.png"),
+                new("fitfactorytrainer1", "Funkcionalni trening", "Funkcionalni trening 60 min", "Trener funkcionalne pripreme i razvoja opće kondicije.", "fitfactorytrainer1.jpg"),
+                new("fitfactorytrainer2", "Mobilnost", "Mobilnost 60 min", "Trenerica mobilnosti, oporavka i pravilnih obrazaca pokreta.", "fitfactorytrainer2.jpg"),
             ],
             SeedGymHours.FitFactory),
         new(
@@ -189,8 +189,8 @@ internal static class DevelopmentSeedCatalog
             "+387 61 457 924",
             "Lokalni fitness klub sa opremom za trening snage, funkcionalni rad i borilačku kondiciju.",
             [
-                "https://images.unsplash.com/photo-1534258936925-c58bed479fcb",
-                "https://images.unsplash.com/photo-1546483875-ad9014c88eba?auto=format&fit=crop&w=1600&q=80",
+                "https://images.unsplash.com/photo-1534258936925-c58bed479fcb?auto=format&fit=crop&w=1200&q=75",
+                "https://images.unsplash.com/photo-1546483875-ad9014c88eba?auto=format&fit=crop&w=1200&q=75",
             ],
             "admin.iskra",
             50m,
@@ -198,8 +198,8 @@ internal static class DevelopmentSeedCatalog
             ["Traka za trčanje", "Slobodni utezi", "Smith mašina", "Squat rack", "Kettlebell set", "Vreća za boks"],
             ["Personalni trening", "Funkcionalni trening", "Trening snage", "Kickboxing"],
             [
-                new("iskratrainer1", "Trening snage", "Trening snage 60 min", "Trener razvoja snage i individualne sportske pripreme.", "iskratrainer1.png"),
-                new("iskratrainer2", "Kickboxing", "Kickboxing 60 min", "Trenerica kondicije i tehničkih osnova kickboxinga.", "iskratrainer2.png"),
+                new("iskratrainer1", "Trening snage", "Trening snage 60 min", "Trener razvoja snage i individualne sportske pripreme.", "iskratrainer1.jpg"),
+                new("iskratrainer2", "Kickboxing", "Kickboxing 60 min", "Trenerica kondicije i tehničkih osnova kickboxinga.", "iskratrainer2.jpg"),
             ],
             SeedGymHours.Iskra),
     ];

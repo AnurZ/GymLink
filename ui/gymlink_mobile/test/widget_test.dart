@@ -883,6 +883,10 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Nema termina'), findsOneWidget);
+    expect(
+      find.text('Sortirano po datumu: najnoviji termini prvo.'),
+      findsOneWidget,
+    );
 
     controller.refresh();
     await tester.pumpAndSettle();

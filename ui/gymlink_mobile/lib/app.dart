@@ -33,7 +33,7 @@ class _GymLinkMobileAppState extends State<GymLinkMobileApp> {
       initialLocation: '/',
       refreshListenable: auth,
       redirect: (context, state) {
-        if (auth.initializing) {
+        if (auth.initializing || auth.signingOut) {
           return state.matchedLocation == '/loading' ? null : '/loading';
         }
         final signingIn =
@@ -82,6 +82,8 @@ class _GymLinkMobileAppState extends State<GymLinkMobileApp> {
             return switch (role) {
               'Member' => const MemberShell(),
               'Trainer' => const TrainerShell(),
+              'GymAdmin' || 'CentralAdmin' => const UnsupportedRoleScreen(),
+              null => const _LoadingScreen(),
               _ => const UnsupportedRoleScreen(),
             };
           },

@@ -14,6 +14,15 @@ import '../../shared/widgets.dart';
 typedef SaveReport = Future<bool> Function(DownloadedFile report);
 typedef PrintReport = Future<void> Function(DownloadedFile report);
 
+const statisticsPalette = <Color>[
+  Color(0xFF2864E8),
+  Color(0xFF0F9D8A),
+  Color(0xFFF59E0B),
+  Color(0xFF7C3AED),
+  Color(0xFFE85D75),
+  Color(0xFF16A34A),
+];
+
 class GymAdminReportsScreen extends StatefulWidget {
   const GymAdminReportsScreen({super.key, this.saveReport, this.printReport});
 
@@ -626,9 +635,7 @@ class _MonthlyBarChart extends StatelessWidget {
                   BarChartRodData(
                     toY: (items[i]['count'] as num).toDouble(),
                     width: 34,
-                    color: i == items.length - 1
-                        ? Colors.blue.shade700
-                        : Colors.blue.shade300,
+                    color: statisticsPalette[i % statisticsPalette.length],
                     borderRadius: const BorderRadius.vertical(
                       top: Radius.circular(4),
                     ),
@@ -646,14 +653,6 @@ class _PlanPieChart extends StatelessWidget {
   const _PlanPieChart({required this.data});
   final Map<String, dynamic>? data;
 
-  static const colors = [
-    Colors.blue,
-    Colors.lightBlue,
-    Colors.indigo,
-    Colors.teal,
-    Colors.purple,
-  ];
-
   @override
   Widget build(BuildContext context) {
     final items = _items(data?['items']);
@@ -669,7 +668,7 @@ class _PlanPieChart extends StatelessWidget {
                 for (var i = 0; i < items.length; i++)
                   PieChartSectionData(
                     value: (items[i]['count'] as num).toDouble(),
-                    color: colors[i % colors.length],
+                    color: statisticsPalette[i % statisticsPalette.length],
                     radius: 42,
                     showTitle: false,
                   ),
@@ -682,7 +681,11 @@ class _PlanPieChart extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 3),
             child: Row(
               children: [
-                Icon(Icons.circle, size: 11, color: colors[i % colors.length]),
+                Icon(
+                  Icons.circle,
+                  size: 11,
+                  color: statisticsPalette[i % statisticsPalette.length],
+                ),
                 const SizedBox(width: 8),
                 Expanded(child: Text('${items[i]['planName']}')),
                 Text('${items[i]['count']} (${items[i]['percentage']}%)'),

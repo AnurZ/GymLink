@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:go_router/go_router.dart';
 import 'package:gymlink_desktop/core/api.dart';
 import 'package:gymlink_desktop/core/theme.dart';
@@ -77,6 +78,24 @@ void main() {
       expect(find.text('142'), findsWidgets);
       expect(find.text('Broj članova po mjesecima'), findsOneWidget);
       expect(find.text('Tipovi članstva'), findsOneWidget);
+      expect(statisticsPalette, const [
+        Color(0xFF2864E8),
+        Color(0xFF0F9D8A),
+        Color(0xFFF59E0B),
+        Color(0xFF7C3AED),
+        Color(0xFFE85D75),
+        Color(0xFF16A34A),
+      ]);
+      final bars = tester.widget<BarChart>(find.byType(BarChart));
+      expect(
+        bars.data.barGroups.map((group) => group.barRods.single.color).toSet(),
+        hasLength(6),
+      );
+      final pie = tester.widget<PieChart>(find.byType(PieChart));
+      expect(
+        pie.data.sections.map((section) => section.color),
+        statisticsPalette.take(pie.data.sections.length),
+      );
       api.requestedPaths.clear();
       await tester.tap(find.byKey(const Key('refresh-gym-statistics')));
       await tester.pumpAndSettle();
@@ -356,7 +375,7 @@ void main() {
   testWidgets(
     'unified memberships use request and membership columns/actions',
     (tester) async {
-      tester.view.physicalSize = const Size(1500, 900);
+      tester.view.physicalSize = const Size(1920, 1080);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -373,14 +392,12 @@ void main() {
       await tester.pumpAndSettle();
 
       for (final heading in [
-        'Korisnik',
-        'Email',
-        'Vrsta članarine',
-        'Iznos',
-        'Datum',
-        'Način plaćanja',
-        'Status zahtjeva',
-        'Status / period članstva',
+        'Član',
+        'Članarina',
+        'Plaćanje',
+        'Zahtjev',
+        'Status članstva',
+        'Period',
         'Akcije',
       ]) {
         expect(find.text(heading), findsWidgets);
@@ -400,16 +417,18 @@ void main() {
       expect(api.requestedPaymentCategories.last, 0);
       expect(find.byTooltip('Aktiviraj nakon naplate'), findsOneWidget);
       expect(find.byTooltip('Odbij'), findsOneWidget);
-      expect(find.byTooltip('Detalji'), findsNWidgets(2));
+      expect(find.byTooltip('Detalji'), findsNWidgets(3));
+      expect(find.text('09.08.2026'), findsNothing);
+      expect(find.text('07.08.2026'), findsNothing);
+      final detailButtons = find.byTooltip('Detalji');
+      final detailCenters = List.generate(
+        detailButtons.evaluate().length,
+        (index) => tester.getCenter(detailButtons.at(index)).dx,
+      );
+      expect(detailCenters.toSet(), hasLength(1));
       expect(find.text('Active'), findsOneWidget);
       expect(find.byTooltip('Akcije članstva'), findsOneWidget);
-      final horizontalTable = find.byWidgetPredicate(
-        (widget) =>
-            widget is SingleChildScrollView &&
-            widget.scrollDirection == Axis.horizontal,
-      );
-      await tester.drag(horizontalTable, const Offset(-1200, 0));
-      await tester.pumpAndSettle();
+      expect(tester.getRect(find.text('Akcije')).right, lessThan(1920));
       await tester.tap(find.byTooltip('Akcije članstva'));
       await tester.pumpAndSettle();
       expect(find.text('Suspenduj'), findsOneWidget);
@@ -428,6 +447,59 @@ void main() {
       expect(api.requestedMembershipStatuses.last, 1);
     },
   );
+
+  testWidgets('membership table keeps horizontal scroll on narrow windows', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: _GymAdminMembershipRequestsApi(),
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: TenantMembershipRequestsScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final horizontal = find.byWidgetPredicate(
+      (widget) =>
+          widget is SingleChildScrollView &&
+          widget.scrollDirection == Axis.horizontal,
+    );
+    expect(horizontal, findsOneWidget);
+    await tester.drag(horizontal, const Offset(-600, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('Akcije'), findsOneWidget);
+  });
+
+  testWidgets('reservation refresh preserves existing results on failure', (
+    tester,
+  ) async {
+    final api = _GymAdminReservationsApi(withItem: true, failAfterFirst: true);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: TenantReservationsScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Test Member · Test Trainer'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('refresh-reservations')));
+    await tester.pumpAndSettle();
+
+    expect(api.requestedStatuses, [null, null]);
+    expect(find.text('Test Member · Test Trainer'), findsOneWidget);
+    expect(find.textContaining('prethodni podaci'), findsOneWidget);
+  });
 
   testWidgets('successful tenant mutation with failed refresh keeps the view', (
     tester,
@@ -1626,9 +1698,12 @@ class _GymAdminScheduleApi extends ApiClient {
 }
 
 class _GymAdminReservationsApi extends ApiClient {
-  _GymAdminReservationsApi() : super(_TestTokens());
+  _GymAdminReservationsApi({this.withItem = false, this.failAfterFirst = false})
+    : super(_TestTokens());
 
   final List<int?> requestedStatuses = [];
+  final bool withItem;
+  final bool failAfterFirst;
 
   @override
   Future<PagedData> page(
@@ -1637,7 +1712,27 @@ class _GymAdminReservationsApi extends ApiClient {
   }) async {
     if (path == '/api/tenant/reservations') {
       requestedStatuses.add(query['status'] as int?);
-      return const PagedData(items: [], page: 1, pageSize: 20, totalCount: 0);
+      if (failAfterFirst && requestedStatuses.length > 1) {
+        throw StateError('refresh failed');
+      }
+      return PagedData(
+        items: withItem
+            ? const [
+                {
+                  'id': 'reservation-1',
+                  'memberName': 'Test Member',
+                  'trainerName': 'Test Trainer',
+                  'offeringName': 'Personalni trening',
+                  'startsAtUtc': '2026-08-13T10:00:00Z',
+                  'status': 1,
+                  'concurrencyToken': 'token',
+                },
+              ]
+            : const [],
+        page: 1,
+        pageSize: 20,
+        totalCount: withItem ? 1 : 0,
+      );
     }
     throw StateError('Unexpected page request: $path');
   }
@@ -1695,10 +1790,23 @@ class _GymAdminMembershipRequestsApi extends ApiClient {
               'concurrencyToken': 'membership-token',
             },
           },
+          {
+            'id': 'request-3',
+            'memberDisplayName': 'Rejected Member',
+            'memberEmail': 'rejected@gymlink.local',
+            'planName': 'Mjesečna',
+            'price': 50,
+            'currency': 'BAM',
+            'requestedAtUtc': '2026-08-07T10:00:00Z',
+            'paymentMethod': 2,
+            'status': 2,
+            'allowedActions': ['view'],
+            'concurrencyToken': 'rejected-token',
+          },
         ],
         page: 1,
         pageSize: 20,
-        totalCount: 2,
+        totalCount: 3,
       );
     }
     throw StateError('Unexpected page request: $path');

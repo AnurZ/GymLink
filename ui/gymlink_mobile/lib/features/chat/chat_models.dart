@@ -109,6 +109,7 @@ final class ChatMessageModel {
     required this.clientMessageId,
     required this.text,
     required this.sentAtUtc,
+    this.imageUrl,
     this.delivery = MessageDeliveryState.sent,
   });
 
@@ -117,6 +118,7 @@ final class ChatMessageModel {
   final String senderUserId;
   final String clientMessageId;
   final String text;
+  final String? imageUrl;
   final DateTime sentAtUtc;
   final MessageDeliveryState delivery;
 
@@ -127,6 +129,7 @@ final class ChatMessageModel {
         senderUserId: json['senderUserId'].toString(),
         clientMessageId: json['clientMessageId'].toString(),
         text: json['text'].toString(),
+        imageUrl: json['imageUrl']?.toString(),
         sentAtUtc: DateTime.parse(json['sentAtUtc'].toString()).toUtc(),
       );
 
@@ -136,6 +139,7 @@ final class ChatMessageModel {
     senderUserId: senderUserId,
     clientMessageId: clientMessageId,
     text: text,
+    imageUrl: imageUrl,
     sentAtUtc: sentAtUtc,
     delivery: value,
   );

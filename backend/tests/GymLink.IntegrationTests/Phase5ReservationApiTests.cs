@@ -411,14 +411,17 @@ public sealed class Phase5ReservationApiTests
                     {
                         using var document = JsonDocument.Parse(payload);
                         var notification = document.RootElement.GetProperty("payload");
+                        var text = notification.GetProperty("text").GetString()!;
                         return notification.GetProperty("recipientUserId").GetGuid() ==
                                 inPersonSession.User.Id &&
                             notification.GetProperty("category").GetString() ==
                                 "reservation.confirmed_pay_in_person" &&
                             notification.GetProperty("targetId").GetGuid() ==
                                 inPerson.Id &&
-                            notification.GetProperty("text").GetString() ==
-                                "Termin je potvrđen. Plaćanje se vrši uživo na treningu.";
+                            text.Contains(inPersonSession.User.DisplayName) &&
+                            text.Contains(trainer.DisplayName) &&
+                            text.Contains(offering.Name) &&
+                            !text.Contains("Plaćanje se vrši uživo na treningu.");
                     });
             }
 

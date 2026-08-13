@@ -308,6 +308,13 @@ public sealed class SeededIdentityApiTests
             var images = await verificationContext.GymImages
                 .IgnoreQueryFilters()
                 .ToListAsync();
+            Assert.All(images, image =>
+            {
+                Assert.Contains("auto=format", image.PublicUrl);
+                Assert.Contains("fit=crop", image.PublicUrl);
+                Assert.Contains("w=1200", image.PublicUrl);
+                Assert.Contains("q=75", image.PublicUrl);
+            });
             var plans = await verificationContext.MembershipPlans
                 .IgnoreQueryFilters()
                 .ToListAsync();
@@ -393,8 +400,11 @@ public sealed class SeededIdentityApiTests
             {
                 using var response = await client.GetAsync(trainer.ImageUrl);
                 response.EnsureSuccessStatusCode();
-                Assert.Equal("image/png", response.Content.Headers.ContentType?.MediaType);
+                Assert.Equal("image/jpeg", response.Content.Headers.ContentType?.MediaType);
                 Assert.Equal(trainer.ImageFileSizeBytes, response.Content.Headers.ContentLength);
+                Assert.True(response.Headers.CacheControl?.Public);
+                Assert.Equal(TimeSpan.FromDays(365), response.Headers.CacheControl?.MaxAge);
+                Assert.Contains("immutable", response.Headers.GetValues("Cache-Control").Single());
             }
 
             var membershipRequests = await verificationContext.MembershipRequests
@@ -542,14 +552,14 @@ public sealed class SeededIdentityApiTests
         GymLink.Domain.Trainers.TrainerProfile trainer)
     {
         Assert.False(string.IsNullOrWhiteSpace(trainer.ImageStorageKey));
-        Assert.EndsWith(".png", trainer.ImageStorageKey, StringComparison.OrdinalIgnoreCase);
+        Assert.EndsWith(".jpg", trainer.ImageStorageKey, StringComparison.OrdinalIgnoreCase);
         Assert.False(string.IsNullOrWhiteSpace(trainer.ImageUrl));
         Assert.StartsWith("/uploads/trainer-images/", trainer.ImageUrl, StringComparison.Ordinal);
-        Assert.Equal("image/png", trainer.ImageContentType);
+        Assert.Equal("image/jpeg", trainer.ImageContentType);
         Assert.InRange(
             trainer.ImageFileSizeBytes!.Value,
             1,
-            GymLink.Domain.Trainers.TrainerProfile.MaximumImageFileSizeBytes);
+            150 * 1024);
     }
 
     private static void AssertTokenClaims(string value, ExpectedAccount expected)

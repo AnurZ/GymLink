@@ -21,6 +21,8 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace GymLink.IntegrationTests;
 
@@ -32,7 +34,7 @@ public sealed class Phase9ChatApiTests
         new(JsonSerializerDefaults.Web);
 
     [Fact]
-    public async Task Chat_is_pair_scoped_idempotent_realtime_and_read_only_after_ineligibility()
+    public async Task Chat_is_pair_scoped_idempotent_realtime_and_remains_writable_after_ineligibility()
     {
         var connectionString = TestSqlServer.ConnectionString(
             $"GymLink_Phase9_{Guid.NewGuid():N}");
@@ -95,6 +97,24 @@ public sealed class Phase9ChatApiTests
                 HttpStatusCode.NotFound,
                 (await client.GetAsync(
                     $"/api/me/conversations/{opened.Id}/messages?take=20")).StatusCode);
+            var contentRoot = factory.Services
+                .GetRequiredService<IHostEnvironment>()
+                .ContentRootPath;
+            var chatStorage = Path.Combine(
+                contentRoot,
+                ".gymlink-storage",
+                "chat-images");
+            Directory.CreateDirectory(chatStorage);
+            var filesBeforeRejectedUpload = Directory.GetFiles(chatStorage).Length;
+            using var rejectedImageForm = CreateImageForm(Guid.NewGuid());
+            Assert.Equal(
+                HttpStatusCode.NotFound,
+                (await client.PostAsync(
+                    $"/api/me/conversations/{opened.Id}/images",
+                    rejectedImageForm)).StatusCode);
+            Assert.Equal(
+                filesBeforeRejectedUpload,
+                Directory.GetFiles(chatStorage).Length);
 
             var clientMessageId = Guid.NewGuid();
             Authorize(client, member);
@@ -186,13 +206,60 @@ public sealed class Phase9ChatApiTests
             await hub.InvokeAsync("conversation:join", opened.Id);
 
             Authorize(client, member);
+            using (var invalidImageForm = CreateImageForm(
+                Guid.NewGuid(),
+                [0x00, 0x01, 0x02]))
+            {
+                Assert.Equal(
+                    HttpStatusCode.BadRequest,
+                    (await client.PostAsync(
+                        $"/api/me/conversations/{opened.Id}/images",
+                        invalidImageForm)).StatusCode);
+            }
             var realtimeMessageId = Guid.NewGuid();
-            var realtimeSend = await client.PostAsJsonAsync(
-                $"/api/me/conversations/{opened.Id}/messages",
-                new { clientMessageId = realtimeMessageId, text = "Vidimo se uskoro." });
+            using var imageForm = CreateImageForm(realtimeMessageId);
+            var realtimeSend = await client.PostAsync(
+                $"/api/me/conversations/{opened.Id}/images",
+                imageForm);
             realtimeSend.EnsureSuccessStatusCode();
+            var imageMessage = await realtimeSend.Content
+                .ReadFromJsonAsync<ChatMessageDto>();
+            Assert.NotNull(imageMessage);
+            Assert.Equal(Message.ImagePreviewText, imageMessage.Text);
+            Assert.NotNull(imageMessage.ImageUrl);
             var delivered = await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal(realtimeMessageId, delivered.ClientMessageId);
+            Assert.Equal(imageMessage.ImageUrl, delivered.ImageUrl);
+
+            using var duplicateImageForm = CreateImageForm(realtimeMessageId);
+            var duplicateImage = await client.PostAsync(
+                $"/api/me/conversations/{opened.Id}/images",
+                duplicateImageForm);
+            duplicateImage.EnsureSuccessStatusCode();
+            Assert.Equal(
+                imageMessage.Id,
+                (await duplicateImage.Content.ReadFromJsonAsync<ChatMessageDto>())!.Id);
+
+            Authorize(client, trainer);
+            var imageDownload = await client.GetAsync(imageMessage.ImageUrl);
+            imageDownload.EnsureSuccessStatusCode();
+            Assert.Equal("image/png", imageDownload.Content.Headers.ContentType?.MediaType);
+            Assert.True(imageDownload.Headers.CacheControl?.Private);
+            Assert.Equal(
+                TimeSpan.FromDays(365),
+                imageDownload.Headers.CacheControl?.MaxAge);
+            Assert.Contains(
+                imageDownload.Headers.CacheControl!.Extensions,
+                extension => extension.Name == "immutable");
+            using var anonymousClient = factory.CreateClient();
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                (await anonymousClient.GetAsync(imageMessage.ImageUrl)).StatusCode);
+
+            Authorize(client, nonParticipant);
+            Assert.Equal(
+                HttpStatusCode.NotFound,
+                (await client.GetAsync(imageMessage.ImageUrl)).StatusCode);
 
             var availableConversation = new TaskCompletionSource<Guid>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
@@ -297,26 +364,24 @@ public sealed class Phase9ChatApiTests
                 null);
             postRevocationRead.EnsureSuccessStatusCode();
             Assert.False(revokedReadDelivery.Task.IsCompleted);
-            await Assert.ThrowsAsync<HubException>(() =>
-                hub.InvokeAsync("conversation:read", opened.Id));
+            await hub.InvokeAsync("conversation:read", opened.Id);
 
-            var rejected = await client.PostAsJsonAsync(
+            var sentAfterIneligibility = await client.PostAsJsonAsync(
                 $"/api/me/conversations/{opened.Id}/messages",
-                new { clientMessageId = Guid.NewGuid(), text = "Ova poruka ne prolazi." });
-            Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
-            Assert.Equal("conversation_read_only", await ProblemCodeAsync(rejected));
+                new { clientMessageId = Guid.NewGuid(), text = "Razgovor ostaje otvoren." });
+            sentAfterIneligibility.EnsureSuccessStatusCode();
             var memberConversations =
                 await client.GetFromJsonAsync<PagedResult<ConversationDto>>(
                     "/api/me/conversations?page=1&pageSize=20");
-            Assert.False(Assert.Single(memberConversations!.Items).CanSend);
+            Assert.True(Assert.Single(memberConversations!.Items).CanSend);
 
             await using var verification = CreateContext(connectionString);
             Assert.Equal(
-                2,
+                3,
                 await verification.Messages.IgnoreQueryFilters()
                     .CountAsync(x => x.ConversationId == opened.Id));
             Assert.Equal(
-                2,
+                3,
                 await verification.OutboxMessages
                     .CountAsync(x =>
                         x.MessageType == "notification.requested.v1" &&
@@ -583,5 +648,18 @@ public sealed class Phase9ChatApiTests
             .UseSqlServer(connectionString)
             .Options;
         return new GymLinkDbContext(options, new TestTenantContext(null));
+    }
+
+    private static MultipartFormDataContent CreateImageForm(
+        Guid clientMessageId,
+        byte[]? content = null)
+    {
+        var form = new MultipartFormDataContent();
+        form.Add(new StringContent(clientMessageId.ToString()), "clientMessageId");
+        var image = new ByteArrayContent(
+            content ?? [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        image.Headers.ContentType = new("image/png");
+        form.Add(image, "file", "chat.png");
+        return form;
     }
 }

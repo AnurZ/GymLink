@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
@@ -282,9 +284,14 @@ class _ConversationTile extends StatelessWidget {
 }
 
 class ChatDetailScreen extends StatefulWidget {
-  const ChatDetailScreen({required this.conversation, super.key});
+  const ChatDetailScreen({
+    required this.conversation,
+    this.pickImage,
+    super.key,
+  });
 
   final ConversationModel conversation;
+  final Future<XFile?> Function()? pickImage;
 
   @override
   State<ChatDetailScreen> createState() => _ChatDetailScreenState();
@@ -330,6 +337,52 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
   Future<void> _send() async {
     final sent = await _chatController.send(_draft.text);
     if (sent && mounted) _draft.clear();
+  }
+
+  Future<void> _sendImage() async {
+    final image =
+        await (widget.pickImage?.call() ??
+            ImagePicker().pickImage(
+              source: ImageSource.gallery,
+              maxWidth: 1600,
+              maxHeight: 1600,
+              imageQuality: 80,
+            ));
+    if (image == null || !mounted) return;
+    final pickedName = image.name.trim();
+    final extension = pickedName.contains('.')
+        ? pickedName.split('.').last.toLowerCase()
+        : '';
+    final contentType = switch (image.mimeType?.toLowerCase()) {
+      'image/jpeg' => 'image/jpeg',
+      'image/png' => 'image/png',
+      'image/webp' => 'image/webp',
+      _ => switch (extension) {
+        'jpg' || 'jpeg' => 'image/jpeg',
+        'png' => 'image/png',
+        'webp' => 'image/webp',
+        _ => null,
+      },
+    };
+    if (contentType == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Odaberite JPG, PNG ili WebP sliku.')),
+      );
+      return;
+    }
+    final fileName = extension.isNotEmpty
+        ? pickedName
+        : 'chat.${contentType == 'image/jpeg' ? 'jpg' : contentType.split('/').last}';
+    final bytes = await image.readAsBytes();
+    if (bytes.length > 5 * 1024 * 1024) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Slika mora biti manja od 5 MB.')),
+        );
+      }
+      return;
+    }
+    await _chatController.sendImage(bytes, fileName, contentType);
   }
 
   @override
@@ -394,6 +447,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
                                   final message = controller.messages[index];
                                   return _MessageBubble(
                                     message: message,
+                                    image: controller.imageFor(message),
                                     mine:
                                         message.senderUserId ==
                                         controller.currentUserId,
@@ -419,9 +473,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
                 ),
               _Composer(
                 controller: _draft,
-                enabled: conversation.canSend,
                 sending: controller.sending,
+                sendingImage: controller.sendingImage,
                 onSend: _send,
+                onImage: _sendImage,
               ),
             ],
           ),
@@ -434,11 +489,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
+    required this.image,
     required this.mine,
     required this.retry,
   });
 
   final ChatMessageModel message;
+  final Future<Uint8List?> image;
   final bool mine;
   final VoidCallback retry;
 
@@ -461,7 +518,43 @@ class _MessageBubble extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Align(alignment: Alignment.centerLeft, child: Text(message.text)),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: message.imageUrl == null
+                    ? Text(message.text)
+                    : FutureBuilder<Uint8List?>(
+                        future: image,
+                        builder: (context, snapshot) {
+                          final bytes = snapshot.data;
+                          if (bytes != null) {
+                            return ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.memory(
+                                bytes,
+                                key: Key('chat-image-${message.id}'),
+                                width: 240,
+                                fit: BoxFit.cover,
+                              ),
+                            );
+                          }
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const SizedBox(
+                              width: 240,
+                              height: 160,
+                              child: Center(child: CircularProgressIndicator()),
+                            );
+                          }
+                          return const SizedBox(
+                            width: 240,
+                            height: 120,
+                            child: Center(
+                              child: Icon(Icons.broken_image_outlined),
+                            ),
+                          );
+                        },
+                      ),
+              ),
               const SizedBox(height: 4),
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -501,38 +594,20 @@ class _MessageBubble extends StatelessWidget {
 class _Composer extends StatelessWidget {
   const _Composer({
     required this.controller,
-    required this.enabled,
     required this.sending,
+    required this.sendingImage,
     required this.onSend,
+    required this.onImage,
   });
 
   final TextEditingController controller;
-  final bool enabled;
   final bool sending;
+  final bool sendingImage;
   final VoidCallback onSend;
+  final VoidCallback onImage;
 
   @override
   Widget build(BuildContext context) {
-    if (!enabled) {
-      return const Material(
-        color: Color(0xFFFFF3CD),
-        child: Padding(
-          padding: EdgeInsets.all(14),
-          child: Row(
-            children: [
-              Icon(Icons.lock_outline),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Razgovor je dostupan samo za čitanje.',
-                  key: Key('chat-read-only'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
     return Material(
       elevation: 8,
       child: Padding(
@@ -540,11 +615,22 @@ class _Composer extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            IconButton(
+              key: const Key('chat-image-picker'),
+              tooltip: 'PoÅ¡alji sliku',
+              onPressed: sending || sendingImage ? null : onImage,
+              icon: sendingImage
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.attach_file),
+            ),
             Expanded(
               child: TextField(
                 key: const Key('chat-draft'),
                 controller: controller,
-                enabled: !sending,
+                enabled: !sending && !sendingImage,
                 minLines: 1,
                 maxLines: 5,
                 maxLength: 2000,
@@ -558,7 +644,7 @@ class _Composer extends StatelessWidget {
             const SizedBox(width: 8),
             IconButton.filled(
               key: const Key('chat-send'),
-              onPressed: sending ? null : onSend,
+              onPressed: sending || sendingImage ? null : onSend,
               icon: sending
                   ? const SizedBox.square(
                       dimension: 18,

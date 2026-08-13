@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../../core/api.dart';
 import '../../core/payments.dart';
 import '../../core/theme.dart';
+import '../../shared/cached_network_image_view.dart';
 import '../../shared/widgets.dart';
 import '../reservations/reservation_refresh_controller.dart';
 
@@ -221,14 +222,13 @@ class _GymMapState extends State<_GymMap> {
       child: Icon(Icons.fitness_center, color: GymLinkColors.blue),
     );
     return ClipOval(
-      child: imageUrl == null
-          ? fallback
-          : Image.network(
-              imageUrl,
-              key: Key('gym-map-marker-image-${gym['id']}'),
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => fallback,
-            ),
+      child: CachedNetworkImageView(
+        key: Key('gym-map-marker-image-${gym['id']}'),
+        imageUrl: imageUrl,
+        fallback: fallback,
+        decodeWidth: 96,
+        decodeHeight: 96,
+      ),
     );
   }
 
@@ -400,22 +400,18 @@ class _GymCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(14),
                 child: SizedBox.square(
                   dimension: 82,
-                  child: imageUrl == null
-                      ? const ColoredBox(
-                          color: Color(0xFFE8EDF7),
-                          child: Icon(
-                            Icons.fitness_center,
-                            color: GymLinkColors.blue,
-                          ),
-                        )
-                      : Image.network(
-                          imageUrl,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => const ColoredBox(
-                            color: Color(0xFFE8EDF7),
-                            child: Icon(Icons.broken_image_outlined),
-                          ),
-                        ),
+                  child: CachedNetworkImageView(
+                    imageUrl: imageUrl,
+                    decodeWidth: 164,
+                    decodeHeight: 164,
+                    fallback: const ColoredBox(
+                      color: Color(0xFFE8EDF7),
+                      child: Icon(
+                        Icons.fitness_center,
+                        color: GymLinkColors.blue,
+                      ),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(width: 14),
@@ -501,10 +497,11 @@ class _GymPhotoCarouselState extends State<_GymPhotoCarousel> {
                   key: const Key('gym-image-carousel'),
                   itemCount: widget.imageUrls.length,
                   onPageChanged: (value) => setState(() => _current = value),
-                  itemBuilder: (_, index) => Image.network(
-                    widget.imageUrls[index],
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => const ColoredBox(
+                  itemBuilder: (_, index) => CachedNetworkImageView(
+                    imageUrl: widget.imageUrls[index],
+                    decodeWidth: 1200,
+                    decodeHeight: 700,
+                    fallback: const ColoredBox(
                       color: Color(0xFFE8EDF7),
                       child: Icon(Icons.broken_image_outlined),
                     ),

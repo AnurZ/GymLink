@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
 import '../../core/auth.dart';
+import '../../shared/cached_network_image_view.dart';
 import '../../shared/widgets.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -354,12 +355,11 @@ class _ProfileAvatar extends StatelessWidget {
     );
     final image = preview != null
         ? Image.memory(preview!, fit: BoxFit.cover)
-        : imageUrl == null
-        ? fallback
-        : Image.network(
-            imageUrl!,
-            fit: BoxFit.cover,
-            errorBuilder: (_, _, _) => fallback,
+        : CachedNetworkImageView(
+            imageUrl: imageUrl,
+            fallback: fallback,
+            decodeWidth: 116,
+            decodeHeight: 116,
           );
     return ClipOval(child: SizedBox.square(dimension: 58, child: image));
   }

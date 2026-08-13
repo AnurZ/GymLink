@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -18,6 +19,7 @@ import 'package:gymlink_mobile/features/reservations/reservation_refresh_control
 import 'package:gymlink_mobile/features/trainer/trainer_shell.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 void main() {
@@ -326,7 +328,9 @@ void main() {
     expect(find.byIcon(Icons.done_all), findsOneWidget);
   });
 
-  testWidgets('revoked conversation disables the composer', (tester) async {
+  testWidgets('stored participant can send when compatibility flag is false', (
+    tester,
+  ) async {
     final conversation = _conversation('conversation');
     final repository = _FakeChatRepository(
       conversations: [conversation],
@@ -355,8 +359,47 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('chat-read-only')), findsOneWidget);
-    expect(find.byKey(const Key('chat-send')), findsNothing);
+    expect(find.byKey(const Key('chat-read-only')), findsNothing);
+    expect(find.byKey(const Key('chat-send')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('chat-draft')), 'Pozdrav');
+    await tester.tap(find.byKey(const Key('chat-send')));
+    await tester.pumpAndSettle();
+    expect(repository.sentClientIds, hasLength(1));
+  });
+
+  testWidgets('paperclip picks and renders a standalone gallery image', (
+    tester,
+  ) async {
+    final conversation = _conversation('conversation');
+    final repository = _FakeChatRepository(conversations: [conversation]);
+    final realtime = _FakeChatRealtime();
+    final controller = ChatController(repository, realtime, AuthController());
+    addTearDown(realtime.close);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: controller,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: ChatDetailScreen(
+            conversation: conversation,
+            pickImage: () async => XFile.fromData(
+              _pngBytes(),
+              name: 'chat.png',
+              mimeType: 'image/png',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('chat-image-picker')));
+    await tester.pumpAndSettle();
+
+    expect(repository.sentImageCount, 1);
+    expect(find.byKey(const Key('chat-image-picker')), findsOneWidget);
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.text('Slika'), findsNothing);
   });
 
   testWidgets('Member and Trainer shells expose the conversation feature', (
@@ -543,6 +586,7 @@ final class _FakeChatRepository implements ChatRepositoryGateway {
   bool failSend;
   int _historyIndex = 0;
   final List<String> sentClientIds = [];
+  int sentImageCount = 0;
   final List<(DateTime?, String?)> messageCursors = [];
 
   @override
@@ -608,7 +652,36 @@ final class _FakeChatRepository implements ChatRepositoryGateway {
 
   @override
   Future<void> markRead(String conversationId) async {}
+
+  @override
+  Future<ChatMessageModel> sendImage(
+    String conversationId,
+    String clientMessageId,
+    List<int> bytes,
+    String fileName,
+    String contentType,
+  ) async {
+    sentImageCount++;
+    return ChatMessageModel(
+      id: 'saved-$clientMessageId',
+      conversationId: conversationId,
+      senderUserId: '',
+      clientMessageId: clientMessageId,
+      text: 'Slika',
+      imageUrl: '/image/$clientMessageId',
+      sentAtUtc: DateTime.utc(2026, 4),
+    );
+  }
+
+  @override
+  Future<Uint8List> imageBytes(String imageUrl) async => _pngBytes();
 }
+
+Uint8List _pngBytes() => Uint8List.fromList(
+  base64Decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  ),
+);
 
 final class _FakeChatRealtime implements ChatRealtimeGateway {
   final _messages = StreamController<ChatMessageModel>.broadcast();

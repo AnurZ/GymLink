@@ -8,6 +8,7 @@ using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.Memberships;
 using GymLink.Application.Payments;
+using GymLink.Contracts.Messaging.V1;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Infrastructure.Persistence;
@@ -587,6 +588,18 @@ public sealed class Phase4MembershipApiTests
             await using var verification = CreateContext(connectionString);
             Assert.False(await verification.Payments.IgnoreQueryFilters().AnyAsync(
                 x => x.TargetId == membership.Id));
+            Assert.Contains(
+                await verification.UserGymAssignments.IgnoreQueryFilters()
+                    .Where(x => x.UserId == member.User.Id)
+                    .ToListAsync(),
+                x => x.Role == RoleNames.Member &&
+                    x.Status == AssignmentStatus.Active);
+            Assert.Single(
+                await verification.OutboxMessages
+                    .Where(x =>
+                        x.MessageType == MessageContractNames.WelcomeEmailRequestedV1 &&
+                        x.Payload.Contains(member.User.Id.ToString()))
+                    .ToListAsync());
         }
         finally
         {

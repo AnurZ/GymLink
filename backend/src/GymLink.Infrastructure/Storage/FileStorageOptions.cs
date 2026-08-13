@@ -10,4 +10,5 @@ public sealed class FileStorageOptions
     public string RequestPath { get; init; } = DefaultRequestPath;
     public string GymRootPath { get; init; } = string.Empty;
     public string GymRequestPath { get; init; } = DefaultGymRequestPath;
+    public string ChatRootPath { get; init; } = string.Empty;
 }

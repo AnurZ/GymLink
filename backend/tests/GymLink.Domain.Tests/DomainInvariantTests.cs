@@ -706,4 +706,41 @@ public sealed class DomainInvariantTests
                 "Hello",
                 DateTime.SpecifyKind(now, DateTimeKind.Local)));
     }
+
+    [Fact]
+    public void Message_image_requires_complete_bounded_supported_metadata()
+    {
+        var ids = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
+        var now = new DateTime(2026, 8, 13, 12, 0, 0, DateTimeKind.Utc);
+        var message = Message.CreateImage(
+            ids[0],
+            ids[1],
+            ids[2],
+            ids[3],
+            "image-key.jpg",
+            "image/jpeg",
+            125_000,
+            now);
+
+        Assert.Equal(Message.ImagePreviewText, message.Text);
+        Assert.Equal("image-key.jpg", message.ImageStorageKey);
+        Assert.Equal("image/jpeg", message.ImageContentType);
+        Assert.Equal(125_000, message.ImageFileSizeBytes);
+
+        Assert.Equal(
+            "message_image_storage_key_invalid",
+            Assert.Throws<DomainException>(() => Message.CreateImage(
+                ids[0], ids[1], ids[2], Guid.NewGuid(), "../image.jpg",
+                "image/jpeg", 1, now)).Code);
+        Assert.Equal(
+            "message_image_content_type_invalid",
+            Assert.Throws<DomainException>(() => Message.CreateImage(
+                ids[0], ids[1], ids[2], Guid.NewGuid(), "image.gif",
+                "image/gif", 1, now)).Code);
+        Assert.Equal(
+            "message_image_file_size_invalid",
+            Assert.Throws<DomainException>(() => Message.CreateImage(
+                ids[0], ids[1], ids[2], Guid.NewGuid(), "image.jpg",
+                "image/jpeg", Message.MaximumImageFileSizeBytes + 1, now)).Code);
+    }
 }
