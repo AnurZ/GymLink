@@ -49,7 +49,7 @@ class _NotificationScreenState extends State<NotificationScreen>
   bool _busy = false;
   bool _hasMore = false;
   bool _markingAll = false;
-  bool? _isRead;
+  bool _unreadOnly = false;
   String? _error;
 
   @override
@@ -85,7 +85,11 @@ class _NotificationScreenState extends State<NotificationScreen>
     try {
       final page = await context.read<ApiClient>().page(
         '/api/me/notifications',
-        query: {'page': _page, 'pageSize': 20, 'isRead': _isRead},
+        query: {
+          'page': _page,
+          'pageSize': 20,
+          'isRead': _unreadOnly ? false : null,
+        },
       );
       if (mounted) {
         setState(() {
@@ -130,86 +134,105 @@ class _NotificationScreenState extends State<NotificationScreen>
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('Obavijesti'),
-      actions: [
-        TextButton(
-          onPressed:
-              _markingAll || !_items.any((item) => item['isRead'] != true)
-              ? null
-              : _markAllRead,
-          child: Text(
-            _markingAll ? 'Označavanje…' : 'Označi sve kao pročitano',
-          ),
+  Widget build(BuildContext context) => DefaultTabController(
+    length: 2,
+    initialIndex: _unreadOnly ? 1 : 0,
+    child: Scaffold(
+      appBar: AppBar(
+        title: const Text('Obavijesti'),
+        bottom: TabBar.secondary(
+          tabs: const [
+            Tab(key: Key('notifications-all-tab'), text: 'Sve'),
+            Tab(key: Key('notifications-unread-tab'), text: 'Nepročitane'),
+          ],
+          onTap: (index) {
+            final unreadOnly = index == 1;
+            if (_unreadOnly == unreadOnly) return;
+            setState(() => _unreadOnly = unreadOnly);
+            _load(reset: true);
+          },
         ),
-      ],
-    ),
-    body: RefreshIndicator(
-      onRefresh: () => _load(reset: true),
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          SegmentedButton<bool?>(
-            segments: const [
-              ButtonSegment(value: null, label: Text('Sve')),
-              ButtonSegment(value: false, label: Text('Nepročitane')),
-              ButtonSegment(value: true, label: Text('Pročitane')),
-            ],
-            selected: {_isRead},
-            onSelectionChanged: (value) {
-              setState(() => _isRead = value.first);
-              _load(reset: true);
-            },
-          ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Text(
-                _error!,
-                style: const TextStyle(color: GymLinkColors.danger),
-              ),
-            ),
-          if (!_busy && _items.isEmpty && _error == null)
-            const Padding(
-              padding: EdgeInsets.all(36),
-              child: Center(child: Text('Nemate obavijesti.')),
-            ),
-          for (final item in _items)
-            Card(
-              color: item['isRead'] == true
-                  ? null
-                  : GymLinkColors.blue.withValues(alpha: 0.08),
-              child: ListTile(
-                leading: const Icon(Icons.notifications_outlined),
-                title: Text(item['title']?.toString() ?? 'Obavijest'),
-                subtitle: Text(
-                  '${_preview(item['text'])}\n${_notificationDate(item['createdAtUtc'])}',
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
+      ),
+      body: RefreshIndicator(
+        onRefresh: () => _load(reset: true),
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Align(
+              alignment: Alignment.centerRight,
+              child: Semantics(
+                label: 'Označi sve kao pročitano',
+                button: true,
+                child: TextButton(
+                  key: const Key('mark-all-notifications-read'),
+                  onPressed:
+                      _markingAll ||
+                          !_items.any((item) => item['isRead'] != true)
+                      ? null
+                      : _markAllRead,
+                  child: _markingAll
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text(
+                          'Označi sve kao pročitano',
+                          maxLines: 1,
+                          overflow: TextOverflow.fade,
+                          softWrap: false,
+                        ),
                 ),
-                trailing: item['isRead'] == true
-                    ? null
-                    : const Icon(Icons.circle, size: 10),
-                onTap: () => _openDetails(item),
               ),
             ),
-          if (_hasMore)
-            TextButton(
-              onPressed: _busy
-                  ? null
-                  : () {
-                      _page++;
-                      _load(reset: false);
-                    },
-              child: const Text('Učitaj još'),
-            ),
-          if (_busy)
-            const Padding(
-              padding: EdgeInsets.all(20),
-              child: Center(child: CircularProgressIndicator()),
-            ),
-        ],
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text(
+                  _error!,
+                  style: const TextStyle(color: GymLinkColors.danger),
+                ),
+              ),
+            if (!_busy && _items.isEmpty && _error == null)
+              const Padding(
+                padding: EdgeInsets.all(36),
+                child: Center(child: Text('Nemate obavijesti.')),
+              ),
+            for (final item in _items)
+              Card(
+                color: item['isRead'] == true
+                    ? null
+                    : GymLinkColors.blue.withValues(alpha: 0.08),
+                child: ListTile(
+                  leading: const Icon(Icons.notifications_outlined),
+                  title: Text(item['title']?.toString() ?? 'Obavijest'),
+                  subtitle: Text(
+                    '${_preview(item['text'])}\n${_notificationDate(item['createdAtUtc'])}',
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: item['isRead'] == true
+                      ? null
+                      : const Icon(Icons.circle, size: 10),
+                  onTap: () => _openDetails(item),
+                ),
+              ),
+            if (_hasMore)
+              TextButton(
+                onPressed: _busy
+                    ? null
+                    : () {
+                        _page++;
+                        _load(reset: false);
+                      },
+                child: const Text('Učitaj još'),
+              ),
+            if (_busy)
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+          ],
+        ),
       ),
     ),
   );

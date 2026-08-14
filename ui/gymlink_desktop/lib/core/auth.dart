@@ -34,9 +34,11 @@ class AuthController extends ChangeNotifier implements AuthTokenSource {
   ApiClient? _api;
   UserSession? _session;
   bool _initializing = true;
+  bool _signingOut = false;
 
   UserSession? get session => _session;
   bool get initializing => _initializing;
+  bool get signingOut => _signingOut;
   bool get isAuthenticated => _session != null;
   @override
   String? get accessToken => _session?.accessToken;
@@ -75,15 +77,22 @@ class AuthController extends ChangeNotifier implements AuthTokenSource {
   }
 
   Future<void> logout() async {
+    if (_signingOut) return;
+    _signingOut = true;
+    notifyListeners();
+    final refreshToken = _session?.refreshToken;
     try {
-      if (_session != null) {
+      if (refreshToken != null) {
         await _api?.post(
           '/api/auth/logout',
-          body: {'refreshToken': _session!.refreshToken},
+          body: {'refreshToken': refreshToken},
         );
       }
     } finally {
-      await invalidate();
+      _session = null;
+      await _storage.delete(key: _key);
+      _signingOut = false;
+      notifyListeners();
     }
   }
 

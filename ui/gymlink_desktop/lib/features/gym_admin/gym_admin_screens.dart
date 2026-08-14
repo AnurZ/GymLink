@@ -201,10 +201,20 @@ class _TenantMembershipRequestsScreenState
 
   Future<void> _decide(Map<String, dynamic> item, bool approve) async {
     final api = context.read<ApiClient>();
-    String? reason;
     if (!approve) {
-      reason = await _reasonDialog(context, 'Razlog odbijanja');
-      if (reason == null) return;
+      final saved = await submitReasonedAction(
+        context,
+        title: 'Razlog odbijanja',
+        onSubmit: (reason) => api.post(
+          '/api/tenant/membership-requests/${item['id']}/reject',
+          body: {
+            'concurrencyToken': item['concurrencyToken'],
+            'reason': reason,
+          },
+        ),
+      );
+      if (saved) await _load();
+      return;
     } else if (!await confirmAction(
       context,
       title: 'Odobri članstvo',
@@ -215,7 +225,7 @@ class _TenantMembershipRequestsScreenState
     try {
       await api.post(
         '/api/tenant/membership-requests/${item['id']}/${approve ? 'approve' : 'reject'}',
-        body: {'concurrencyToken': item['concurrencyToken'], 'reason': ?reason},
+        body: {'concurrencyToken': item['concurrencyToken']},
       );
       await _load();
       if (mounted) {
@@ -244,18 +254,26 @@ class _TenantMembershipRequestsScreenState
     String action,
   ) async {
     final api = context.read<ApiClient>();
-    final reason = action == 'expire'
-        ? null
-        : await _reasonDialog(context, 'Razlog promjene članstva');
-    if (action != 'expire' && reason == null) return;
+    if (action != 'expire') {
+      final saved = await submitReasonedAction(
+        context,
+        title: 'Razlog promjene članstva',
+        onSubmit: (reason) => api.post(
+          '/api/tenant/memberships/${membership['id']}/$action',
+          body: {
+            'concurrencyToken': membership['concurrencyToken'],
+            'reason': reason,
+          },
+        ),
+      );
+      if (saved) await _load();
+      return;
+    }
     if (!mounted) return;
     try {
       await api.post(
         '/api/tenant/memberships/${membership['id']}/$action',
-        body: {
-          'concurrencyToken': membership['concurrencyToken'],
-          'reason': ?reason,
-        },
+        body: {'concurrencyToken': membership['concurrencyToken']},
       );
       await _load();
       if (mounted) {
@@ -757,32 +775,23 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
   }
 
   Future<void> _addTrainer() async {
-    final result = await showDialog<Map<String, Object?>>(
+    final api = context.read<ApiClient>();
+    final saved = await showDialog<bool>(
       context: context,
-      builder: (_) => const _TrainerPromotionDialog(),
+      builder: (_) => _TrainerPromotionDialog(
+        onSubmit: (body) => api.post('/api/tenant/trainers', body: body),
+      ),
     );
-    if (result == null || !mounted) return;
-    try {
-      await context.read<ApiClient>().post(
-        '/api/tenant/trainers',
-        body: result,
-      );
-      await _load();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Član je promovisan u trenera. Njegove postojeće sesije su odjavljene.',
-            ),
+    if (saved != true || !mounted) return;
+    await _load();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Član je promovisan u trenera. Njegove postojeće sesije su odjavljene.',
           ),
-        );
-      }
-    } on ApiProblem catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
+        ),
+      );
     }
   }
 
@@ -875,7 +884,7 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
             as Map,
       );
       if (!mounted) return;
-      final result = await showDialog<Map<String, Object?>>(
+      final saved = await showDialog<bool>(
         context: context,
         builder: (_) => _OfferingDialog(
           trainers: _trainers
@@ -885,10 +894,11 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
               .whereType<Map>()
               .map((item) => Map<String, dynamic>.from(item))
               .toList(),
+          onSubmit: (body) =>
+              api.post('/api/tenant/trainer-offerings', body: body),
         ),
       );
-      if (result == null) return;
-      await api.post('/api/tenant/trainer-offerings', body: result);
+      if (saved != true) return;
       await _load();
     } on ApiProblem catch (error) {
       if (mounted) {
@@ -1388,10 +1398,20 @@ class _TenantReservationsScreenState extends State<TenantReservationsScreen> {
 
   Future<void> _command(Map<String, dynamic> item, String action) async {
     final api = context.read<ApiClient>();
-    String? reason;
     if (action == 'cancel') {
-      reason = await _reasonDialog(context, 'Razlog otkazivanja');
-      if (reason == null) return;
+      final saved = await submitReasonedAction(
+        context,
+        title: 'Razlog otkazivanja',
+        onSubmit: (reason) => api.post(
+          '/api/tenant/reservations/${item['id']}/cancel',
+          body: {
+            'concurrencyToken': item['concurrencyToken'],
+            'reason': reason,
+          },
+        ),
+      );
+      if (saved) await _load();
+      return;
     } else if (!await confirmAction(
       context,
       title: 'Promjena rezervacije',
@@ -1402,7 +1422,7 @@ class _TenantReservationsScreenState extends State<TenantReservationsScreen> {
     try {
       await api.post(
         '/api/tenant/reservations/${item['id']}/$action',
-        body: {'concurrencyToken': item['concurrencyToken'], 'reason': ?reason},
+        body: {'concurrencyToken': item['concurrencyToken']},
       );
       await _load();
     } on ApiProblem catch (error) {
@@ -1599,40 +1619,27 @@ class _GymCatalogScreenState extends State<GymCatalogScreen> {
 
   Future<void> _addPlan() async {
     final api = context.read<ApiClient>();
-    final result = await showDialog<Map<String, Object?>>(
+    final saved = await showDialog<bool>(
       context: context,
-      builder: (_) => const _PlanDialog(),
+      builder: (_) => _PlanDialog(
+        onSubmit: (body) =>
+            api.post('/api/tenant/membership-plans', body: body),
+      ),
     );
-    if (result == null) return;
-    try {
-      await api.post('/api/tenant/membership-plans', body: result);
-      await _load();
-    } on ApiProblem catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    }
+    if (saved == true) await _load();
   }
 
   Future<void> _editGym() async {
     final api = context.read<ApiClient>();
-    final result = await showDialog<Map<String, Object?>>(
+    final saved = await showDialog<bool>(
       context: context,
-      builder: (_) => _GymEditorDialog(gym: _gym!, lookups: _lookups!),
+      builder: (_) => _GymEditorDialog(
+        gym: _gym!,
+        lookups: _lookups!,
+        onSubmit: (body) => api.put('/api/tenant/gym', body: body),
+      ),
     );
-    if (result == null) return;
-    try {
-      await api.put('/api/tenant/gym', body: result);
-      await _load();
-    } on ApiProblem catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    }
+    if (saved == true) await _load();
   }
 
   void _resetGalleryDraft() {
@@ -2201,7 +2208,9 @@ class _GalleryImageTile extends StatelessWidget {
 }
 
 class _TrainerPromotionDialog extends StatefulWidget {
-  const _TrainerPromotionDialog();
+  const _TrainerPromotionDialog({required this.onSubmit});
+
+  final Future<void> Function(Map<String, Object?> body) onSubmit;
 
   @override
   State<_TrainerPromotionDialog> createState() =>
@@ -2219,6 +2228,9 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
   List<Map<String, dynamic>> _trainingTypes = const [];
   Map<String, dynamic>? _candidate;
   bool _loading = true;
+  bool _saving = false;
+  ApiProblem? _serverProblem;
+  String? _formError;
   Object? _error;
 
   @override
@@ -2264,6 +2276,54 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _serverProblem = null;
+      _formError = null;
+    });
+    if (!_formKey.currentState!.validate() || _candidate == null) return;
+    setState(() => _saving = true);
+    try {
+      await widget.onSubmit({
+        'userId': _candidate!['userId'],
+        'biography': _biography.text.trim(),
+        'credentials': _credentials.text.trim().isEmpty
+            ? null
+            : _credentials.text.trim(),
+        'trainingTypeIds': _trainingTypeIds.toList(),
+        'reason': _reason.text.trim(),
+      });
+      if (mounted) Navigator.pop(context, true);
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _serverProblem = error;
+          _formError = error.fieldErrors.isEmpty ? error.message : null;
+        });
+        _formKey.currentState!.validate();
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _clearError(String field, {Iterable<String> aliases = const []}) {
+    final problem = _serverProblem;
+    if (problem?.fieldError(field, aliases: aliases) == null) return;
+    final names = {field, ...aliases}.map((value) => value.toLowerCase());
+    final errors = Map<String, List<String>>.from(problem!.fieldErrors)
+      ..removeWhere((key, _) => names.contains(key.toLowerCase()));
+    setState(() {
+      _serverProblem = ApiProblem(
+        status: problem.status,
+        code: problem.code,
+        message: problem.message,
+        fieldErrors: errors,
+      );
+      _formError = null;
+    });
   }
 
   @override
@@ -2320,8 +2380,9 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
                       )
                       .toList(),
                   onChanged: (value) => _candidate = value,
-                  validator: (value) =>
-                      value == null ? 'Odaberite aktivnog člana.' : null,
+                  validator: (value) => value == null
+                      ? 'Odaberite aktivnog člana.'
+                      : _serverProblem?.fieldError('UserId'),
                 ),
                 if (_candidates.isEmpty)
                   const Padding(
@@ -2335,16 +2396,27 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
                   controller: _biography,
                   maxLines: 3,
                   decoration: const InputDecoration(labelText: 'Biografija'),
-                  validator: (value) => value == null || value.trim().isEmpty
-                      ? 'Biografija je obavezna.'
-                      : null,
+                  onChanged: (_) => _clearError('Biography'),
+                  validator: (value) {
+                    final text = value?.trim() ?? '';
+                    if (text.isEmpty) return 'Biografija je obavezna.';
+                    if (text.length > 4000) return 'Najviše 4000 znakova.';
+                    return _serverProblem?.fieldError('Biography');
+                  },
                 ),
                 const SizedBox(height: 12),
-                TextField(
+                TextFormField(
                   controller: _credentials,
                   decoration: const InputDecoration(
                     labelText: 'Kvalifikacije i iskustvo',
                   ),
+                  onChanged: (_) => _clearError('Credentials'),
+                  validator: (value) {
+                    if ((value?.trim().length ?? 0) > 2000) {
+                      return 'Najviše 2000 znakova.';
+                    }
+                    return _serverProblem?.fieldError('Credentials');
+                  },
                 ),
                 const SizedBox(height: 12),
                 const Text(
@@ -2374,10 +2446,23 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Razlog promocije',
                   ),
-                  validator: (value) => value == null || value.trim().length < 2
-                      ? 'Unesite razlog promocije.'
-                      : null,
+                  onChanged: (_) => _clearError('Reason'),
+                  validator: (value) {
+                    final length = value?.trim().length ?? 0;
+                    if (length < 2) return 'Unesite razlog promocije.';
+                    if (length > 1000) return 'Najviše 1000 znakova.';
+                    return _serverProblem?.fieldError('Reason');
+                  },
                 ),
+                if (_formError != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    _formError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -2386,44 +2471,40 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
     ),
     actions: [
       TextButton(
-        onPressed: () => Navigator.pop(context),
+        onPressed: _saving ? null : () => Navigator.pop(context),
         child: const Text('Odustani'),
       ),
       FilledButton(
-        onPressed: _candidates.isEmpty
-            ? null
-            : () {
-                if (!_formKey.currentState!.validate()) return;
-                Navigator.pop(context, {
-                  'userId': _candidate!['userId'],
-                  'biography': _biography.text.trim(),
-                  'credentials': _credentials.text.trim().isEmpty
-                      ? null
-                      : _credentials.text.trim(),
-                  'trainingTypeIds': _trainingTypeIds.toList(),
-                  'reason': _reason.text.trim(),
-                });
-              },
-        child: const Text('Promoviši u trenera'),
+        onPressed: _saving || _candidates.isEmpty ? null : _submit,
+        child: Text(_saving ? 'Promovisanje...' : 'Promoviši u trenera'),
       ),
     ],
   );
 }
 
 class _OfferingDialog extends StatefulWidget {
-  const _OfferingDialog({required this.trainers, required this.types});
+  const _OfferingDialog({
+    required this.trainers,
+    required this.types,
+    required this.onSubmit,
+  });
   final List<Map<String, dynamic>> trainers;
   final List<Map<String, dynamic>> types;
+  final Future<void> Function(Map<String, Object?> body) onSubmit;
   @override
   State<_OfferingDialog> createState() => _OfferingDialogState();
 }
 
 class _OfferingDialogState extends State<_OfferingDialog> {
+  final _formKey = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _duration = TextEditingController(text: '60');
   final _price = TextEditingController(text: '25');
   Map<String, dynamic>? _trainer;
   Map<String, dynamic>? _type;
+  ApiProblem? _serverProblem;
+  String? _formError;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -2433,154 +2514,355 @@ class _OfferingDialogState extends State<_OfferingDialog> {
   }
 
   @override
+  void dispose() {
+    _name.dispose();
+    _duration.dispose();
+    _price.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _serverProblem = null;
+      _formError = null;
+    });
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _saving = true);
+    try {
+      await widget.onSubmit({
+        'trainerProfileId': _trainer!['id'],
+        'trainingTypeId': _type!['id'],
+        'name': _name.text.trim(),
+        'durationMinutes': int.parse(_duration.text),
+        'price': double.parse(_price.text.replaceFirst(',', '.')),
+        'currency': 'BAM',
+      });
+      if (mounted) Navigator.pop(context, true);
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _serverProblem = error;
+          _formError = error.fieldErrors.isEmpty ? error.message : null;
+        });
+        _formKey.currentState!.validate();
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _clearError(String field) {
+    final problem = _serverProblem;
+    if (problem?.fieldError(field) == null) return;
+    final errors = Map<String, List<String>>.from(problem!.fieldErrors)
+      ..removeWhere((key, _) => key.toLowerCase() == field.toLowerCase());
+    setState(() {
+      _serverProblem = ApiProblem(
+        status: problem.status,
+        code: problem.code,
+        message: problem.message,
+        fieldErrors: errors,
+      );
+      _formError = null;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) => AlertDialog(
     title: const Text('Nova usluga'),
     content: SizedBox(
       width: 460,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          DropdownButtonFormField<Map<String, dynamic>>(
-            initialValue: _trainer,
-            decoration: const InputDecoration(labelText: 'Trener'),
-            items: widget.trainers
-                .map(
-                  (item) => DropdownMenuItem(
-                    value: item,
-                    child: Text(item['displayName'].toString()),
-                  ),
-                )
-                .toList(),
-            onChanged: (value) => _trainer = value,
-          ),
-          const SizedBox(height: 10),
-          DropdownButtonFormField<Map<String, dynamic>>(
-            initialValue: _type,
-            decoration: const InputDecoration(labelText: 'Tip treninga'),
-            items: widget.types
-                .map(
-                  (item) => DropdownMenuItem(
-                    value: item,
-                    child: Text(item['name'].toString()),
-                  ),
-                )
-                .toList(),
-            onChanged: (value) => _type = value,
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _name,
-            decoration: const InputDecoration(labelText: 'Naziv'),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _duration,
-                  decoration: const InputDecoration(
-                    labelText: 'Trajanje (min)',
+      child: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<Map<String, dynamic>>(
+              initialValue: _trainer,
+              decoration: const InputDecoration(labelText: 'Trener'),
+              items: widget.trainers
+                  .map(
+                    (item) => DropdownMenuItem(
+                      value: item,
+                      child: Text(item['displayName'].toString()),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) => _trainer = value,
+              validator: (value) => value == null
+                  ? 'Odaberite trenera.'
+                  : _serverProblem?.fieldError('TrainerProfileId'),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<Map<String, dynamic>>(
+              initialValue: _type,
+              decoration: const InputDecoration(labelText: 'Tip treninga'),
+              items: widget.types
+                  .map(
+                    (item) => DropdownMenuItem(
+                      value: item,
+                      child: Text(item['name'].toString()),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) => _type = value,
+              validator: (value) => value == null
+                  ? 'Odaberite tip treninga.'
+                  : _serverProblem?.fieldError('TrainingTypeId'),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _name,
+              decoration: const InputDecoration(labelText: 'Naziv'),
+              onChanged: (_) => _clearError('Name'),
+              validator: (value) {
+                final text = value?.trim() ?? '';
+                if (text.isEmpty) return 'Naziv je obavezan.';
+                if (text.length > 200) return 'Najviše 200 znakova.';
+                return _serverProblem?.fieldError('Name');
+              },
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _duration,
+                    decoration: const InputDecoration(
+                      labelText: 'Trajanje (min)',
+                    ),
+                    onChanged: (_) => _clearError('DurationMinutes'),
+                    validator: (value) {
+                      final number = int.tryParse(value?.trim() ?? '');
+                      if (number == null || number < 1 || number > 1440) {
+                        return 'Unesite 1–1440.';
+                      }
+                      return _serverProblem?.fieldError('DurationMinutes');
+                    },
                   ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: TextField(
-                  controller: _price,
-                  decoration: const InputDecoration(labelText: 'Cijena (BAM)'),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    controller: _price,
+                    decoration: const InputDecoration(
+                      labelText: 'Cijena (BAM)',
+                    ),
+                    onChanged: (_) => _clearError('Price'),
+                    validator: (value) {
+                      final number = double.tryParse(
+                        (value ?? '').trim().replaceFirst(',', '.'),
+                      );
+                      if (number == null || number < 0 || number > 1000000) {
+                        return 'Unesite 0–1.000.000.';
+                      }
+                      return _serverProblem?.fieldError('Price');
+                    },
+                  ),
+                ),
+              ],
+            ),
+            if (_formError != null) ...[
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _formError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ),
             ],
-          ),
-        ],
+          ],
+        ),
       ),
     ),
     actions: [
       TextButton(
-        onPressed: () => Navigator.pop(context),
+        onPressed: _saving ? null : () => Navigator.pop(context),
         child: const Text('Odustani'),
       ),
       FilledButton(
-        onPressed: _trainer == null || _type == null
+        onPressed: _saving || _trainer == null || _type == null
             ? null
-            : () => Navigator.pop(context, {
-                'trainerProfileId': _trainer!['id'],
-                'trainingTypeId': _type!['id'],
-                'name': _name.text.trim(),
-                'durationMinutes': int.tryParse(_duration.text),
-                'price': double.tryParse(_price.text.replaceFirst(',', '.')),
-                'currency': 'BAM',
-              }),
-        child: const Text('Sačuvaj'),
+            : _submit,
+        child: Text(_saving ? 'Čuvanje...' : 'Sačuvaj'),
       ),
     ],
   );
 }
 
 class _PlanDialog extends StatefulWidget {
-  const _PlanDialog();
+  const _PlanDialog({required this.onSubmit});
+  final Future<void> Function(Map<String, Object?> body) onSubmit;
   @override
   State<_PlanDialog> createState() => _PlanDialogState();
 }
 
 class _PlanDialogState extends State<_PlanDialog> {
+  final _formKey = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _days = TextEditingController(text: '30');
   final _price = TextEditingController(text: '50');
+  ApiProblem? _serverProblem;
+  String? _formError;
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _days.dispose();
+    _price.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _serverProblem = null;
+      _formError = null;
+    });
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _saving = true);
+    try {
+      await widget.onSubmit({
+        'name': _name.text.trim(),
+        'durationDays': int.parse(_days.text),
+        'price': double.parse(_price.text.replaceFirst(',', '.')),
+        'currency': 'BAM',
+      });
+      if (mounted) Navigator.pop(context, true);
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _serverProblem = error;
+          _formError = error.fieldErrors.isEmpty ? error.message : null;
+        });
+        _formKey.currentState!.validate();
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _clearError(String field) {
+    final problem = _serverProblem;
+    final aliases = field == 'Name'
+        ? const <String>['MembershipPlan.Name']
+        : const <String>[];
+    if (problem?.fieldError(field, aliases: aliases) == null) {
+      return;
+    }
+    final errors = Map<String, List<String>>.from(problem!.fieldErrors)
+      ..removeWhere(
+        (key, _) =>
+            key.toLowerCase() == field.toLowerCase() ||
+            key.toLowerCase() == 'membershipplan.${field.toLowerCase()}',
+      );
+    setState(() {
+      _serverProblem = ApiProblem(
+        status: problem.status,
+        code: problem.code,
+        message: problem.message,
+        fieldErrors: errors,
+      );
+      _formError = null;
+    });
+  }
 
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: const Text('Novi plan članstva'),
     content: SizedBox(
       width: 420,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _name,
-            decoration: const InputDecoration(labelText: 'Naziv'),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _days,
-            decoration: const InputDecoration(labelText: 'Trajanje (dana)'),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _price,
-            decoration: const InputDecoration(labelText: 'Cijena (BAM)'),
-          ),
-        ],
+      child: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextFormField(
+              controller: _name,
+              decoration: const InputDecoration(labelText: 'Naziv'),
+              onChanged: (_) => _clearError('Name'),
+              validator: (value) {
+                final text = value?.trim() ?? '';
+                if (text.isEmpty) return 'Naziv je obavezan.';
+                if (text.length > 160) return 'Najviše 160 znakova.';
+                return _serverProblem?.fieldError(
+                  'Name',
+                  aliases: const ['MembershipPlan.Name'],
+                );
+              },
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _days,
+              decoration: const InputDecoration(labelText: 'Trajanje (dana)'),
+              onChanged: (_) => _clearError('DurationDays'),
+              validator: (value) {
+                final number = int.tryParse(value?.trim() ?? '');
+                if (number == null || number < 1 || number > 3660) {
+                  return 'Unesite 1–3660 dana.';
+                }
+                return _serverProblem?.fieldError('DurationDays');
+              },
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _price,
+              decoration: const InputDecoration(labelText: 'Cijena (BAM)'),
+              onChanged: (_) => _clearError('Price'),
+              validator: (value) {
+                final number = double.tryParse(
+                  (value ?? '').trim().replaceFirst(',', '.'),
+                );
+                if (number == null || number < 0 || number > 1000000) {
+                  return 'Unesite 0–1.000.000.';
+                }
+                return _serverProblem?.fieldError('Price');
+              },
+            ),
+            if (_formError != null) ...[
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _formError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     ),
     actions: [
       TextButton(
-        onPressed: () => Navigator.pop(context),
+        onPressed: _saving ? null : () => Navigator.pop(context),
         child: const Text('Odustani'),
       ),
       FilledButton(
-        onPressed: () => Navigator.pop(context, {
-          'name': _name.text.trim(),
-          'durationDays': int.tryParse(_days.text),
-          'price': double.tryParse(_price.text.replaceFirst(',', '.')),
-          'currency': 'BAM',
-        }),
-        child: const Text('Sačuvaj'),
+        onPressed: _saving ? null : _submit,
+        child: Text(_saving ? 'Čuvanje...' : 'Sačuvaj'),
       ),
     ],
   );
 }
 
 class _GymEditorDialog extends StatefulWidget {
-  const _GymEditorDialog({required this.gym, required this.lookups});
+  const _GymEditorDialog({
+    required this.gym,
+    required this.lookups,
+    required this.onSubmit,
+  });
   final Map<String, dynamic> gym;
   final Map<String, dynamic> lookups;
+  final Future<void> Function(Map<String, Object?> body) onSubmit;
 
   @override
   State<_GymEditorDialog> createState() => _GymEditorDialogState();
 }
 
 class _GymEditorDialogState extends State<_GymEditorDialog> {
+  final _formKey = GlobalKey<FormState>();
   late final _name = TextEditingController(
     text: widget.gym['name']?.toString() ?? '',
   );
@@ -2601,6 +2883,9 @@ class _GymEditorDialogState extends State<_GymEditorDialog> {
       (widget.gym['trainingTypeIds'] as List)
           .map((value) => value.toString())
           .toSet();
+  ApiProblem? _serverProblem;
+  String? _formError;
+  bool _saving = false;
 
   List<Map<String, dynamic>> _items(String key) =>
       (widget.lookups[key] as List? ?? const [])
@@ -2610,123 +2895,214 @@ class _GymEditorDialogState extends State<_GymEditorDialog> {
           .toList();
 
   @override
+  void dispose() {
+    _name.dispose();
+    _description.dispose();
+    _address.dispose();
+    _phone.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _serverProblem = null;
+      _formError = null;
+    });
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _saving = true);
+    try {
+      await widget.onSubmit({
+        'name': _name.text.trim(),
+        'description': _description.text.trim(),
+        'address': _address.text.trim(),
+        'cityId': _cityId,
+        'latitude': widget.gym['latitude'],
+        'longitude': widget.gym['longitude'],
+        'phoneNumber': _phone.text.trim().isEmpty ? null : _phone.text.trim(),
+        'equipmentIds': _equipmentIds.toList(),
+        'trainingTypeIds': _trainingTypeIds.toList(),
+        'workingHours': widget.gym['workingHours'],
+      });
+      if (mounted) Navigator.pop(context, true);
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _serverProblem = error;
+          _formError = error.fieldErrors.isEmpty ? error.message : null;
+        });
+        _formKey.currentState!.validate();
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _clearError(String field) {
+    final problem = _serverProblem;
+    if (problem?.fieldError(field) == null) return;
+    final errors = Map<String, List<String>>.from(problem!.fieldErrors)
+      ..removeWhere((key, _) => key.toLowerCase() == field.toLowerCase());
+    setState(() {
+      _serverProblem = ApiProblem(
+        status: problem.status,
+        code: problem.code,
+        message: problem.message,
+        fieldErrors: errors,
+      );
+      _formError = null;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) => AlertDialog(
     title: const Text('Uredi profil teretane'),
     content: SizedBox(
       width: 720,
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: _name,
-              decoration: const InputDecoration(labelText: 'Naziv'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _description,
-              maxLines: 4,
-              decoration: const InputDecoration(labelText: 'Opis'),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _address,
-              decoration: const InputDecoration(labelText: 'Adresa'),
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              initialValue: _cityId,
-              decoration: const InputDecoration(labelText: 'Grad'),
-              items: _items('cities')
-                  .map(
-                    (item) => DropdownMenuItem(
-                      value: item['id'].toString(),
-                      child: Text('${item['name']}, ${item['countryName']}'),
+      child: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextFormField(
+                controller: _name,
+                decoration: const InputDecoration(labelText: 'Naziv'),
+                onChanged: (_) => _clearError('Name'),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+                  if (text.isEmpty) return 'Naziv je obavezan.';
+                  if (text.length > 200) return 'Najviše 200 znakova.';
+                  return _serverProblem?.fieldError('Name');
+                },
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _description,
+                maxLines: 4,
+                decoration: const InputDecoration(labelText: 'Opis'),
+                onChanged: (_) => _clearError('Description'),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+                  if (text.isEmpty) return 'Opis je obavezan.';
+                  if (text.length > 4000) return 'Najviše 4000 znakova.';
+                  return _serverProblem?.fieldError('Description');
+                },
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _address,
+                decoration: const InputDecoration(labelText: 'Adresa'),
+                onChanged: (_) => _clearError('Address'),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+                  if (text.isEmpty) return 'Adresa je obavezna.';
+                  if (text.length > 300) return 'Najviše 300 znakova.';
+                  return _serverProblem?.fieldError('Address');
+                },
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: _cityId,
+                decoration: const InputDecoration(labelText: 'Grad'),
+                items: _items('cities')
+                    .map(
+                      (item) => DropdownMenuItem(
+                        value: item['id'].toString(),
+                        child: Text('${item['name']}, ${item['countryName']}'),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => _cityId = value!,
+                validator: (value) => value == null
+                    ? 'Odaberite grad.'
+                    : _serverProblem?.fieldError('CityId'),
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _phone,
+                decoration: const InputDecoration(labelText: 'Telefon'),
+                onChanged: (_) => _clearError('PhoneNumber'),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+                  if (text.length > 32) return 'Najviše 32 znaka.';
+                  if (text.isNotEmpty &&
+                      !RegExp(r'^\+?[0-9 ()-]+$').hasMatch(text)) {
+                    return 'Unesite ispravan broj telefona.';
+                  }
+                  return _serverProblem?.fieldError('PhoneNumber');
+                },
+              ),
+              const SizedBox(height: 18),
+              const Text(
+                'Oprema',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: _items('equipment').map((item) {
+                  final id = item['id'].toString();
+                  return FilterChip(
+                    label: Text(item['name'].toString()),
+                    selected: _equipmentIds.contains(id),
+                    onSelected: (selected) => setState(
+                      () => selected
+                          ? _equipmentIds.add(id)
+                          : _equipmentIds.remove(id),
                     ),
-                  )
-                  .toList(),
-              onChanged: (value) => _cityId = value!,
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _phone,
-              decoration: const InputDecoration(labelText: 'Telefon'),
-            ),
-            const SizedBox(height: 18),
-            const Text('Oprema', style: TextStyle(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: _items('equipment').map((item) {
-                final id = item['id'].toString();
-                return FilterChip(
-                  label: Text(item['name'].toString()),
-                  selected: _equipmentIds.contains(id),
-                  onSelected: (selected) => setState(
-                    () => selected
-                        ? _equipmentIds.add(id)
-                        : _equipmentIds.remove(id),
-                  ),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 18),
-            const Text(
-              'Tipovi treninga',
-              style: TextStyle(fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: _items('trainingTypes').map((item) {
-                final id = item['id'].toString();
-                return FilterChip(
-                  label: Text(item['name'].toString()),
-                  selected: _trainingTypeIds.contains(id),
-                  onSelected: (selected) => setState(
-                    () => selected
-                        ? _trainingTypeIds.add(id)
-                        : _trainingTypeIds.remove(id),
-                  ),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Postojeće radno vrijeme će biti sačuvano. Koordinate mape ostaju vezane za postojeću lokaciju.',
-            ),
-          ],
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 18),
+              const Text(
+                'Tipovi treninga',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: _items('trainingTypes').map((item) {
+                  final id = item['id'].toString();
+                  return FilterChip(
+                    label: Text(item['name'].toString()),
+                    selected: _trainingTypeIds.contains(id),
+                    onSelected: (selected) => setState(
+                      () => selected
+                          ? _trainingTypeIds.add(id)
+                          : _trainingTypeIds.remove(id),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Postojeće radno vrijeme će biti sačuvano. Koordinate mape ostaju vezane za postojeću lokaciju.',
+              ),
+              if (_formError != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _formError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     ),
     actions: [
       TextButton(
-        onPressed: () => Navigator.pop(context),
+        onPressed: _saving ? null : () => Navigator.pop(context),
         child: const Text('Odustani'),
       ),
       FilledButton(
-        onPressed: () => Navigator.pop(context, {
-          'name': _name.text.trim(),
-          'description': _description.text.trim(),
-          'address': _address.text.trim(),
-          'cityId': _cityId,
-          'latitude': widget.gym['latitude'],
-          'longitude': widget.gym['longitude'],
-          'phoneNumber': _phone.text.trim().isEmpty ? null : _phone.text.trim(),
-          'equipmentIds': _equipmentIds.toList(),
-          'trainingTypeIds': _trainingTypeIds.toList(),
-          'workingHours': widget.gym['workingHours'],
-        }),
-        child: const Text('Sačuvaj'),
+        onPressed: _saving ? null : _submit,
+        child: Text(_saving ? 'Čuvanje...' : 'Sačuvaj'),
       ),
     ],
   );
-}
-
-Future<String?> _reasonDialog(BuildContext context, String title) async {
-  return promptForReason(context, title: title);
 }
 
 String _date(Object? value) => DateFormat(

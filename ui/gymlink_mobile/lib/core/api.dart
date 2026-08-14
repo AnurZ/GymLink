@@ -25,6 +25,17 @@ final class ApiProblem implements Exception {
   final String message;
   final Map<String, List<String>> fieldErrors;
 
+  String? fieldError(String field, {Iterable<String> aliases = const []}) {
+    final names = {field, ...aliases}.map((value) => value.toLowerCase());
+    for (final entry in fieldErrors.entries) {
+      if (!names.contains(entry.key.toLowerCase())) continue;
+      for (final value in entry.value) {
+        if (value.trim().isNotEmpty) return value;
+      }
+    }
+    return null;
+  }
+
   String? get firstFieldError {
     for (final values in fieldErrors.values) {
       if (values.isNotEmpty && values.first.trim().isNotEmpty) {

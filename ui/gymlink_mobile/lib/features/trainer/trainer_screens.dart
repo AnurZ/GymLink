@@ -196,11 +196,23 @@ class _TrainerAppointmentDetailsState extends State<TrainerAppointmentDetails> {
   }
 
   Future<void> _cancel() async {
-    final reason = await showDialog<String>(
+    final api = context.read<ApiClient>();
+    await showDialog<bool>(
       context: context,
-      builder: (_) => const TrainerCancellationReasonDialog(),
+      builder: (_) => TrainerCancellationReasonDialog(
+        onSubmit: (reason) async {
+          final json = await api.post(
+            '/api/tenant/reservations/${_item['id']}/cancel',
+            body: {
+              'concurrencyToken': _item['concurrencyToken'],
+              'reason': reason,
+            },
+          );
+          _item = Map<String, dynamic>.from(json! as Map);
+          if (mounted) setState(() {});
+        },
+      ),
     );
-    if (reason != null) await _command('cancel', reason: reason);
   }
 
   @override
@@ -277,7 +289,9 @@ class _TrainerAppointmentDetailsState extends State<TrainerAppointmentDetails> {
 }
 
 class TrainerCancellationReasonDialog extends StatefulWidget {
-  const TrainerCancellationReasonDialog({super.key});
+  const TrainerCancellationReasonDialog({required this.onSubmit, super.key});
+
+  final Future<void> Function(String reason) onSubmit;
 
   @override
   State<TrainerCancellationReasonDialog> createState() =>
@@ -288,6 +302,9 @@ class _TrainerCancellationReasonDialogState
     extends State<TrainerCancellationReasonDialog> {
   final _formKey = GlobalKey<FormState>();
   final _controller = TextEditingController();
+  ApiProblem? _serverProblem;
+  String? _formError;
+  bool _busy = false;
 
   @override
   void dispose() {
@@ -300,30 +317,75 @@ class _TrainerCancellationReasonDialogState
     title: const Text('Razlog otkazivanja'),
     content: Form(
       key: _formKey,
-      child: TextFormField(
-        controller: _controller,
-        autofocus: true,
-        maxLength: 1000,
-        maxLines: 3,
-        decoration: const InputDecoration(labelText: 'Razlog'),
-        validator: (value) => value == null || value.trim().length < 2
-            ? 'Unesite razlog otkazivanja.'
-            : null,
-        onFieldSubmitted: (_) => _submit(),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextFormField(
+            controller: _controller,
+            autofocus: true,
+            maxLength: 1000,
+            maxLines: 3,
+            decoration: const InputDecoration(labelText: 'Razlog'),
+            onChanged: (_) {
+              if (_serverProblem?.fieldError('Reason') != null) {
+                setState(() {
+                  _serverProblem = null;
+                  _formError = null;
+                });
+              }
+            },
+            validator: (value) {
+              final length = value?.trim().length ?? 0;
+              if (length < 2) return 'Unesite razlog otkazivanja.';
+              if (length > 1000) return 'Najviše 1000 znakova.';
+              return _serverProblem?.fieldError('Reason');
+            },
+            onFieldSubmitted: (_) => _submit(),
+          ),
+          if (_formError != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _formError!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+        ],
       ),
     ),
     actions: [
       TextButton(
-        onPressed: () => Navigator.pop(context),
+        onPressed: _busy ? null : () => Navigator.pop(context),
         child: const Text('Odustani'),
       ),
-      FilledButton(onPressed: _submit, child: const Text('Nastavi')),
+      FilledButton(
+        onPressed: _busy ? null : _submit,
+        child: Text(_busy ? 'Otkazivanje...' : 'Otkaži'),
+      ),
     ],
   );
 
-  void _submit() {
+  Future<void> _submit() async {
+    setState(() {
+      _serverProblem = null;
+      _formError = null;
+    });
     if (!_formKey.currentState!.validate()) return;
-    Navigator.pop(context, _controller.text.trim());
+    setState(() => _busy = true);
+    try {
+      await widget.onSubmit(_controller.text.trim());
+      if (mounted) Navigator.pop(context, true);
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _serverProblem = error;
+          _formError = error.fieldErrors.isEmpty ? error.message : null;
+        });
+        _formKey.currentState!.validate();
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 }
 

@@ -63,12 +63,19 @@ class _GymLinkDesktopAppState extends State<GymLinkDesktopApp> {
         ),
         GoRoute(
           path: '/',
-          builder: (context, _) =>
-              switch (context.watch<AuthController>().session?.role) {
-                'GymAdmin' => const GymAdminShell(),
-                'CentralAdmin' => const CentralAdminShell(),
-                _ => const _UnsupportedRole(),
-              },
+          builder: (context, _) {
+            final auth = context.watch<AuthController>();
+            if (auth.signingOut || auth.session == null) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
+            return switch (auth.session!.role) {
+              'GymAdmin' => const GymAdminShell(),
+              'CentralAdmin' => const CentralAdminShell(),
+              _ => const _UnsupportedRole(),
+            };
+          },
         ),
         GoRoute(
           path: '/notifications',

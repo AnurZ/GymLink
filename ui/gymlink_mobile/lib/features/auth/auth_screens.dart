@@ -92,6 +92,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _busy = false;
   bool _obscure = true;
   String? _error;
+  ApiProblem? _serverProblem;
 
   @override
   void dispose() {
@@ -101,6 +102,10 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _submit() async {
+    setState(() {
+      _serverProblem = null;
+      _error = null;
+    });
     if (!_formKey.currentState!.validate()) return;
     setState(() {
       _busy = true;
@@ -112,7 +117,13 @@ class _LoginScreenState extends State<LoginScreen> {
         _password.text,
       );
     } on ApiProblem catch (error) {
-      if (mounted) setState(() => _error = error.message);
+      if (mounted) {
+        setState(() {
+          _serverProblem = error;
+          _error = error.fieldErrors.isEmpty ? error.message : null;
+        });
+        _formKey.currentState!.validate();
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -135,9 +146,13 @@ class _LoginScreenState extends State<LoginScreen> {
               labelText: 'Email ili korisničko ime',
               prefixIcon: Icon(Icons.person_outline),
             ),
-            validator: (value) => value == null || value.trim().isEmpty
-                ? 'Unesite email ili korisničko ime.'
-                : null,
+            onChanged: (_) => setState(() => _serverProblem = null),
+            validator: (value) {
+              final text = value?.trim() ?? '';
+              if (text.isEmpty) return 'Unesite email ili korisničko ime.';
+              if (text.length > 320) return 'Najviše 320 znakova.';
+              return _serverProblem?.fieldError('Identifier');
+            },
           ),
           const SizedBox(height: 14),
           TextFormField(
@@ -157,8 +172,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
             ),
-            validator: (value) =>
-                value == null || value.isEmpty ? 'Unesite lozinku.' : null,
+            onChanged: (_) => setState(() => _serverProblem = null),
+            validator: (value) {
+              if (value == null || value.isEmpty) return 'Unesite lozinku.';
+              if (value.length > 100) return 'Najviše 100 znakova.';
+              return _serverProblem?.fieldError('Password');
+            },
             onFieldSubmitted: (_) => _busy ? null : _submit(),
           ),
           if (_error != null) ...[
@@ -429,6 +448,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   final _confirmation = TextEditingController();
   bool _busy = false;
   String? _error;
+  ApiProblem? _serverProblem;
 
   @override
   void dispose() {
@@ -446,6 +466,10 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   }
 
   Future<void> _submit() async {
+    setState(() {
+      _serverProblem = null;
+      _error = null;
+    });
     if (!_formKey.currentState!.validate()) return;
     setState(() {
       _busy = true;
@@ -460,7 +484,13 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         password: _password.text,
       );
     } on ApiProblem catch (error) {
-      if (mounted) setState(() => _error = error.message);
+      if (mounted) {
+        setState(() {
+          _serverProblem = error;
+          _error = error.fieldErrors.isEmpty ? error.message : null;
+        });
+        _formKey.currentState!.validate();
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -474,14 +504,41 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
       key: _formKey,
       child: Column(
         children: [
-          _field(_name, 'Ime i prezime', Icons.badge_outlined),
-          _field(_username, 'Korisničko ime', Icons.alternate_email),
-          _field(_email, 'Email', Icons.mail_outline, email: true),
+          _field(
+            _name,
+            'Ime i prezime',
+            Icons.badge_outlined,
+            field: 'DisplayName',
+            minLength: 2,
+            maxLength: 160,
+          ),
+          _field(
+            _username,
+            'Korisničko ime',
+            Icons.alternate_email,
+            field: 'Username',
+            minLength: 3,
+            maxLength: 64,
+            pattern: RegExp(r'^[A-Za-z0-9._-]+$'),
+            patternMessage: 'Koristite slova, brojeve, tačku, _ ili -.',
+          ),
+          _field(
+            _email,
+            'Email',
+            Icons.mail_outline,
+            field: 'Email',
+            email: true,
+            maxLength: 320,
+          ),
           _field(
             _phone,
             'Telefon (opcionalno)',
             Icons.phone_outlined,
+            field: 'PhoneNumber',
             required: false,
+            maxLength: 32,
+            pattern: RegExp(r'^\+?[0-9 ()-]+$'),
+            patternMessage: 'Unesite ispravan broj telefona.',
           ),
           TextFormField(
             controller: _password,
@@ -491,9 +548,15 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               prefixIcon: Icon(Icons.lock_outline),
               helperText: 'Najmanje 8 znakova.',
             ),
-            validator: (value) => value == null || value.length < 8
-                ? 'Lozinka mora imati najmanje 8 znakova.'
-                : null,
+            onChanged: (_) => _clearServerError('Password'),
+            validator: (value) {
+              final length = value?.length ?? 0;
+              if (length < 8) return 'Lozinka mora imati najmanje 8 znakova.';
+              if (length > 100) {
+                return 'Lozinka može imati najviše 100 znakova.';
+              }
+              return _serverProblem?.fieldError('Password');
+            },
           ),
           const SizedBox(height: 12),
           TextFormField(
@@ -503,8 +566,13 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               labelText: 'Potvrdite lozinku',
               prefixIcon: Icon(Icons.lock_reset),
             ),
-            validator: (value) =>
-                value != _password.text ? 'Lozinke se ne podudaraju.' : null,
+            onChanged: (_) => _clearServerError('ConfirmPassword'),
+            validator: (value) => value != _password.text
+                ? 'Lozinke se ne podudaraju.'
+                : _serverProblem?.fieldError(
+                    'ConfirmPassword',
+                    aliases: const ['PasswordConfirmation'],
+                  ),
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),
@@ -537,19 +605,55 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
     TextEditingController controller,
     String label,
     IconData icon, {
+    required String field,
     bool email = false,
     bool required = true,
+    int? minLength,
+    int? maxLength,
+    RegExp? pattern,
+    String? patternMessage,
   }) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
     child: TextFormField(
       controller: controller,
       keyboardType: email ? TextInputType.emailAddress : TextInputType.text,
       decoration: InputDecoration(labelText: label, prefixIcon: Icon(icon)),
-      validator: required
-          ? (value) => value == null || value.trim().isEmpty
-                ? 'Polje je obavezno.'
-                : null
-          : null,
+      onChanged: (_) => _clearServerError(field),
+      validator: (value) {
+        final text = value?.trim() ?? '';
+        if (required && text.isEmpty) return 'Polje je obavezno.';
+        if (text.isNotEmpty && minLength != null && text.length < minLength) {
+          return 'Unesite najmanje $minLength znaka.';
+        }
+        if (maxLength != null && text.length > maxLength) {
+          return 'Najviše $maxLength znakova.';
+        }
+        if (email &&
+            text.isNotEmpty &&
+            !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(text)) {
+          return 'Unesite ispravan email.';
+        }
+        if (text.isNotEmpty && pattern != null && !pattern.hasMatch(text)) {
+          return patternMessage ?? 'Vrijednost nije ispravna.';
+        }
+        return _serverProblem?.fieldError(field);
+      },
     ),
   );
+
+  void _clearServerError(String field) {
+    final problem = _serverProblem;
+    if (problem?.fieldError(field) == null) return;
+    final errors = Map<String, List<String>>.from(problem!.fieldErrors)
+      ..removeWhere((key, _) => key.toLowerCase() == field.toLowerCase());
+    setState(() {
+      _serverProblem = ApiProblem(
+        status: problem.status,
+        code: problem.code,
+        message: problem.message,
+        fieldErrors: errors,
+      );
+      _error = null;
+    });
+  }
 }

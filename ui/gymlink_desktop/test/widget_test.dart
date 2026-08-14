@@ -225,6 +225,38 @@ void main() {
     expect(find.byKey(const Key('reservations-axis-title')), findsOneWidget);
     expect(find.text('Period: 01.03.2026. – 31.08.2026.'), findsOneWidget);
     expect(chart.data.barGroups.last.barRods.single.toY, 31);
+    expect(find.textContaining('PDF'), findsNothing);
+    expect(find.byKey(const Key('export-pdf-menu')), findsNothing);
+  });
+
+  testWidgets('CentralAdmin gym location is bounded and exposes full text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1366, 768);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    const address =
+        'Ulica sa izuzetno dugim nazivom i dodatnim opisom ulaza broj 123, Sarajevo';
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(
+      _centralHarness(_CentralAdminApi(address: address)),
+    );
+    await tester.pumpAndSettle();
+
+    final text = tester.widget<Text>(find.text(address));
+    expect(text.maxLines, 1);
+    expect(text.overflow, TextOverflow.ellipsis);
+    expect(tester.getSize(find.text(address)).width, 280);
+    expect(find.byTooltip(address), findsOneWidget);
+    final semantic = tester.widget<Semantics>(
+      find
+          .ancestor(of: find.text(address), matching: find.byType(Semantics))
+          .first,
+    );
+    expect(semantic.properties.label, address);
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
   });
 
   testWidgets(
@@ -1131,8 +1163,9 @@ void main() {
     await tester.tap(find.text('Potvrdi'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Aktivacija nije moguća'), findsOneWidget);
+    expect(find.text('Razlog promjene statusa'), findsOneWidget);
     expect(find.textContaining('aktivan plan članstva'), findsWidgets);
+    expect(find.byType(AlertDialog), findsOneWidget);
     expect(api.activationAttempts, 1);
   });
 
@@ -1654,6 +1687,7 @@ class _CentralAdminApi extends ApiClient {
     this.successfulActivationWithRefreshFailure = false,
     this.reverseUnavailable = false,
     this.gymTotalCount = 1,
+    this.address = 'Testna 1, Sarajevo',
   }) : super(_TestTokens());
 
   final String? assignmentConflictCode;
@@ -1662,6 +1696,7 @@ class _CentralAdminApi extends ApiClient {
   final bool successfulActivationWithRefreshFailure;
   final bool reverseUnavailable;
   final int gymTotalCount;
+  final String address;
   final List<Map<String, Object?>> gymQueries = [];
   Map<String, Object?>? lastLocationQuery;
   Map<String, Object?>? lastReverseQuery;
@@ -1696,8 +1731,10 @@ class _CentralAdminApi extends ApiClient {
             'id': 'gym-1',
             'tenantId': 'tenant-1',
             'name': 'Nova teretana',
-            'address': 'Testna 1',
-            'cityName': 'Sarajevo',
+            'address': address.endsWith(', Sarajevo')
+                ? address.substring(0, address.length - 10)
+                : address,
+            'cityName': address.endsWith(', Sarajevo') ? 'Sarajevo' : '',
             'status': 0,
             'memberCount': 12,
             'activeGymAdminCount': hasAdmin ? 1 : 0,

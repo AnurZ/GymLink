@@ -132,10 +132,23 @@ Future<String?> promptForReason(
   builder: (_) => _ReasonDialog(title: title),
 );
 
+Future<bool> submitReasonedAction(
+  BuildContext context, {
+  required String title,
+  required Future<void> Function(String reason) onSubmit,
+}) async =>
+    await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ReasonDialog(title: title, onSubmit: onSubmit),
+    ) ??
+    false;
+
 class _ReasonDialog extends StatefulWidget {
-  const _ReasonDialog({required this.title});
+  const _ReasonDialog({required this.title, this.onSubmit});
 
   final String title;
+  final Future<void> Function(String reason)? onSubmit;
 
   @override
   State<_ReasonDialog> createState() => _ReasonDialogState();
@@ -144,6 +157,9 @@ class _ReasonDialog extends StatefulWidget {
 class _ReasonDialogState extends State<_ReasonDialog> {
   final _controller = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+  bool _busy = false;
+  ApiProblem? _serverProblem;
+  String? _formError;
 
   @override
   void dispose() {
@@ -151,9 +167,31 @@ class _ReasonDialogState extends State<_ReasonDialog> {
     super.dispose();
   }
 
-  void _submit() {
-    if (_formKey.currentState?.validate() == true) {
-      Navigator.pop(context, _controller.text.trim());
+  Future<void> _submit() async {
+    setState(() {
+      _serverProblem = null;
+      _formError = null;
+    });
+    if (_formKey.currentState?.validate() != true) return;
+    final reason = _controller.text.trim();
+    if (widget.onSubmit == null) {
+      Navigator.pop(context, reason);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      await widget.onSubmit!(reason);
+      if (mounted) Navigator.pop(context, true);
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _serverProblem = error;
+          _formError = error.fieldErrors.isEmpty ? error.message : null;
+        });
+        _formKey.currentState!.validate();
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -162,28 +200,54 @@ class _ReasonDialogState extends State<_ReasonDialog> {
     title: Text(widget.title),
     content: Form(
       key: _formKey,
-      child: TextFormField(
-        controller: _controller,
-        autofocus: true,
-        minLines: 2,
-        maxLines: 4,
-        maxLength: 1000,
-        decoration: const InputDecoration(
-          labelText: 'Razlog',
-          helperText: 'Najmanje 2 znaka',
-        ),
-        validator: (value) => (value?.trim().length ?? 0) < 2
-            ? 'Unesite razlog (najmanje 2 znaka).'
-            : null,
-        onFieldSubmitted: (_) => _submit(),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextFormField(
+            controller: _controller,
+            autofocus: true,
+            minLines: 2,
+            maxLines: 4,
+            maxLength: 1000,
+            decoration: const InputDecoration(
+              labelText: 'Razlog',
+              helperText: 'Najmanje 2 znaka',
+            ),
+            onChanged: (_) {
+              if (_serverProblem?.fieldError('Reason') == null) return;
+              setState(() {
+                _serverProblem = null;
+                _formError = null;
+              });
+            },
+            validator: (value) {
+              final length = value?.trim().length ?? 0;
+              if (length < 2) return 'Unesite razlog (najmanje 2 znaka).';
+              if (length > 1000) return 'Najviše 1000 znakova.';
+              return _serverProblem?.fieldError('Reason');
+            },
+            onFieldSubmitted: (_) => _submit(),
+          ),
+          if (_formError != null)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _formError!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+        ],
       ),
     ),
     actions: [
       TextButton(
-        onPressed: () => Navigator.pop(context),
+        onPressed: _busy ? null : () => Navigator.pop(context),
         child: const Text('Odustani'),
       ),
-      FilledButton(onPressed: _submit, child: const Text('Potvrdi')),
+      FilledButton(
+        onPressed: _busy ? null : _submit,
+        child: Text(_busy ? 'Čuvanje...' : 'Potvrdi'),
+      ),
     ],
   );
 }

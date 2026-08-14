@@ -6,6 +6,22 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test('field errors are case-insensitive and support explicit aliases', () {
+    final problem = ApiProblem(
+      status: 400,
+      code: 'validation_failed',
+      message: 'Validation failed',
+      fieldErrors: const {
+        'membershipplan.name': ['Naziv plana nije ispravan.'],
+      },
+    );
+
+    expect(
+      problem.fieldError('Name', aliases: const ['MembershipPlan.Name']),
+      'Naziv plana nije ispravan.',
+    );
+  });
+
   test('ProblemDetails preserves safe field and business messages', () {
     final problem = ApiProblem.fromResponse(
       http.Response.bytes(

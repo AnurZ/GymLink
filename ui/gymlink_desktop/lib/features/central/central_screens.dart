@@ -185,50 +185,34 @@ class _RegistrationManagementScreenState
 
   Future<void> _decide(Map<String, dynamic> item, bool approve) async {
     final api = context.read<ApiClient>();
-    final reason = await _reasonDialog(
+    final saved = await submitReasonedAction(
       context,
-      approve ? 'Bilješka odobrenja' : 'Razlog odbijanja',
-    );
-    if (reason == null) return;
-    try {
-      await api.post(
+      title: approve ? 'Bilješka odobrenja' : 'Razlog odbijanja',
+      onSubmit: (reason) => api.post(
         '/api/admin/gym-registration-requests/${item['id']}/${approve ? 'approve' : 'reject'}',
         body: {'reason': reason},
-      );
-      await _load();
-    } on ApiProblem catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    }
+      ),
+    );
+    if (saved) await _load();
   }
 
   Future<void> _tenantAction(Map<String, dynamic> item, String action) async {
     final tenantId = item['createdTenantId'];
     if (tenantId == null) return;
     final api = context.read<ApiClient>();
-    final reason = await promptForReason(
+    final saved = await submitReasonedAction(
       context,
       title: 'Razlog promjene statusa',
-    );
-    if (reason == null) return;
-    try {
-      await api.post(
+      onSubmit: (reason) => api.post(
         '/api/admin/tenants/$tenantId/$action',
         body: {'reason': reason},
-      );
+      ),
+    );
+    if (saved && mounted) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('Status je ažuriran.')));
-      }
-    } on ApiProblem catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
       }
     }
   }
@@ -443,16 +427,38 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
       );
       if (!confirmed || !mounted) return;
     }
-    final reason = await promptForReason(
+    final saved = await submitReasonedAction(
       context,
       title: 'Razlog promjene statusa',
+      onSubmit: (reason) async {
+        try {
+          await api.post(
+            '/api/admin/tenants/${item['tenantId']}/$action',
+            body: {'reason': reason},
+          );
+        } on ApiProblem catch (error) {
+          if (error.status != 409 ||
+              (error.code != 'tenant_admin_required' &&
+                  error.code != 'tenant_catalog_incomplete')) {
+            rethrow;
+          }
+          await _load();
+          Map<String, dynamic> refreshed = item;
+          for (final candidate in _items) {
+            if (candidate['tenantId'] == item['tenantId']) {
+              refreshed = candidate;
+              break;
+            }
+          }
+          throw ApiProblem(
+            status: error.status,
+            code: error.code,
+            message: _readinessText(refreshed['missingActivationRequirements']),
+          );
+        }
+      },
     );
-    if (reason == null) return;
-    try {
-      await api.post(
-        '/api/admin/tenants/${item['tenantId']}/$action',
-        body: {'reason': reason},
-      );
+    if (saved) {
       final refreshed = await _load(preserveDataOnError: true);
       if (mounted) context.read<CentralAdminRefresh>().dataChanged();
       if (mounted) {
@@ -466,50 +472,6 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
             action: refreshed
                 ? null
                 : SnackBarAction(label: 'Pokušaj ponovo', onPressed: _load),
-          ),
-        );
-      }
-    } on ApiProblem catch (error) {
-      if (!mounted) return;
-      if (error.status == 409 &&
-          (error.code == 'tenant_admin_required' ||
-              error.code == 'tenant_catalog_incomplete')) {
-        await _load();
-        if (!mounted) return;
-        Map<String, dynamic> refreshed = item;
-        for (final candidate in _items) {
-          if (candidate['tenantId'] == item['tenantId']) {
-            refreshed = candidate;
-            break;
-          }
-        }
-        await showDialog<void>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('Aktivacija nije moguća'),
-            content: Text(
-              _readinessText(refreshed['missingActivationRequirements']),
-            ),
-            actions: [
-              FilledButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('U redu'),
-              ),
-            ],
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Zahtjev trenutno nije moguće izvršiti. Pokušajte ponovo.',
-            ),
           ),
         );
       }
@@ -605,6 +567,8 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
                           final readiness = _readinessText(
                             item['missingActivationRequirements'],
                           );
+                          final location =
+                              '${item['address']}, ${item['cityName']}';
                           const labels = [
                             'Čeka aktivaciju',
                             'Aktivna',
@@ -622,7 +586,21 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
                                 ),
                               ),
                               DataCell(
-                                Text('${item['address']}, ${item['cityName']}'),
+                                Tooltip(
+                                  message: location,
+                                  excludeFromSemantics: true,
+                                  child: Semantics(
+                                    label: location,
+                                    child: SizedBox(
+                                      width: 280,
+                                      child: Text(
+                                        location,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
                               DataCell(Text('${item['memberCount'] ?? 0}')),
                               DataCell(StatusPill(labels[status.clamp(0, 3)])),
@@ -2235,13 +2213,15 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
       final api = context.read<ApiClient>();
       final gyms = await api.page('/api/admin/gyms', query: {'pageSize': 100});
       if (!mounted) return;
-      final result = await showDialog<Map<String, Object?>>(
+      final saved = await showDialog<bool>(
         context: context,
-        builder: (_) => _RoleDialog(tenants: gyms.items),
+        builder: (_) => _RoleDialog(
+          tenants: gyms.items,
+          onSubmit: (body) =>
+              api.post('/api/admin/users/roles/assign', body: body),
+        ),
       );
-      if (result == null) return;
-      await api.post('/api/admin/users/roles/assign', body: result);
-      await _load();
+      if (saved == true) await _load();
     } on ApiProblem catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -2253,21 +2233,15 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   Future<void> _userAction(Map<String, dynamic> item, String endpoint) async {
     final api = context.read<ApiClient>();
-    final reason = await _reasonDialog(context, 'Razlog akcije');
-    if (reason == null) return;
-    try {
-      await api.post(
+    final saved = await submitReasonedAction(
+      context,
+      title: 'Razlog akcije',
+      onSubmit: (reason) => api.post(
         '/api/admin/users/$endpoint',
         body: {'identifier': item['email'], 'reason': reason},
-      );
-      await _load();
-    } on ApiProblem catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    }
+      ),
+    );
+    if (saved) await _load();
   }
 
   @override
@@ -2465,35 +2439,24 @@ class _ReferenceSectionState extends State<_ReferenceSection> {
 
   Future<void> _edit([Map<String, dynamic>? item]) async {
     final api = context.read<ApiClient>();
-    final result = await showDialog<Map<String, Object?>>(
+    final saved = await showDialog<bool>(
       context: context,
       builder: (_) => _ReferenceDialog(
         kind: widget.kind,
         value: item,
         countries: _countries,
+        onSubmit: (body) => item == null
+            ? api.post(
+                '/api/admin/reference-data/${widget.kind.path}',
+                body: body,
+              )
+            : api.put(
+                '/api/admin/reference-data/${widget.kind.path}/${item['id']}',
+                body: body,
+              ),
       ),
     );
-    if (result == null) return;
-    try {
-      if (item == null) {
-        await api.post(
-          '/api/admin/reference-data/${widget.kind.path}',
-          body: result,
-        );
-      } else {
-        await api.put(
-          '/api/admin/reference-data/${widget.kind.path}/${item['id']}',
-          body: result,
-        );
-      }
-      await _load();
-    } on ApiProblem catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    }
+    if (saved == true) await _load();
   }
 
   Future<void> _deactivate(Map<String, dynamic> item) async {
@@ -2597,17 +2560,74 @@ class _ReferenceSectionState extends State<_ReferenceSection> {
 }
 
 class _RoleDialog extends StatefulWidget {
-  const _RoleDialog({required this.tenants});
+  const _RoleDialog({required this.tenants, required this.onSubmit});
   final List<Map<String, dynamic>> tenants;
+  final Future<void> Function(Map<String, Object?> body) onSubmit;
   @override
   State<_RoleDialog> createState() => _RoleDialogState();
 }
 
 class _RoleDialogState extends State<_RoleDialog> {
+  final _formKey = GlobalKey<FormState>();
   final _email = TextEditingController();
   final _reason = TextEditingController();
   String _role = 'Member';
   Map<String, dynamic>? _tenant;
+  ApiProblem? _serverProblem;
+  String? _formError;
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _reason.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _serverProblem = null;
+      _formError = null;
+    });
+    if (!_formKey.currentState!.validate()) return;
+    final needsTenant = _role == 'GymAdmin' || _role == 'Trainer';
+    setState(() => _saving = true);
+    try {
+      await widget.onSubmit({
+        'identifier': _email.text.trim(),
+        'role': _role,
+        'tenantId': needsTenant ? _tenant!['tenantId'] : null,
+        'reason': _reason.text.trim(),
+      });
+      if (mounted) Navigator.pop(context, true);
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _serverProblem = error;
+          _formError = error.fieldErrors.isEmpty ? error.message : null;
+        });
+        _formKey.currentState!.validate();
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _clearError(String field) {
+    final problem = _serverProblem;
+    if (problem?.fieldError(field) == null) return;
+    final errors = Map<String, List<String>>.from(problem!.fieldErrors)
+      ..removeWhere((key, _) => key.toLowerCase() == field.toLowerCase());
+    setState(() {
+      _serverProblem = ApiProblem(
+        status: problem.status,
+        code: problem.code,
+        message: problem.message,
+        fieldErrors: errors,
+      );
+      _formError = null;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2616,71 +2636,100 @@ class _RoleDialogState extends State<_RoleDialog> {
       title: const Text('Dodijeli predefinisanu ulogu'),
       content: SizedBox(
         width: 480,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _email,
-              decoration: const InputDecoration(labelText: 'Email korisnika'),
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              initialValue: _role,
-              decoration: const InputDecoration(labelText: 'Uloga'),
-              items: const [
-                DropdownMenuItem(value: 'Member', child: Text('Član')),
-                DropdownMenuItem(value: 'Trainer', child: Text('Trener')),
-                DropdownMenuItem(
-                  value: 'GymAdmin',
-                  child: Text('Administrator teretane'),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: _email,
+                decoration: const InputDecoration(labelText: 'Email korisnika'),
+                onChanged: (_) => _clearError('Identifier'),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+                  if (text.isEmpty) return 'Unesite email ili korisničko ime.';
+                  if (text.length > 320) return 'Najviše 320 znakova.';
+                  return _serverProblem?.fieldError('Identifier');
+                },
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: _role,
+                decoration: const InputDecoration(labelText: 'Uloga'),
+                items: const [
+                  DropdownMenuItem(value: 'Member', child: Text('Član')),
+                  DropdownMenuItem(value: 'Trainer', child: Text('Trener')),
+                  DropdownMenuItem(
+                    value: 'GymAdmin',
+                    child: Text('Administrator teretane'),
+                  ),
+                ],
+                onChanged: (value) {
+                  setState(() {
+                    _role = value!;
+                    if (_role == 'Member') _tenant = null;
+                  });
+                  _clearError('Role');
+                },
+                validator: (_) => _serverProblem?.fieldError('Role'),
+              ),
+              if (needsTenant) ...[
+                const SizedBox(height: 10),
+                DropdownButtonFormField<Map<String, dynamic>>(
+                  initialValue: _tenant,
+                  decoration: const InputDecoration(labelText: 'Teretana'),
+                  items: widget.tenants
+                      .map(
+                        (item) => DropdownMenuItem(
+                          value: item,
+                          child: Text(item['name'].toString()),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) => _tenant = value,
+                  validator: (value) => value == null
+                      ? 'Odaberite teretanu.'
+                      : _serverProblem?.fieldError('TenantId'),
                 ),
               ],
-              onChanged: (value) => setState(() {
-                _role = value!;
-                if (_role == 'Member') {
-                  _tenant = null;
-                }
-              }),
-            ),
-            if (needsTenant) ...[
               const SizedBox(height: 10),
-              DropdownButtonFormField<Map<String, dynamic>>(
-                initialValue: _tenant,
-                decoration: const InputDecoration(labelText: 'Teretana'),
-                items: widget.tenants
-                    .map(
-                      (item) => DropdownMenuItem(
-                        value: item,
-                        child: Text(item['name'].toString()),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) => _tenant = value,
+              TextFormField(
+                controller: _reason,
+                decoration: const InputDecoration(labelText: 'Razlog'),
+                onChanged: (_) => _clearError('Reason'),
+                validator: (value) {
+                  final length = value?.trim().length ?? 0;
+                  if (length < 2) return 'Unesite razlog.';
+                  if (length > 1000) return 'Najviše 1000 znakova.';
+                  return _serverProblem?.fieldError('Reason');
+                },
               ),
+              if (_formError != null) ...[
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _formError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+              ],
             ],
-            const SizedBox(height: 10),
-            TextField(
-              controller: _reason,
-              decoration: const InputDecoration(labelText: 'Razlog'),
-            ),
-          ],
+          ),
         ),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: _saving ? null : () => Navigator.pop(context),
           child: const Text('Odustani'),
         ),
         FilledButton(
-          onPressed: needsTenant && _tenant == null
+          onPressed: _saving || (needsTenant && _tenant == null)
               ? null
-              : () => Navigator.pop(context, {
-                  'identifier': _email.text.trim(),
-                  'role': _role,
-                  'tenantId': needsTenant ? _tenant!['tenantId'] : null,
-                  'reason': _reason.text.trim(),
-                }),
-          child: const Text('Dodijeli'),
+              : _submit,
+          child: Text(_saving ? 'Dodjela...' : 'Dodijeli'),
         ),
       ],
     );
@@ -2691,16 +2740,19 @@ class _ReferenceDialog extends StatefulWidget {
   const _ReferenceDialog({
     required this.kind,
     required this.countries,
+    required this.onSubmit,
     this.value,
   });
   final _ReferenceKind kind;
   final Map<String, dynamic>? value;
   final List<Map<String, dynamic>> countries;
+  final Future<void> Function(Map<String, Object?> body) onSubmit;
   @override
   State<_ReferenceDialog> createState() => _ReferenceDialogState();
 }
 
 class _ReferenceDialogState extends State<_ReferenceDialog> {
+  final _formKey = GlobalKey<FormState>();
   late final _name = TextEditingController(
     text: widget.value?['name']?.toString() ?? '',
   );
@@ -2712,6 +2764,9 @@ class _ReferenceDialogState extends State<_ReferenceDialog> {
   );
   Map<String, dynamic>? _country;
   late bool _active = widget.value?['isActive'] as bool? ?? true;
+  ApiProblem? _serverProblem;
+  String? _formError;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -2723,72 +2778,168 @@ class _ReferenceDialogState extends State<_ReferenceDialog> {
   }
 
   @override
+  void dispose() {
+    _name.dispose();
+    _code.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _serverProblem = null;
+      _formError = null;
+    });
+    if (!_formKey.currentState!.validate()) return;
+    final body = <String, Object?>{'name': _name.text.trim()};
+    switch (widget.kind) {
+      case _ReferenceKind.country:
+        body['code'] = _code.text.trim().toUpperCase();
+      case _ReferenceKind.city:
+        body['countryId'] = _country?['id'];
+      case _ReferenceKind.trainingType:
+        body['description'] = _description.text.trim().isEmpty
+            ? null
+            : _description.text.trim();
+      case _ReferenceKind.equipment:
+        break;
+    }
+    if (widget.value != null) body['isActive'] = _active;
+    setState(() => _saving = true);
+    try {
+      await widget.onSubmit(body);
+      if (mounted) Navigator.pop(context, true);
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _serverProblem = error;
+          _formError = error.fieldErrors.isEmpty ? error.message : null;
+        });
+        _formKey.currentState!.validate();
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _clearError(String field) {
+    final problem = _serverProblem;
+    if (problem?.fieldError(field) == null) return;
+    final errors = Map<String, List<String>>.from(problem!.fieldErrors)
+      ..removeWhere((key, _) => key.toLowerCase() == field.toLowerCase());
+    setState(() {
+      _serverProblem = ApiProblem(
+        status: problem.status,
+        code: problem.code,
+        message: problem.message,
+        fieldErrors: errors,
+      );
+      _formError = null;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) => AlertDialog(
     title: Text(widget.value == null ? 'Novi zapis' : 'Uredi zapis'),
     content: SizedBox(
       width: 440,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (widget.kind == _ReferenceKind.country) ...[
-            TextField(
-              controller: _code,
-              decoration: const InputDecoration(labelText: 'Kod'),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.kind == _ReferenceKind.country) ...[
+              TextFormField(
+                controller: _code,
+                decoration: const InputDecoration(labelText: 'Kod'),
+                onChanged: (_) => _clearError('Code'),
+                validator: (value) {
+                  final length = value?.trim().length ?? 0;
+                  if (length < 2 || length > 3) return 'Unesite 2–3 znaka.';
+                  return _serverProblem?.fieldError('Code');
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
+            TextFormField(
+              controller: _name,
+              decoration: const InputDecoration(labelText: 'Naziv'),
+              onChanged: (_) => _clearError('Name'),
+              validator: (value) {
+                final text = value?.trim() ?? '';
+                if (text.isEmpty) return 'Naziv je obavezan.';
+                final maxLength = widget.kind == _ReferenceKind.country
+                    ? 120
+                    : 160;
+                if (text.length > maxLength) {
+                  return 'Najviše $maxLength znakova.';
+                }
+                return _serverProblem?.fieldError('Name');
+              },
             ),
-            const SizedBox(height: 10),
+            if (widget.kind == _ReferenceKind.trainingType) ...[
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _description,
+                maxLines: 3,
+                decoration: const InputDecoration(labelText: 'Opis'),
+                onChanged: (_) => _clearError('Description'),
+                validator: (value) {
+                  if ((value?.trim().length ?? 0) > 1000) {
+                    return 'Najviše 1000 znakova.';
+                  }
+                  return _serverProblem?.fieldError('Description');
+                },
+              ),
+            ],
+            if (widget.kind == _ReferenceKind.city)
+              DropdownButtonFormField<Map<String, dynamic>>(
+                initialValue: _country,
+                decoration: const InputDecoration(labelText: 'Država'),
+                items: widget.countries
+                    .map(
+                      (item) => DropdownMenuItem(
+                        value: item,
+                        child: Text(item['name'].toString()),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => setState(() => _country = value),
+                validator: (value) => value == null
+                    ? 'Odaberite državu.'
+                    : _serverProblem?.fieldError('CountryId'),
+              ),
+            if (widget.value != null)
+              SwitchListTile(
+                value: _active,
+                onChanged: (value) => setState(() => _active = value),
+                title: const Text('Aktivno'),
+              ),
+            if (_formError != null) ...[
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _formError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            ],
           ],
-          TextField(
-            controller: _name,
-            decoration: const InputDecoration(labelText: 'Naziv'),
-          ),
-          if (widget.kind == _ReferenceKind.trainingType) ...[
-            const SizedBox(height: 10),
-            TextField(
-              controller: _description,
-              maxLines: 3,
-              decoration: const InputDecoration(labelText: 'Opis'),
-            ),
-          ],
-          if (widget.value != null)
-            SwitchListTile(
-              value: _active,
-              onChanged: (value) => setState(() => _active = value),
-              title: const Text('Aktivno'),
-            ),
-        ],
+        ),
       ),
     ),
     actions: [
       TextButton(
-        onPressed: () => Navigator.pop(context),
+        onPressed: _saving ? null : () => Navigator.pop(context),
         child: const Text('Odustani'),
       ),
       FilledButton(
-        onPressed: () {
-          final body = <String, Object?>{'name': _name.text.trim()};
-          switch (widget.kind) {
-            case _ReferenceKind.country:
-              body['code'] = _code.text.trim().toUpperCase();
-            case _ReferenceKind.city:
-              body['countryId'] = _country?['id'];
-            case _ReferenceKind.trainingType:
-              body['description'] = _description.text.trim().isEmpty
-                  ? null
-                  : _description.text.trim();
-            case _ReferenceKind.equipment:
-              break;
-          }
-          if (widget.value != null) body['isActive'] = _active;
-          Navigator.pop(context, body);
-        },
-        child: const Text('Sačuvaj'),
+        onPressed: _saving ? null : _submit,
+        child: Text(_saving ? 'Čuvanje...' : 'Sačuvaj'),
       ),
     ],
   );
-}
-
-Future<String?> _reasonDialog(BuildContext context, String title) async {
-  return promptForReason(context, title: title);
 }
 
 String _date(Object? value) => value == null

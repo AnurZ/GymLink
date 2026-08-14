@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:gymlink_mobile/core/api.dart';
+import 'package:gymlink_mobile/core/auth.dart';
 import 'package:gymlink_mobile/core/payments.dart';
 import 'package:gymlink_mobile/core/theme.dart';
 import 'package:gymlink_mobile/features/auth/auth_screens.dart';
@@ -14,6 +16,9 @@ import 'package:gymlink_mobile/features/member/gym_screens.dart';
 import 'package:gymlink_mobile/features/member/membership_screen.dart';
 import 'package:gymlink_mobile/features/member/reservation_screen.dart';
 import 'package:gymlink_mobile/features/notifications/notification_screen.dart';
+import 'package:gymlink_mobile/features/notifications/notification_controller.dart';
+import 'package:gymlink_mobile/features/chat/chat_models.dart';
+import 'package:gymlink_mobile/features/chat/chat_realtime.dart';
 import 'package:gymlink_mobile/features/payments/payment_result_screen.dart';
 import 'package:gymlink_mobile/features/reservations/reservation_refresh_controller.dart';
 import 'package:gymlink_mobile/features/trainer/trainer_screens.dart';
@@ -22,6 +27,104 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  testWidgets('notification tabs stay compact and map all/unread queries', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 700);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.6;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final isReadQueries = <bool?>[];
+    final markAllGate = Completer<void>();
+    var markAllRequests = 0;
+    final api = ApiClient(
+      _TestTokenSource(),
+      baseUrlOverride: 'http://test.local',
+      httpClient: MockClient((request) async {
+        if (request.url.path == '/api/me/notifications/read-all') {
+          markAllRequests++;
+          await markAllGate.future;
+          return _jsonResponse({});
+        }
+        if (request.url.path == '/api/me/notifications') {
+          isReadQueries.add(
+            request.url.queryParameters['isRead'] == null
+                ? null
+                : request.url.queryParameters['isRead'] == 'false'
+                ? false
+                : true,
+          );
+          return _jsonResponse({
+            'items': [
+              {
+                'id': 'notice-1',
+                'title': 'Nova obavijest',
+                'text': 'Sadržaj obavijesti',
+                'createdAtUtc': '2026-08-14T08:00:00Z',
+                'isRead': false,
+                'concurrencyToken': 'token-1',
+              },
+            ],
+            'page': 1,
+            'pageSize': 20,
+            'totalCount': 1,
+          });
+        }
+        return _jsonResponse({}, statusCode: 404);
+      }),
+    );
+    final auth = AuthController();
+    final realtime = _SilentRealtime();
+    final notifications = NotificationController(api, auth, realtime);
+    addTearDown(notifications.dispose);
+    addTearDown(realtime.dispose);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<ApiClient>.value(value: api),
+          ChangeNotifierProvider.value(value: notifications),
+        ],
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const NotificationScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(isReadQueries, [null]);
+    expect(find.text('Pročitane'), findsNothing);
+    expect(find.byKey(const Key('notifications-all-tab')), findsOneWidget);
+    expect(find.byKey(const Key('notifications-unread-tab')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const Key('notifications-unread-tab')));
+    await tester.pumpAndSettle();
+    expect(isReadQueries.last, false);
+
+    final markAll = find.byKey(const Key('mark-all-notifications-read'));
+    expect(find.text('Označi sve kao pročitano'), findsOneWidget);
+    expect(tester.widget<TextButton>(markAll).onPressed, isNotNull);
+    await tester.tap(markAll);
+    await tester.pump();
+    expect(
+      find.descendant(
+        of: markAll,
+        matching: find.byType(CircularProgressIndicator),
+      ),
+      findsOneWidget,
+    );
+    expect(tester.widget<TextButton>(markAll).onPressed, isNull);
+    markAllGate.complete();
+    await tester.pumpAndSettle();
+    expect(markAllRequests, 1);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 5));
+  });
+
   testWidgets('notification detail marks read only after it opens', (
     tester,
   ) async {
@@ -120,9 +223,11 @@ void main() {
           builder: (context) => Scaffold(
             body: FilledButton(
               onPressed: () async {
-                submittedReason = await showDialog<String>(
+                await showDialog<bool>(
                   context: context,
-                  builder: (_) => const TrainerCancellationReasonDialog(),
+                  builder: (_) => TrainerCancellationReasonDialog(
+                    onSubmit: (reason) async => submittedReason = reason,
+                  ),
                 );
               },
               child: const Text('Otkaži'),
@@ -134,7 +239,11 @@ void main() {
 
     await tester.tap(find.text('Otkaži'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Nastavi'));
+    final submit = find.descendant(
+      of: find.byType(TrainerCancellationReasonDialog),
+      matching: find.widgetWithText(FilledButton, 'Otkaži'),
+    );
+    await tester.tap(submit);
     await tester.pump();
 
     expect(find.text('Unesite razlog otkazivanja.'), findsOneWidget);
@@ -142,7 +251,7 @@ void main() {
     expect(submittedReason, isNull);
 
     await tester.enterText(find.byType(TextFormField), 'Bolest trenera');
-    await tester.tap(find.text('Nastavi'));
+    await tester.tap(submit);
     await tester.pumpAndSettle();
 
     expect(find.byType(TrainerCancellationReasonDialog), findsNothing);
@@ -161,9 +270,11 @@ void main() {
           builder: (context) => Scaffold(
             body: FilledButton(
               onPressed: () async {
-                submittedReview = await showDialog<Map<String, Object?>>(
+                await showDialog<bool>(
                   context: context,
-                  builder: (_) => const TrainerReviewDialog(),
+                  builder: (_) => TrainerReviewDialog(
+                    onSubmit: (body) async => submittedReview = body,
+                  ),
                 );
               },
               child: const Text('Ocijeni'),
@@ -1665,6 +1776,39 @@ class _TestTokenSource implements AuthTokenSource {
 
   @override
   Future<bool> refresh() async => false;
+}
+
+class _SilentRealtime implements ChatRealtimeGateway {
+  final _messages = StreamController<ChatMessageModel>.broadcast();
+  final _available = StreamController<String>.broadcast();
+  final _reads = StreamController<ConversationReadEvent>.broadcast();
+
+  @override
+  bool get isConnected => false;
+  @override
+  Stream<ChatMessageModel> get messages => _messages.stream;
+  @override
+  Stream<String> get conversationAvailable => _available.stream;
+  @override
+  Stream<ConversationReadEvent> get conversationReads => _reads.stream;
+  @override
+  Future<void> connect() async {}
+  @override
+  Future<void> join(String conversationId) async {}
+  @override
+  Future<void> leave(String conversationId) async {}
+  @override
+  Future<void> send(
+    String conversationId,
+    String clientMessageId,
+    String text,
+  ) async {}
+
+  Future<void> dispose() async {
+    await _messages.close();
+    await _available.close();
+    await _reads.close();
+  }
 }
 
 class _RecordingNavigatorObserver extends NavigatorObserver {

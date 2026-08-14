@@ -205,12 +205,17 @@ class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
   }
 
   Future<void> _review() async {
-    final result = await showDialog<Map<String, Object?>>(
+    final api = context.read<ApiClient>();
+    final saved = await showDialog<bool>(
       context: context,
-      builder: (_) => const TrainerReviewDialog(),
+      builder: (_) => TrainerReviewDialog(
+        onSubmit: (body) => api.post(
+          '/api/reservations/${widget.reservationId}/review',
+          body: body,
+        ),
+      ),
     );
-    if (result == null) return;
-    await _command('/api/reservations/${widget.reservationId}/review', result);
+    if (saved == true) await _load();
   }
 
   Future<void> _command(String path, Map<String, Object?> body) async {
@@ -319,15 +324,21 @@ class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
 }
 
 class TrainerReviewDialog extends StatefulWidget {
-  const TrainerReviewDialog({super.key});
+  const TrainerReviewDialog({required this.onSubmit, super.key});
+
+  final Future<void> Function(Map<String, Object?> body) onSubmit;
 
   @override
   State<TrainerReviewDialog> createState() => _TrainerReviewDialogState();
 }
 
 class _TrainerReviewDialogState extends State<TrainerReviewDialog> {
+  final _formKey = GlobalKey<FormState>();
   final _comment = TextEditingController();
   int _rating = 5;
+  ApiProblem? _serverProblem;
+  String? _formError;
+  bool _saving = false;
 
   @override
   void dispose() {
@@ -335,46 +346,89 @@ class _TrainerReviewDialogState extends State<TrainerReviewDialog> {
     super.dispose();
   }
 
+  Future<void> _submit() async {
+    setState(() {
+      _serverProblem = null;
+      _formError = null;
+    });
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _saving = true);
+    try {
+      final comment = _comment.text.trim();
+      await widget.onSubmit({
+        'rating': _rating,
+        'comment': comment.isEmpty ? null : comment,
+      });
+      if (mounted) Navigator.pop(context, true);
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        setState(() {
+          _serverProblem = error;
+          _formError = error.fieldErrors.isEmpty ? error.message : null;
+        });
+        _formKey.currentState!.validate();
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: const Text('Ocijenite trenera'),
-    content: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SegmentedButton<int>(
-          segments: List.generate(
-            5,
-            (index) =>
-                ButtonSegment(value: index + 1, label: Text('${index + 1}')),
+    content: Form(
+      key: _formKey,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SegmentedButton<int>(
+            segments: List.generate(
+              5,
+              (index) =>
+                  ButtonSegment(value: index + 1, label: Text('${index + 1}')),
+            ),
+            selected: {_rating},
+            onSelectionChanged: _saving
+                ? null
+                : (values) {
+                    setState(() => _rating = values.first);
+                  },
           ),
-          selected: {_rating},
-          onSelectionChanged: (values) {
-            setState(() => _rating = values.first);
-          },
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _comment,
-          maxLines: 4,
-          maxLength: 2000,
-          decoration: const InputDecoration(labelText: 'Komentar'),
-        ),
-      ],
+          if (_serverProblem?.fieldError('Rating') case final error?)
+            Text(
+              error,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _comment,
+            maxLines: 4,
+            maxLength: 2000,
+            decoration: const InputDecoration(labelText: 'Komentar'),
+            onChanged: (_) => setState(() => _serverProblem = null),
+            validator: (value) {
+              if ((value?.trim().length ?? 0) > 2000) {
+                return 'Najviše 2000 znakova.';
+              }
+              return _serverProblem?.fieldError('Comment');
+            },
+          ),
+          if (_formError != null)
+            Text(
+              _formError!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+        ],
+      ),
     ),
     actions: [
       TextButton(
-        onPressed: () => Navigator.pop(context),
+        onPressed: _saving ? null : () => Navigator.pop(context),
         child: const Text('Odustani'),
       ),
       FilledButton(
-        onPressed: () {
-          final comment = _comment.text.trim();
-          Navigator.pop(context, {
-            'rating': _rating,
-            'comment': comment.isEmpty ? null : comment,
-          });
-        },
-        child: const Text('Objavi'),
+        onPressed: _saving ? null : _submit,
+        child: Text(_saving ? 'Objavljivanje...' : 'Objavi'),
       ),
     ],
   );

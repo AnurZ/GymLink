@@ -19,6 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _busy = false;
   bool _obscure = true;
   String? _error;
+  ApiProblem? _serverProblem;
 
   @override
   void dispose() {
@@ -28,6 +29,10 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _submit() async {
+    setState(() {
+      _serverProblem = null;
+      _error = null;
+    });
     if (!_formKey.currentState!.validate()) return;
     setState(() {
       _busy = true;
@@ -39,7 +44,13 @@ class _LoginScreenState extends State<LoginScreen> {
         _password.text,
       );
     } on ApiProblem catch (error) {
-      if (mounted) setState(() => _error = error.message);
+      if (mounted) {
+        setState(() {
+          _serverProblem = error;
+          _error = error.fieldErrors.isEmpty ? error.message : null;
+        });
+        _formKey.currentState!.validate();
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -109,10 +120,13 @@ class _LoginScreenState extends State<LoginScreen> {
                           labelText: 'Email ili korisničko ime',
                           prefixIcon: Icon(Icons.person_outline),
                         ),
-                        validator: (value) =>
-                            value == null || value.trim().isEmpty
-                            ? 'Polje je obavezno.'
-                            : null,
+                        onChanged: (_) => setState(() => _serverProblem = null),
+                        validator: (value) {
+                          final text = value?.trim() ?? '';
+                          if (text.isEmpty) return 'Polje je obavezno.';
+                          if (text.length > 320) return 'Najviše 320 znakova.';
+                          return _serverProblem?.fieldError('Identifier');
+                        },
                       ),
                       const SizedBox(height: 14),
                       TextFormField(
@@ -132,9 +146,14 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
                         ),
-                        validator: (value) => value == null || value.isEmpty
-                            ? 'Polje je obavezno.'
-                            : null,
+                        onChanged: (_) => setState(() => _serverProblem = null),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Polje je obavezno.';
+                          }
+                          if (value.length > 100) return 'Najviše 100 znakova.';
+                          return _serverProblem?.fieldError('Password');
+                        },
                       ),
                       if (_error != null) ...[
                         const SizedBox(height: 12),

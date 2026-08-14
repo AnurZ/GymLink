@@ -27,6 +27,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Map<String, dynamic>? _profile;
   Uint8List? _imagePreview;
   String? _imageError;
+  Map<String, List<String>> _fieldErrors = const {};
+  String? _formError;
   Object? _error;
 
   @override
@@ -151,6 +153,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _save() async {
+    setState(() {
+      _fieldErrors = const {};
+      _formError = null;
+    });
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     try {
@@ -166,13 +172,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     } on ApiProblem catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+        setState(() {
+          _fieldErrors = error.fieldErrors;
+          _formError = error.fieldErrors.isEmpty ? error.message : null;
+        });
+        _formKey.currentState!.validate();
       }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  String? _serverError(String field) => ApiProblem(
+    status: 400,
+    code: 'validation_failed',
+    message: '',
+    fieldErrors: _fieldErrors,
+  ).fieldError(field);
+
+  void _clearFieldError(String field) {
+    if (_serverError(field) == null) return;
+    setState(() {
+      _fieldErrors = Map<String, List<String>>.from(_fieldErrors)
+        ..removeWhere((key, _) => key.toLowerCase() == field.toLowerCase());
+      _formError = null;
+    });
   }
 
   @override
@@ -290,27 +314,59 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       decoration: const InputDecoration(
                         labelText: 'Ime i prezime',
                       ),
-                      validator: (value) =>
-                          value == null || value.trim().length < 2
-                          ? 'Unesite ime.'
-                          : null,
+                      onChanged: (_) => _clearFieldError('DisplayName'),
+                      validator: (value) {
+                        final length = value?.trim().length ?? 0;
+                        if (length < 2) return 'Unesite najmanje 2 znaka.';
+                        if (length > 160) return 'Najviše 160 znakova.';
+                        return _serverError('DisplayName');
+                      },
                     ),
                     const SizedBox(height: 12),
                     TextFormField(
                       controller: _email,
                       keyboardType: TextInputType.emailAddress,
                       decoration: const InputDecoration(labelText: 'Email'),
-                      validator: (value) =>
-                          value == null || !value.contains('@')
-                          ? 'Unesite ispravan email.'
-                          : null,
+                      onChanged: (_) => _clearFieldError('Email'),
+                      validator: (value) {
+                        final text = value?.trim() ?? '';
+                        if (!RegExp(
+                          r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                        ).hasMatch(text)) {
+                          return 'Unesite ispravan email.';
+                        }
+                        if (text.length > 320) return 'Najviše 320 znakova.';
+                        return _serverError('Email');
+                      },
                     ),
                     const SizedBox(height: 12),
                     TextFormField(
                       controller: _phone,
                       keyboardType: TextInputType.phone,
                       decoration: const InputDecoration(labelText: 'Telefon'),
+                      onChanged: (_) => _clearFieldError('PhoneNumber'),
+                      validator: (value) {
+                        final text = value?.trim() ?? '';
+                        if (text.length > 32) return 'Najviše 32 znaka.';
+                        if (text.isNotEmpty &&
+                            !RegExp(r'^\+?[0-9 ()-]+$').hasMatch(text)) {
+                          return 'Unesite ispravan broj telefona.';
+                        }
+                        return _serverError('PhoneNumber');
+                      },
                     ),
+                    if (_formError != null) ...[
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          _formError!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 18),
                     SizedBox(
                       width: double.infinity,
