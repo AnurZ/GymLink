@@ -181,9 +181,6 @@ internal sealed class ReportingService(
                 on trainer.UserId equals trainerUser.Id
             join offering in dbContext.TrainerServiceOfferings.AsNoTracking()
                 on reservation.TrainerServiceOfferingId equals offering.Id
-            join payment in dbContext.Payments.AsNoTracking()
-                on reservation.PaymentId equals payment.Id into payments
-            from payment in payments.DefaultIfEmpty()
             where reservation.StartsAtUtc >= range.StartUtc &&
                   reservation.StartsAtUtc < range.EndUtc
             orderby reservation.StartsAtUtc, member.DisplayName, reservation.Id
@@ -194,7 +191,9 @@ internal sealed class ReportingService(
                 offering.Name,
                 reservation.StartsAtUtc,
                 reservation.Status,
-                payment == null ? null : payment.Status))
+                reservation.PaymentDueAtUtc.HasValue
+                    ? ReservationPaymentMethod.Stripe
+                    : ReservationPaymentMethod.PayInPerson))
             .Take(MaximumReportRows + 1)
             .ToListAsync(cancellationToken);
         EnsureReportRowCount(rows.Count);

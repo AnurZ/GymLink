@@ -173,6 +173,12 @@ class _TenantMembershipRequestsScreenState
     _load();
   }
 
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;

@@ -28,10 +28,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _name.dispose();
+    _email.dispose();
+    _phone.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
       final profile = await context.read<AuthController>().loadProfile();
+      if (!mounted) return;
       _name.text = profile['displayName']?.toString() ?? '';
       _email.text = profile['email']?.toString() ?? '';
       _phone.text = profile['phoneNumber']?.toString() ?? '';

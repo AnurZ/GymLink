@@ -3,7 +3,9 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using GymLink.Application.Identity;
 using GymLink.Application.Reporting;
+using GymLink.Domain.Enums;
 using GymLink.Infrastructure.Persistence;
+using GymLink.Infrastructure.Reporting;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -18,6 +20,16 @@ public sealed class Phase11ReportingApiTests
     private const string SigningKey = "integration-test-signing-key-at-least-32-bytes";
     private static readonly System.Text.Json.JsonSerializerOptions WebJsonOptions = new(
         System.Text.Json.JsonSerializerDefaults.Web);
+
+    [Theory]
+    [InlineData(ReservationPaymentMethod.Stripe, "Online")]
+    [InlineData(ReservationPaymentMethod.PayInPerson, "Uživo")]
+    public void Reservation_report_uses_payment_method_labels(
+        ReservationPaymentMethod paymentMethod,
+        string expected) =>
+        Assert.Equal(
+            expected,
+            QuestPdfReportRenderer.ReservationPaymentMethodLabel(paymentMethod));
 
     [Fact]
     public async Task Statistics_and_reports_are_bounded_tenant_scoped_authorized_and_audited()

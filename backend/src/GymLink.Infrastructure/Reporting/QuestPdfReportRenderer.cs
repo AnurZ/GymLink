@@ -1,5 +1,6 @@
 using System.Globalization;
 using GymLink.Application.Reporting;
+using GymLink.Domain.Enums;
 using GymLink.Domain.Trainers;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
@@ -92,11 +93,22 @@ internal sealed class QuestPdfReportRenderer : IReportPdfRenderer
                     Cell(table, row.OfferingName);
                     Cell(table, LocalDateTime(row.StartsAtUtc));
                     Cell(table, row.Status.ToString());
-                    Cell(table, row.PaymentStatus?.ToString() ?? "Uživo");
+                    Cell(table, ReservationPaymentMethodLabel(row.PaymentMethod));
                 }
             });
             ConfigureFooter(page, document.Rows.Count);
         })).GeneratePdf();
+
+    internal static string ReservationPaymentMethodLabel(
+        ReservationPaymentMethod paymentMethod) => paymentMethod switch
+        {
+            ReservationPaymentMethod.Stripe => "Online",
+            ReservationPaymentMethod.PayInPerson => "Uživo",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(paymentMethod),
+                paymentMethod,
+                "Unsupported reservation payment method."),
+        };
 
     private static void ConfigurePage(
         PageDescriptor page,

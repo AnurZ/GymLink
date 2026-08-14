@@ -775,6 +775,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
     _planDuration.dispose();
     _planPrice.dispose();
     _adminSearch.dispose();
+    _mapController.dispose();
     _stepperScrollController.dispose();
     _adminDebounce?.cancel();
     _locationDebounce?.cancel();
@@ -2193,6 +2194,12 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
@@ -2398,6 +2405,12 @@ class _ReferenceSectionState extends State<_ReferenceSection> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {

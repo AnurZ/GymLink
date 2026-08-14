@@ -62,7 +62,7 @@ public sealed record ReservationReportRow(
     string OfferingName,
     DateTime StartsAtUtc,
     ReservationStatus Status,
-    PaymentStatus? PaymentStatus);
+    ReservationPaymentMethod PaymentMethod);
 
 public sealed record MembershipReportDocument(
     ReportingWindow Window,
