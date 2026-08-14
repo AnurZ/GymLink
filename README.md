@@ -6,7 +6,7 @@ To build GymLink using Docker, copy `.env.example` to `.env`, enter the required
 
 The normal Compose stack sends password-reset codes through authenticated Gmail SMTP. Enable Google 2-Step Verification for the sender account, create a dedicated 16-character [Google App Password](https://support.google.com/mail/answer/185833?hl=en-EN), and set `Smtp__Host=smtp.gmail.com`, `Smtp__Port=465`, `Smtp__UseSsl=true`, `Smtp__Username`, `Smtp__Password`, and `Smtp__SenderEmail` in the private `.env`. Use the full Gmail address for both username and sender email. Never commit or share the App Password.
 
-Mailpit is intentionally excluded from normal startup. For isolated local delivery testing, run `docker compose -f docker-compose.yml -f docker-compose.mailpit.yml up --build -d`; this override redirects only the Worker to unauthenticated Mailpit and exposes its UI at `http://localhost:8025`. The release verification script applies this override automatically so automated tests never send real email.
+The release audit also uses Gmail SMTP. Docker verification therefore requires a real recipient through `-AuditEmail`; the isolated audit account and database are removed with the audit stack. The automated assertion proves that Gmail accepted the message and the Worker recorded completed inbox processing, while final mailbox placement remains external to GymLink.
 
 ## Address search
 
@@ -70,4 +70,4 @@ The Windows application is available only to Central Administrators and Gym Admi
 
 ## RabbitMQ
 
-RabbitMQ carries notification and password-reset messages from the API transactional outbox to the separate GymLink Worker. The Worker processes persistent notifications and sends password-reset email through the configured Gmail SMTP account, with retry, idempotent processing, manual acknowledgements, and dead-letter queues for invalid messages. Mailpit is used only through the explicit audit override.
+RabbitMQ carries notification and password-reset messages from the API transactional outbox to the separate GymLink Worker. The Worker processes persistent notifications and sends password-reset email through the configured Gmail SMTP account, with retry, idempotent processing, manual acknowledgements, and dead-letter queues for invalid messages.

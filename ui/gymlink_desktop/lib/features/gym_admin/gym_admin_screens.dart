@@ -2014,8 +2014,6 @@ class _GymGalleryManager extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-        if (busy) const LinearProgressIndicator(),
-        if (busy) const SizedBox(height: 8),
         if (images.isEmpty)
           Container(
             height: 120,
@@ -2116,8 +2114,17 @@ class _GymGalleryManager extends StatelessWidget {
             FilledButton.icon(
               key: const Key('gym-gallery-save'),
               onPressed: dirty && !busy ? onSave : null,
-              icon: const Icon(Icons.save_outlined),
-              label: const Text('Sačuvaj galeriju'),
+              icon: busy
+                  ? const SizedBox.square(
+                      key: Key('gym-gallery-save-progress'),
+                      dimension: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.save_outlined),
+              label: Text(busy ? 'Čuvanje...' : 'Sačuvaj galeriju'),
             ),
           ],
         ),

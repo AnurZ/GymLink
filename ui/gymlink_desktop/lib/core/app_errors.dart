@@ -1,27 +1,51 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 final class AppErrorReporter {
   AppErrorReporter._();
 
+  static const displayDuration = Duration(seconds: 5);
   static final ValueNotifier<String?> message = ValueNotifier(null);
+  static Timer? _dismissalTimer;
 
   static void reportUnexpected([String? safeMessage]) {
+    _dismissalTimer?.cancel();
     message.value =
         safeMessage ?? 'Došlo je do neočekivane greške. Pokušajte ponovo.';
+    _dismissalTimer = Timer(displayDuration, () {
+      _dismissalTimer = null;
+      message.value = null;
+    });
   }
 
-  static void clear() => message.value = null;
+  static void clear() {
+    _dismissalTimer?.cancel();
+    _dismissalTimer = null;
+    message.value = null;
+  }
 }
 
-class AppErrorBanner extends StatelessWidget {
+class AppErrorBanner extends StatefulWidget {
   const AppErrorBanner({required this.child, super.key});
 
   final Widget child;
 
   @override
+  State<AppErrorBanner> createState() => _AppErrorBannerState();
+}
+
+class _AppErrorBannerState extends State<AppErrorBanner> {
+  @override
+  void dispose() {
+    AppErrorReporter.clear();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) => Stack(
     children: [
-      child,
+      widget.child,
       ValueListenableBuilder<String?>(
         valueListenable: AppErrorReporter.message,
         builder: (context, message, _) {

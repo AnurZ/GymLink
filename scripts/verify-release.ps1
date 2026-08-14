@@ -10,10 +10,8 @@ param(
     [int]$RabbitMqPort = 5673,
     [ValidateRange(1, 65535)]
     [int]$RabbitMqManagementPort = 15673,
-    [ValidateRange(1, 65535)]
-    [int]$MailpitSmtpPort = 1026,
-    [ValidateRange(1, 65535)]
-    [int]$MailpitUiPort = 8026,
+    [ValidatePattern('^[^@\s]+@[^@\s]+\.[^@\s]+$')]
+    [string]$AuditEmail,
     [string]$EmulatorId = 'Medium_Phone',
     [string]$ArtifactDirectory = 'artifacts/release-candidate',
     [switch]$SkipStaticVerification,
@@ -30,7 +28,6 @@ $ProgressPreference = 'SilentlyContinue'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryRoot = (Resolve-Path (Join-Path $scriptRoot '..')).Path
 $composeFile = Join-Path $repositoryRoot 'docker-compose.yml'
-$mailpitComposeFile = Join-Path $repositoryRoot 'docker-compose.mailpit.yml'
 $environmentFile = Join-Path $repositoryRoot '.env'
 $solution = Join-Path $repositoryRoot 'backend/GymLink.sln'
 $mobileRoot = Join-Path $repositoryRoot 'ui/gymlink_mobile'
@@ -131,6 +128,34 @@ function Assert-RequiredEnvironment {
     }
 
     if (-not $SkipDocker) {
+        if ([string]::IsNullOrWhiteSpace($AuditEmail)) {
+            throw '-AuditEmail is required when Docker verification is enabled.'
+        }
+
+        $smtpRequired = @(
+            'Smtp__Host',
+            'Smtp__Port',
+            'Smtp__UseSsl',
+            'Smtp__Username',
+            'Smtp__Password',
+            'Smtp__SenderEmail'
+        )
+        foreach ($name in $smtpRequired) {
+            $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+            if ([string]::IsNullOrWhiteSpace($value) -or
+                $value -match 'replace|placeholder|change-me|your-sender') {
+                throw "Required Gmail variable $name is missing or still contains a placeholder."
+            }
+        }
+        if ($env:Smtp__Host -ne 'smtp.gmail.com' -or
+            $env:Smtp__Port -ne '465' -or
+            $env:Smtp__UseSsl -ne 'true') {
+            throw 'Docker verification requires Gmail SMTP at smtp.gmail.com:465 with SSL enabled.'
+        }
+        if ($env:Smtp__Username -ne $env:Smtp__SenderEmail) {
+            throw 'Smtp__Username and Smtp__SenderEmail must use the same Gmail sender address.'
+        }
+
         if ($env:Stripe__Enabled -eq 'true') {
             if ($env:Stripe__SecretKey -notmatch '^sk_test_' -or
                 $env:Stripe__WebhookSecret -notmatch '^whsec_') {
@@ -197,19 +222,13 @@ function Set-IsolatedComposeEnvironment {
     $env:GYMLINK_SQLSERVER_PORT = $SqlServerPort.ToString()
     $env:GYMLINK_RABBITMQ_PORT = $RabbitMqPort.ToString()
     $env:GYMLINK_RABBITMQ_MANAGEMENT_PORT = $RabbitMqManagementPort.ToString()
-    $env:GYMLINK_MAILPIT_SMTP_PORT = $MailpitSmtpPort.ToString()
-    $env:GYMLINK_MAILPIT_UI_PORT = $MailpitUiPort.ToString()
     $env:GYMLINK_COMPOSE_SEED_ENABLED = 'true'
-    $env:Smtp__Username = 'audit@gymlink.local'
-    $env:Smtp__Password = 'audit-only-not-a-real-credential'
-    $env:Smtp__SenderEmail = 'audit@gymlink.local'
 }
 
 function Get-ComposeArguments {
     return @(
         'compose', '-p', $ProjectName,
-        '-f', $composeFile,
-        '-f', $mailpitComposeFile
+        '-f', $composeFile
     )
 }
 
@@ -304,15 +323,29 @@ function Publish-MalformedMessage([string]$RoutingKey) {
     }
 }
 
-function Wait-ForMail([string]$Recipient, [int]$MinimumCount = 1) {
+function Wait-ForCompletedInbox([string]$Consumer, [int]$MinimumCount = 1) {
     Wait-Until -TimeoutSeconds 120 -IntervalSeconds 3 `
         -Condition {
-            $response = Invoke-WebRequest -UseBasicParsing `
-                -Uri "http://127.0.0.1:$MailpitUiPort/api/v1/messages"
-            $matches = [regex]::Matches($response.Content, [regex]::Escape($Recipient), 'IgnoreCase')
-            return $matches.Count -ge $MinimumCount
+            $count = [int](Invoke-DatabaseScalar "SET NOCOUNT ON; SELECT COUNT(*) FROM [InboxMessages] WHERE [Consumer] = '$Consumer' AND [CompletedAtUtc] IS NOT NULL;")
+            return $count -ge $MinimumCount
         } `
-        -FailureMessage "Mailpit did not receive a reset email for $Recipient."
+        -FailureMessage "The Worker did not complete $MinimumCount accepted Gmail message(s) for consumer $Consumer."
+}
+
+function Invoke-AuditRegistration([string]$Email) {
+    $body = @{
+        username = 'releaseaudit'
+        email = $Email
+        displayName = 'Release Audit'
+        password = 'Test123!'
+    } | ConvertTo-Json -Compress
+    $response = Invoke-WebRequest -UseBasicParsing -Method Post `
+        -Uri "http://127.0.0.1:$ApiPort/api/auth/register" `
+        -ContentType 'application/json' `
+        -Body $body
+    if ($response.StatusCode -ne 201) {
+        throw "Audit registration returned HTTP $($response.StatusCode)."
+    }
 }
 
 function Invoke-PasswordResetRequest([string]$Email) {
@@ -474,7 +507,7 @@ function Invoke-DockerVerification {
 
     $psJson = Get-NativeOutput docker ((Get-ComposeArguments) + @('ps', '--format', 'json'))
     $serviceRows = @($psJson -split "`r?`n" | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
-    foreach ($requiredService in @('sqlserver', 'rabbitmq', 'mailpit', 'api', 'worker')) {
+    foreach ($requiredService in @('sqlserver', 'rabbitmq', 'api', 'worker')) {
         $row = $serviceRows | Where-Object { $_.Service -eq $requiredService }
         if (-not $row -or $row.State -ne 'running') {
             throw "Compose service $requiredService is not running."
@@ -494,13 +527,15 @@ function Invoke-DockerVerification {
     Assert-SeedLogin 'admin.arena' 'GymAdmin'
     Assert-SeedLogin 'centraladmin' 'CentralAdmin'
 
-    Write-Step 'Verifying API outbox to RabbitMQ to Worker to Mailpit'
-    Invoke-PasswordResetRequest 'mobile1@gymlink.local'
-    Wait-ForMail 'mobile1@gymlink.local'
+    Write-Step 'Verifying API outbox to RabbitMQ to Worker to Gmail SMTP'
+    Invoke-AuditRegistration $AuditEmail
+    Wait-ForCompletedInbox 'welcome-email'
+    Invoke-PasswordResetRequest $AuditEmail
+    Wait-ForCompletedInbox 'reset-email'
 
     Write-Step 'Verifying committed outbox recovery after a broker outage'
     Invoke-Compose @('stop', 'rabbitmq')
-    Invoke-PasswordResetRequest 'mobile2@gymlink.local'
+    Invoke-PasswordResetRequest $AuditEmail
     $pendingOutbox = [int](Invoke-DatabaseScalar 'SET NOCOUNT ON; SELECT COUNT(*) FROM [OutboxMessages] WHERE [PublishedAtUtc] IS NULL;')
     if ($pendingOutbox -lt 1) {
         throw 'The broker outage did not leave committed outbox work pending.'
@@ -516,7 +551,7 @@ function Invoke-DockerVerification {
             catch { return $false }
         } `
         -FailureMessage 'RabbitMQ Management did not recover after restart.'
-    Wait-ForMail 'mobile2@gymlink.local'
+    Wait-ForCompletedInbox 'reset-email' 2
 
     Write-Step 'Verifying RabbitMQ persistence and both poison-message DLQs'
     Invoke-Compose @('stop', 'worker')

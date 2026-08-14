@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:go_router/go_router.dart';
 import 'package:gymlink_desktop/core/api.dart';
+import 'package:gymlink_desktop/core/app_errors.dart';
 import 'package:gymlink_desktop/core/theme.dart';
 import 'package:gymlink_desktop/features/auth/login_screen.dart';
 import 'package:gymlink_desktop/features/central/central_screens.dart';
@@ -17,6 +18,36 @@ import 'package:gymlink_desktop/features/reporting/reporting_screens.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  testWidgets('global error banner resets its timeout and can be closed', (
+    tester,
+  ) async {
+    addTearDown(AppErrorReporter.clear);
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: AppErrorBanner(child: Scaffold(body: SizedBox.expand())),
+      ),
+    );
+
+    AppErrorReporter.reportUnexpected('Prva greška');
+    await tester.pump();
+    expect(find.text('Prva greška'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 4));
+    AppErrorReporter.reportUnexpected('Nova greška');
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+    expect(find.text('Nova greška'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Nova greška'), findsNothing);
+
+    AppErrorReporter.reportUnexpected('Zatvori me');
+    await tester.pump();
+    await tester.tap(find.byTooltip('Zatvori'));
+    await tester.pump();
+    expect(find.text('Zatvori me'), findsNothing);
+  });
+
   test('small statistics counts use an integer axis', () {
     final scale = reservationCountAxis(2);
     expect(scale.interval, 1);
@@ -1259,6 +1290,54 @@ void main() {
     expect(find.text('Nesačuvane promjene'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('GymAdmin gallery save progress stays inside the save button', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1366, 768);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final saveGate = Completer<void>();
+    final api = _GymGalleryApi(saveGate: saveGate);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: GymCatalogScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Pomjeri lijevo').last);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('gym-gallery-save')));
+    await tester.pump();
+
+    expect(find.byKey(const Key('gym-gallery-save-progress')), findsOneWidget);
+    expect(find.text('Čuvanje...'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('gym-gallery-save')))
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<OutlinedButton>(find.byKey(const Key('gym-gallery-discard')))
+          .onPressed,
+      isNull,
+    );
+    expect(tester.takeException(), isNull);
+
+    saveGate.complete();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('gym-gallery-save-progress')), findsNothing);
+    expect(find.text('Nesačuvane promjene'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<void> _openGymWizardAtLocation(WidgetTester tester) async {
@@ -1470,8 +1549,9 @@ class _DelayedReportingApi extends _ReportingApi {
 }
 
 class _GymGalleryApi extends ApiClient {
-  _GymGalleryApi() : super(_TestTokens());
+  _GymGalleryApi({this.saveGate}) : super(_TestTokens());
 
+  final Completer<void>? saveGate;
   int gallerySaveCalls = 0;
   Map<String, dynamic>? savedManifest;
   List<MultipartUploadPart> savedFiles = const [];
@@ -1548,6 +1628,7 @@ class _GymGalleryApi extends ApiClient {
       jsonDecode(fields['manifest']!) as Map,
     );
     savedFiles = files;
+    await saveGate?.future;
     final items = savedManifest!['items'] as List;
     return {
       'maximumImages': 5,
