@@ -64,6 +64,10 @@ internal sealed class GymRegistrationService(
             SubmittedAtUtc = timeProvider.GetUtcNow().UtcDateTime,
         };
         dbContext.GymRegistrationRequests.Add(entity);
+        var applicantName = await dbContext.UserProfiles
+            .Where(x => x.Id == userId)
+            .Select(x => x.DisplayName)
+            .SingleAsync(cancellationToken);
         var centralAdmins = await accounts.GetUserIdsInRoleAsync(
             RoleNames.CentralAdmin,
             cancellationToken);
@@ -74,7 +78,7 @@ internal sealed class GymRegistrationService(
                 null,
                 "registration.submitted",
                 "Nova registracija teretane",
-                "Podnesen je novi zahtjev za registraciju teretane.",
+                $"{applicantName} je podnio zahtjev za registraciju teretane {entity.ProposedGymName}.",
                 "gymRegistration",
                 entity.Id,
                 entity.SubmittedAtUtc
@@ -333,8 +337,8 @@ internal sealed class GymRegistrationService(
             category,
             "Registracija teretane",
             category == "registration.approved"
-                ? "Vaš zahtjev za registraciju teretane je odobren."
-                : "Vaš zahtjev za registraciju teretane je odbijen.",
+                ? $"Registracija teretane {entity.ProposedGymName} je odobrena. Razlog: {entity.DecisionReason}"
+                : $"Registracija teretane {entity.ProposedGymName} je odbijena. Razlog: {entity.DecisionReason}",
             "gymRegistration",
             entity.Id,
             entity.DecidedAtUtc ?? timeProvider.GetUtcNow().UtcDateTime,

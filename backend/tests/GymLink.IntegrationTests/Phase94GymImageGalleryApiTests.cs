@@ -20,6 +20,122 @@ public sealed class Phase94GymImageGalleryApiTests
         new(JsonSerializerDefaults.Web);
 
     [Fact]
+    public async Task Gallery_draft_is_committed_atomically_by_one_multipart_save()
+    {
+        var databaseName = $"GymLink_Phase94_Draft_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+        var storageRoot = Path.GetFullPath(Path.Combine(
+            Path.GetTempPath(),
+            $"GymLink_Phase94_Draft_Images_{Guid.NewGuid():N}"));
+        try
+        {
+            await using (var migration = CreateContext(connectionString))
+            {
+                await migration.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString, storageRoot);
+            using var client = factory.CreateClient();
+            Authorize(client, await LoginAsync(client, "admin.respect"));
+            var initial = await GetGalleryAsync(client);
+            Assert.Equal(2, initial.Images.Count);
+
+            var manifest = JsonSerializer.Serialize(new
+            {
+                items = new object[]
+                {
+                    new
+                    {
+                        imageId = initial.Images[1].Id,
+                        concurrencyToken = initial.Images[1].ConcurrencyToken,
+                        uploadIndex = 0,
+                    },
+                    new { imageId = (Guid?)null, concurrencyToken = (string?)null, uploadIndex = 1 },
+                },
+                removedImages = new[]
+                {
+                    new
+                    {
+                        imageId = initial.Images[0].Id,
+                        concurrencyToken = initial.Images[0].ConcurrencyToken,
+                    },
+                },
+            }, WebJson);
+            var savedResponse = await SaveGalleryResponseAsync(
+                client,
+                manifest,
+                (PngBytes(), "replacement.png", "image/png"),
+                (WebPBytes(), "new.webp", "image/webp"));
+            savedResponse.EnsureSuccessStatusCode();
+            var saved = await savedResponse.Content.ReadFromJsonAsync<GymImageGalleryDto>();
+            Assert.NotNull(saved);
+            Assert.Equal(2, saved.Images.Count);
+            Assert.Equal(initial.Images[1].Id, saved.Images[0].Id);
+            Assert.True(saved.Images[0].IsPrimary);
+            Assert.Equal("image/png", saved.Images[0].ContentType);
+            Assert.Equal("image/webp", saved.Images[1].ContentType);
+            Assert.Equal(2, Directory.GetFiles(storageRoot).Length);
+
+            var invalidManifest = JsonSerializer.Serialize(new
+            {
+                items = saved.Images.Select(image => new
+                {
+                    imageId = (Guid?)image.Id,
+                    concurrencyToken = (string?)image.ConcurrencyToken,
+                    uploadIndex = (int?)null,
+                }).Append(new
+                {
+                    imageId = (Guid?)null,
+                    concurrencyToken = (string?)null,
+                    uploadIndex = (int?)0,
+                }),
+                removedImages = Array.Empty<object>(),
+            }, WebJson);
+            var invalid = await SaveGalleryResponseAsync(
+                client,
+                invalidManifest,
+                ([1, 2, 3, 4], "invalid.png", "image/png"));
+            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+            Assert.Equal("invalid_gym_image", await ProblemCodeAsync(invalid));
+            Assert.Equal(2, Directory.GetFiles(storageRoot).Length);
+            Assert.Equal(
+                saved.Images.Select(x => x.Id),
+                (await GetGalleryAsync(client)).Images.Select(x => x.Id));
+
+            var staleManifest = JsonSerializer.Serialize(new
+            {
+                items = saved.Images.Select((image, index) => new
+                {
+                    imageId = (Guid?)image.Id,
+                    concurrencyToken = index == 0
+                        ? Convert.ToBase64String([1, 2, 3])
+                        : image.ConcurrencyToken,
+                    uploadIndex = (int?)null,
+                }),
+                removedImages = Array.Empty<object>(),
+            }, WebJson);
+            var stale = await SaveGalleryResponseAsync(client, staleManifest);
+            Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+            Assert.Equal("concurrency_conflict", await ProblemCodeAsync(stale));
+            Assert.Equal(2, Directory.GetFiles(storageRoot).Length);
+        }
+        finally
+        {
+            await using (var cleanup = CreateContext(connectionString))
+            {
+                await cleanup.Database.EnsureDeletedAsync();
+            }
+
+            var tempRoot = Path.GetFullPath(Path.GetTempPath());
+            if (Directory.Exists(storageRoot) &&
+                storageRoot.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                Directory.Delete(storageRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Gym_gallery_is_ordered_bounded_audited_tenant_scoped_and_cleaned_up()
     {
         var databaseName = $"GymLink_Phase94_{Guid.NewGuid():N}";
@@ -354,6 +470,23 @@ public sealed class Phase94GymImageGalleryApiTests
         }
 
         return await client.PostAsync(path, form);
+    }
+
+    private static async Task<HttpResponseMessage> SaveGalleryResponseAsync(
+        HttpClient client,
+        string manifest,
+        params (byte[] Bytes, string FileName, string ContentType)[] uploads)
+    {
+        var form = new MultipartFormDataContent();
+        form.Add(new StringContent(manifest), "manifest");
+        foreach (var upload in uploads)
+        {
+            var file = new ByteArrayContent(upload.Bytes);
+            file.Headers.ContentType = new MediaTypeHeaderValue(upload.ContentType);
+            form.Add(file, "files", upload.FileName);
+        }
+
+        return await client.PutAsync("/api/tenant/gym/images", form);
     }
 
     private static byte[] JpegBytes(int length)

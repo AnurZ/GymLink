@@ -183,6 +183,125 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'trainer offering validates fields inline and keeps dialog open',
+    (tester) async {
+      var postCount = 0;
+      final api = ApiClient(
+        _TestTokenSource(),
+        baseUrlOverride: 'http://test.local',
+        httpClient: MockClient((request) async {
+          if (request.url.path == '/api/tenant/trainer-offerings' &&
+              request.method == 'GET') {
+            return _jsonResponse(_page(const []));
+          }
+          if (request.url.path == '/api/reference-data/lookups') {
+            return _jsonResponse({
+              'trainingTypes': [
+                {'id': 'type-1', 'name': 'Individualni trening'},
+              ],
+            });
+          }
+          if (request.url.path == '/api/tenant/trainer-offerings' &&
+              request.method == 'POST') {
+            postCount++;
+            return _jsonResponse({}, statusCode: 201);
+          }
+          return _jsonResponse({}, statusCode: 404);
+        }),
+      );
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        Provider<ApiClient>.value(
+          value: api,
+          child: MaterialApp(
+            theme: buildGymLinkTheme(),
+            home: const Scaffold(body: TrainerOfferingsScreen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dodaj uslugu'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sačuvaj'));
+      await tester.pump();
+
+      expect(find.text('Unesite naziv usluge.'), findsOneWidget);
+      expect(find.text('Nova usluga'), findsOneWidget);
+      expect(postCount, 0);
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Trajanje (min)'),
+        '1441',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Cijena (BAM)'),
+        '1000001',
+      );
+      await tester.tap(find.text('Sačuvaj'));
+      await tester.pump();
+      expect(find.text('Unesite cijeli broj od 1 do 1440.'), findsOneWidget);
+      expect(find.text('Unesite cijenu od 0 do 1.000.000.'), findsOneWidget);
+    },
+  );
+
+  testWidgets('trainer offering displays server field error without closing', (
+    tester,
+  ) async {
+    var postCount = 0;
+    final api = ApiClient(
+      _TestTokenSource(),
+      baseUrlOverride: 'http://test.local',
+      httpClient: MockClient((request) async {
+        if (request.url.path == '/api/tenant/trainer-offerings' &&
+            request.method == 'GET') {
+          return _jsonResponse(_page(const []));
+        }
+        if (request.url.path == '/api/reference-data/lookups') {
+          return _jsonResponse({
+            'trainingTypes': [
+              {'id': 'type-1', 'name': 'Individualni trening'},
+            ],
+          });
+        }
+        postCount++;
+        return _jsonResponse(
+          {
+            'title': 'One or more validation errors occurred.',
+            'errors': {
+              'Name': ['Naziv usluge već postoji.'],
+            },
+          },
+          statusCode: 400,
+          contentType: 'application/problem+json; charset=utf-8',
+        );
+      }),
+    );
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: const MaterialApp(
+          home: Scaffold(body: TrainerOfferingsScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dodaj uslugu'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Naziv'),
+      'Individualni',
+    );
+    await tester.tap(find.text('Sačuvaj'));
+    await tester.pumpAndSettle();
+
+    expect(postCount, 1);
+    expect(find.text('Naziv usluge već postoji.'), findsWidgets);
+    expect(find.text('Nova usluga'), findsOneWidget);
+    expect(find.text('One or more validation errors occurred.'), findsNothing);
+  });
+
   testWidgets('reservation payment sheet explains all payment methods', (
     tester,
   ) async {

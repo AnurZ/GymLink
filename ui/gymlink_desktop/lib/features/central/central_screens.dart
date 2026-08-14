@@ -349,11 +349,14 @@ class GymManagementScreen extends StatefulWidget {
 }
 
 class _GymManagementScreenState extends State<GymManagementScreen> {
+  static const _pageSize = 20;
   final _search = TextEditingController();
   List<Map<String, dynamic>> _items = const [];
   bool _loading = true;
   Object? _error;
   int? _status;
+  int _page = 1;
+  int _totalCount = 0;
 
   @override
   void initState() {
@@ -374,10 +377,17 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
     });
     try {
       final api = context.read<ApiClient>();
-      _items = (await api.page(
+      final result = await api.page(
         '/api/admin/gyms',
-        query: {'query': _search.text.trim(), 'status': _status},
-      )).items;
+        query: {
+          'query': _search.text.trim(),
+          'status': _status,
+          'page': _page,
+          'pageSize': _pageSize,
+        },
+      );
+      _items = result.items;
+      _totalCount = result.totalCount;
       _error = null;
       return true;
     } catch (error) {
@@ -521,7 +531,10 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
             width: 350,
             child: TextField(
               controller: _search,
-              onSubmitted: (_) => _load(),
+              onSubmitted: (_) {
+                _page = 1;
+                _load();
+              },
               decoration: const InputDecoration(
                 hintText: 'Naziv, adresa ili grad...',
                 prefixIcon: Icon(Icons.search),
@@ -544,6 +557,7 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
               ],
               onChanged: (value) {
                 _status = value;
+                _page = 1;
                 _load();
               },
             ),
@@ -565,93 +579,154 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
           child: _items.isEmpty
               ? const EmptyState('Nema teretana za zadanu pretragu.')
               : Card(
-                  child: ListView.separated(
-                    itemCount: _items.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (_, index) {
-                      final item = _items[index];
-                      final status = (item['status'] as num?)?.toInt() ?? 0;
-                      final adminCount =
-                          (item['activeGymAdminCount'] as num?)?.toInt() ?? 0;
-                      final canAssignAdmin =
-                          (status == 0 || status == 1) && adminCount == 0;
-                      final canActivate = item['canActivate'] == true;
-                      final readiness = _readinessText(
-                        item['missingActivationRequirements'],
-                      );
-                      const labels = [
-                        'PendingActivation',
-                        'Active',
-                        'Inactive',
-                        'Suspended',
-                      ];
-                      return ListTile(
-                        leading: const CircleAvatar(
-                          child: Icon(Icons.fitness_center),
-                        ),
-                        title: Text(item['name'].toString()),
-                        subtitle: Text(
-                          '${item['address']}, ${item['cityName']}\n'
-                          'Aktivni administratori: ${item['activeGymAdminCount']}\n'
-                          '${canActivate ? 'Spremna za aktivaciju' : readiness}',
-                        ),
-                        isThreeLine: true,
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            StatusPill(labels[status.clamp(0, 3)]),
-                            PopupMenuButton<String>(
-                              tooltip: 'Promijeni status',
-                              onSelected: (action) => action == 'assign-admin'
-                                  ? _assignGymAdmin(item)
-                                  : _tenantAction(item, action),
-                              itemBuilder: (_) => [
-                                PopupMenuItem(
-                                  value: 'assign-admin',
-                                  enabled: canAssignAdmin,
-                                  child: Text(
-                                    adminCount > 0
-                                        ? 'GymAdmin je već dodijeljen'
-                                        : status == 0 || status == 1
-                                        ? 'Dodijeli GymAdmina'
-                                        : 'Dodjela GymAdmina nije dostupna',
+                  child: SingleChildScrollView(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        horizontalMargin: 16,
+                        columnSpacing: 30,
+                        dataRowMinHeight: 58,
+                        dataRowMaxHeight: 68,
+                        columns: const [
+                          DataColumn(label: Text('Naziv teretane')),
+                          DataColumn(label: Text('Lokacija')),
+                          DataColumn(label: Text('Broj članova')),
+                          DataColumn(label: Text('Status')),
+                          DataColumn(label: Text('Akcije')),
+                        ],
+                        rows: _items.map((item) {
+                          final status = (item['status'] as num?)?.toInt() ?? 0;
+                          final adminCount =
+                              (item['activeGymAdminCount'] as num?)?.toInt() ??
+                              0;
+                          final canAssignAdmin =
+                              (status == 0 || status == 1) && adminCount == 0;
+                          final canActivate = item['canActivate'] == true;
+                          final readiness = _readinessText(
+                            item['missingActivationRequirements'],
+                          );
+                          const labels = [
+                            'Čeka aktivaciju',
+                            'Aktivna',
+                            'Neaktivna',
+                            'Suspendovana',
+                          ];
+                          return DataRow(
+                            cells: [
+                              DataCell(
+                                Text(
+                                  item['name'].toString(),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
                                   ),
                                 ),
-                                if (status == 0)
-                                  PopupMenuItem(
-                                    value: 'activate',
-                                    enabled: canActivate,
-                                    child: Text(
-                                      canActivate
-                                          ? 'Aktiviraj'
-                                          : 'Aktivacija nije dostupna',
-                                    ),
+                              ),
+                              DataCell(
+                                Text('${item['address']}, ${item['cityName']}'),
+                              ),
+                              DataCell(Text('${item['memberCount'] ?? 0}')),
+                              DataCell(StatusPill(labels[status.clamp(0, 3)])),
+                              DataCell(
+                                SizedBox(
+                                  width: 190,
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      if (canAssignAdmin)
+                                        IconButton(
+                                          tooltip: 'Dodijeli GymAdmina',
+                                          onPressed: () =>
+                                              _assignGymAdmin(item),
+                                          icon: const Icon(
+                                            Icons.person_add_alt_1_outlined,
+                                          ),
+                                        ),
+                                      if (status == 0)
+                                        Tooltip(
+                                          message: canActivate
+                                              ? 'Aktiviraj'
+                                              : readiness,
+                                          child: IconButton(
+                                            onPressed: canActivate
+                                                ? () => _tenantAction(
+                                                    item,
+                                                    'activate',
+                                                  )
+                                                : null,
+                                            icon: const Icon(
+                                              Icons.play_arrow_outlined,
+                                              color: Colors.green,
+                                            ),
+                                          ),
+                                        ),
+                                      if (status == 1) ...[
+                                        IconButton(
+                                          tooltip: 'Suspenduj',
+                                          onPressed: () =>
+                                              _tenantAction(item, 'suspend'),
+                                          icon: const Icon(
+                                            Icons.pause_circle_outline,
+                                          ),
+                                        ),
+                                        IconButton(
+                                          tooltip: 'Deaktiviraj',
+                                          onPressed: () =>
+                                              _tenantAction(item, 'deactivate'),
+                                          icon: const Icon(
+                                            Icons.block,
+                                            color: Colors.red,
+                                          ),
+                                        ),
+                                      ],
+                                      if (status == 2 || status == 3)
+                                        IconButton(
+                                          tooltip: 'Ponovo aktiviraj',
+                                          onPressed: () =>
+                                              _tenantAction(item, 'reactivate'),
+                                          icon: const Icon(
+                                            Icons.replay_outlined,
+                                          ),
+                                        ),
+                                    ],
                                   ),
-                                if (status == 1) ...[
-                                  const PopupMenuItem(
-                                    value: 'suspend',
-                                    child: Text('Suspenduj'),
-                                  ),
-                                  const PopupMenuItem(
-                                    value: 'deactivate',
-                                    child: Text('Deaktiviraj'),
-                                  ),
-                                ],
-                                if (status == 2 || status == 3)
-                                  const PopupMenuItem(
-                                    value: 'reactivate',
-                                    child: Text('Ponovo aktiviraj'),
-                                  ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      );
-                    },
+                                ),
+                              ),
+                            ],
+                          );
+                        }).toList(),
+                      ),
+                    ),
                   ),
                 ),
         ),
       ),
+      if (_totalCount > _pageSize)
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            Text('Stranica $_page od ${(_totalCount / _pageSize).ceil()}'),
+            IconButton(
+              tooltip: 'Prethodna stranica',
+              onPressed: _page == 1
+                  ? null
+                  : () {
+                      setState(() => _page--);
+                      _load();
+                    },
+              icon: const Icon(Icons.chevron_left),
+            ),
+            IconButton(
+              tooltip: 'Sljedeća stranica',
+              onPressed: _page * _pageSize >= _totalCount
+                  ? null
+                  : () {
+                      setState(() => _page++);
+                      _load();
+                    },
+              icon: const Icon(Icons.chevron_right),
+            ),
+          ],
+        ),
     ],
   );
 }
@@ -674,7 +749,6 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
   final _planDuration = TextEditingController(text: '30');
   final _planPrice = TextEditingController(text: '50');
   final _adminSearch = TextEditingController();
-  final _adminReason = TextEditingController();
   final _mapController = MapController();
   final _stepperScrollController = ScrollController();
   final _days = List.generate(
@@ -723,7 +797,6 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
     _planDuration.dispose();
     _planPrice.dispose();
     _adminSearch.dispose();
-    _adminReason.dispose();
     _stepperScrollController.dispose();
     _adminDebounce?.cancel();
     _locationDebounce?.cancel();
@@ -1003,6 +1076,8 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
         message = 'Unesite naziv teretane.';
       } else if (_description.text.trim().length < 10) {
         message = 'Opis mora imati najmanje 10 znakova.';
+      } else if (_gymAdmin == null) {
+        message = 'Izaberite aktivnog Member korisnika.';
       }
     } else if (_step == 1) {
       if (_reverseLocationLoading) {
@@ -1022,7 +1097,9 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
                 day.opens.hour * 60 + day.opens.minute),
       )) {
         message = 'Vrijeme zatvaranja mora biti nakon vremena otvaranja.';
-      } else if (_equipmentIds.isEmpty) {
+      }
+    } else if (_step == 3) {
+      if (_equipmentIds.isEmpty) {
         message = 'Izaberite najmanje jednu stavku opreme.';
       } else if (_trainingTypeIds.isEmpty) {
         message = 'Izaberite najmanje jedan tip treninga.';
@@ -1030,12 +1107,6 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
           (int.tryParse(_planDuration.text) ?? 0) <= 0 ||
           double.tryParse(_planPrice.text.replaceFirst(',', '.')) == null) {
         message = 'Unesite ispravne podatke početnog plana članstva.';
-      }
-    } else if (_step == 3) {
-      if (_gymAdmin == null) {
-        message = 'Izaberite aktivnog Member korisnika.';
-      } else if (_adminReason.text.trim().length < 2) {
-        message = 'Unesite razlog dodjele GymAdmin uloge.';
       }
     }
     setState(() => _error = message);
@@ -1102,7 +1173,6 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
             'currency': 'BAM',
           },
           'gymAdminUserId': _gymAdmin!['id'],
-          'gymAdminAssignmentReason': _adminReason.text.trim(),
         },
       );
       if (mounted) Navigator.pop(context, true);
@@ -1127,7 +1197,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
           };
           _fieldErrors = error.fieldErrors;
           if (invalidAdmin) {
-            _step = 3;
+            _step = 0;
             _gymAdmin = null;
             _adminCandidates = const [];
             _adminSearch.clear();
@@ -1230,6 +1300,16 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
           errorText: _serverError('Description'),
         ),
       ),
+      const SizedBox(height: 20),
+      const Divider(),
+      const SizedBox(height: 12),
+      const Text('GymAdmin', style: TextStyle(fontWeight: FontWeight.w800)),
+      const SizedBox(height: 6),
+      const Text(
+        'Odaberite aktivnog Member korisnika. Promocija opoziva njegove aktivne sesije.',
+      ),
+      const SizedBox(height: 12),
+      _adminSelector(),
     ],
   );
 
@@ -1537,7 +1617,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
     ],
   );
 
-  Widget _catalogStep() => ListView(
+  Widget _workingHoursStep() => ListView(
     children: [
       const Text(
         'Radno vrijeme',
@@ -1597,6 +1677,11 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
           );
         },
       ),
+    ],
+  );
+
+  Widget _catalogStep() => ListView(
+    children: [
       const SizedBox(height: 14),
       const Text('Oprema', style: TextStyle(fontWeight: FontWeight.w800)),
       Wrap(
@@ -1665,12 +1750,9 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
     ],
   );
 
-  Widget _adminStep() => ListView(
+  Widget _adminSelector() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      const Text(
-        'Odaberite aktivnog Member korisnika. Promocija opoziva njegove aktivne sesije.',
-      ),
-      const SizedBox(height: 14),
       TextField(
         key: const Key('gym-admin-search'),
         controller: _adminSearch,
@@ -1715,15 +1797,6 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
             ),
           ),
         ),
-      const SizedBox(height: 12),
-      TextField(
-        controller: _adminReason,
-        maxLength: 1000,
-        maxLines: 3,
-        decoration: const InputDecoration(
-          labelText: 'Razlog dodjele GymAdmin uloge',
-        ),
-      ),
     ],
   );
 
@@ -1812,20 +1885,23 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
                           ),
                         ),
                         Step(
-                          title: const Text('Katalog'),
+                          title: const Text('Radno vrijeme'),
                           isActive: _step >= 2,
                           state: _step > 2
                               ? StepState.complete
                               : StepState.indexed,
-                          content: SizedBox(height: 570, child: _catalogStep()),
+                          content: SizedBox(
+                            height: 570,
+                            child: _workingHoursStep(),
+                          ),
                         ),
                         Step(
-                          title: const Text('GymAdmin'),
+                          title: const Text('Katalog'),
                           isActive: _step >= 3,
                           state: _step > 3
                               ? StepState.complete
                               : StepState.indexed,
-                          content: SizedBox(height: 570, child: _adminStep()),
+                          content: SizedBox(height: 570, child: _catalogStep()),
                         ),
                         Step(
                           title: const Text('Pregled'),

@@ -209,13 +209,22 @@ internal sealed class TenantAdministrationService(
                 tenant.Id,
                 "tenant.status_changed",
                 "Status teretane",
-                $"Status teretane je promijenjen na {tenant.Status}.",
+                $"{tenant.Name}: status teretane je promijenjen na " +
+                $"{LocalizedStatus(tenant.Status)}. Razlog: {tenant.StatusReason}",
                 "tenant",
                 tenant.Id,
                 tenant.StatusChangedAtUtc ?? timeProvider.GetUtcNow().UtcDateTime,
                 requestMetadata.CorrelationId));
         }
     }
+
+    private static string LocalizedStatus(TenantStatus status) => status switch
+    {
+        TenantStatus.Active => "aktivna",
+        TenantStatus.Inactive => "neaktivna",
+        TenantStatus.Suspended => "suspendovana",
+        _ => "čeka aktivaciju",
+    };
 
     private Guid RequireUser() =>
         currentUser.UserId

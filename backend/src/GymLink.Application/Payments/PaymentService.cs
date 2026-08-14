@@ -272,7 +272,7 @@ internal sealed class PaymentService(
                     payment.Currency,
                     now);
                 provisionedConversation = await ActivateTargetAsync(payment, now, ct);
-                AddPaidNotification(payment, now);
+                await AddPaidNotificationAsync(payment, now, ct);
                 await dbContext.SaveChangesAsync(ct);
             }
 
@@ -595,7 +595,7 @@ internal sealed class PaymentService(
                             now);
                         provisionedConversation =
                             await ActivateTargetAsync(payment, now, ct);
-                        AddPaidNotification(payment, now);
+                        await AddPaidNotificationAsync(payment, now, ct);
                     }
                 }
                 else if (IsExpired(providerEvent, session) &&
@@ -700,7 +700,10 @@ internal sealed class PaymentService(
                 payment.TenantId,
                 "payment",
                 "Rezervacija je istekla",
-                "Termin je oslobođen jer plaćanje nije završeno u roku od 15 minuta.",
+                await ReservationPaymentTextAsync(
+                    reservation,
+                    "je otkazan jer plaćanje nije završeno u roku od 15 minuta.",
+                    cancellationToken),
                 "reservation",
                 reservation.Id,
                 now,
@@ -708,19 +711,70 @@ internal sealed class PaymentService(
         }
     }
 
-    private void AddPaidNotification(Payment payment, DateTime now) =>
+    private async Task AddPaidNotificationAsync(
+        Payment payment,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var text = payment.Purpose == PaymentPurpose.Membership
+            ? await MembershipPaymentTextAsync(
+                payment.TargetId,
+                payment.Amount,
+                payment.Currency,
+                cancellationToken)
+            : await ReservationPaymentTextAsync(
+                await dbContext.AppointmentReservations.IgnoreQueryFilters()
+                    .SingleAsync(x => x.Id == payment.TargetId, cancellationToken),
+                $"je uspješno plaćen ({payment.Amount:0.##} {payment.Currency}) i potvrđen.",
+                cancellationToken);
         outbox.AddNotification(new(
             payment.UserId,
             payment.TenantId,
             "payment",
             "Plaćeno",
-            payment.Purpose == PaymentPurpose.Membership
-                ? "Članarina je uspješno plaćena i aktivirana."
-                : "Rezervacija je uspješno plaćena i potvrđena.",
+            text,
             payment.Purpose == PaymentPurpose.Membership ? "membership" : "reservation",
             payment.TargetId,
             now,
             requestMetadata.CorrelationId));
+    }
+
+    private async Task<string> MembershipPaymentTextAsync(
+        Guid membershipId,
+        decimal amount,
+        string currency,
+        CancellationToken cancellationToken)
+    {
+        var details = await (from membership in dbContext.Memberships.IgnoreQueryFilters()
+                             join gym in dbContext.Gyms.IgnoreQueryFilters()
+                                 on membership.GymId equals gym.Id
+                             where membership.Id == membershipId
+                             select new { Gym = gym.Name, membership.PlanName })
+            .SingleAsync(cancellationToken);
+        return $"{details.Gym}: Članarina {details.PlanName} je uspješno plaćena " +
+            $"({amount:0.##} {currency}) i aktivirana.";
+    }
+
+    private async Task<string> ReservationPaymentTextAsync(
+        GymLink.Domain.Reservations.AppointmentReservation reservation,
+        string status,
+        CancellationToken cancellationToken)
+    {
+        var details = await (
+            from trainer in dbContext.TrainerProfiles.IgnoreQueryFilters()
+            join trainerUser in dbContext.UserProfiles on trainer.UserId equals trainerUser.Id
+            join offering in dbContext.TrainerServiceOfferings.IgnoreQueryFilters()
+                on reservation.TrainerServiceOfferingId equals offering.Id
+            join gym in dbContext.Gyms.IgnoreQueryFilters() on reservation.TenantId equals gym.TenantId
+            where trainer.Id == reservation.TrainerProfileId
+            select new { Trainer = trainerUser.DisplayName, Offering = offering.Name, Gym = gym.Name })
+            .SingleAsync(cancellationToken);
+        var local = TimeZoneInfo.ConvertTimeFromUtc(
+            reservation.StartsAtUtc,
+            TimeZoneInfo.FindSystemTimeZoneById("Europe/Sarajevo"));
+        return $"{details.Gym}: Termin kod trenera {details.Trainer}: {details.Offering}, " +
+            $"{local:dd.MM.yyyy.} u {local:HH:mm}, {status}";
+    }
 
     private static void ValidateProviderSession(Payment payment, PaymentGatewaySession session)
     {

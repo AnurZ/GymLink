@@ -12,6 +12,19 @@ public sealed record GymImageOrderItemRequest(Guid ImageId, string ConcurrencyTo
 
 public sealed record GymImageOrderRequest(IReadOnlyList<GymImageOrderItemRequest> Images);
 
+public sealed record GymImageGallerySaveItemRequest(
+    Guid? ImageId,
+    string? ConcurrencyToken,
+    int? UploadIndex);
+
+public sealed record GymImageGalleryRemovedItemRequest(
+    Guid ImageId,
+    string ConcurrencyToken);
+
+public sealed record GymImageGallerySaveManifest(
+    IReadOnlyList<GymImageGallerySaveItemRequest> Items,
+    IReadOnlyList<GymImageGalleryRemovedItemRequest> RemovedImages);
+
 public sealed record GymImageManagementDto(
     Guid Id,
     string? ImageUrl,
@@ -43,5 +56,10 @@ public interface IGymImageService
 
     Task<GymImageGalleryDto> ReorderAsync(
         GymImageOrderRequest request,
+        CancellationToken cancellationToken);
+
+    Task<GymImageGalleryDto> SaveGalleryAsync(
+        GymImageGallerySaveManifest manifest,
+        IReadOnlyList<GymImageUpload> uploads,
         CancellationToken cancellationToken);
 }

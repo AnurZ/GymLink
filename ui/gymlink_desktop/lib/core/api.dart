@@ -123,6 +123,20 @@ class DownloadedFile {
   final int recordCount;
 }
 
+class MultipartUploadPart {
+  const MultipartUploadPart({
+    required this.fieldName,
+    required this.bytes,
+    required this.fileName,
+    required this.contentType,
+  });
+
+  final String fieldName;
+  final List<int> bytes;
+  final String fileName;
+  final String contentType;
+}
+
 class ApiClient {
   ApiClient(this._tokens, {http.Client? httpClient, String? baseUrlOverride})
     : _http = httpClient ?? http.Client(),
@@ -177,13 +191,25 @@ class ApiClient {
     required String fileName,
     required String contentType,
     required Map<String, String> fields,
-  }) => _sendMultipart(
+  }) => _sendMultipartRequest(
+    'POST',
     path,
-    bytes: bytes,
-    fileName: fileName,
-    contentType: contentType,
     fields: fields,
+    files: [
+      MultipartUploadPart(
+        fieldName: 'file',
+        bytes: bytes,
+        fileName: fileName,
+        contentType: contentType,
+      ),
+    ],
   );
+
+  Future<Object?> putMultipart(
+    String path, {
+    required Map<String, String> fields,
+    required List<MultipartUploadPart> files,
+  }) => _sendMultipartRequest('PUT', path, fields: fields, files: files);
 
   String? mediaUrl(Object? value) {
     final raw = value?.toString().trim() ?? '';
@@ -273,27 +299,28 @@ class ApiClient {
     }
   }
 
-  Future<Object?> _sendMultipart(
+  Future<Object?> _sendMultipartRequest(
+    String method,
     String path, {
-    required List<int> bytes,
-    required String fileName,
-    required String contentType,
     required Map<String, String> fields,
+    required List<MultipartUploadPart> files,
     bool retry = true,
   }) async {
     try {
-      final request = http.MultipartRequest('POST', _uri(path, const {}));
+      final request = http.MultipartRequest(method, _uri(path, const {}));
       request.headers['Accept'] = 'application/json';
       if (_tokens.accessToken != null) {
         request.headers['Authorization'] = 'Bearer ${_tokens.accessToken}';
       }
       request.fields.addAll(fields);
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'file',
-          bytes,
-          filename: fileName,
-          contentType: MediaType.parse(contentType),
+      request.files.addAll(
+        files.map(
+          (file) => http.MultipartFile.fromBytes(
+            file.fieldName,
+            file.bytes,
+            filename: file.fileName,
+            contentType: MediaType.parse(file.contentType),
+          ),
         ),
       );
       final streamed = await _http
@@ -306,12 +333,11 @@ class ApiClient {
           _refreshing = null;
         });
         if (refreshed) {
-          return _sendMultipart(
+          return _sendMultipartRequest(
+            method,
             path,
-            bytes: bytes,
-            fileName: fileName,
-            contentType: contentType,
             fields: fields,
+            files: files,
             retry: false,
           );
         }

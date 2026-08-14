@@ -73,6 +73,9 @@ public sealed class AdminGymApiTests
             var centralAdmin = await LoginAsync(client, "centraladmin");
 
             Authorize(client, centralAdmin);
+            var seededGyms = await client.GetFromJsonAsync<PagedResult<AdminGymDto>>(
+                "/api/admin/gyms?query=Sportska%20Akademija%20Respect&page=1&pageSize=10");
+            Assert.True(Assert.Single(seededGyms!.Items).MemberCount > 0);
             var countries = await client.GetFromJsonAsync<PagedResult<CountryDto>>(
                 "/api/admin/reference-data/countries?query=BIH&isActive=true&page=1&pageSize=10");
             var country = Assert.Single(countries!.Items, x => x.Code == "BIH");
@@ -117,6 +120,7 @@ public sealed class AdminGymApiTests
             Assert.Equal(1, gym.ActiveGymAdminCount);
             Assert.True(gym.CanActivate);
             Assert.Empty(gym.MissingActivationRequirements);
+            Assert.Equal(0, gym.MemberCount);
 
             var search = await client.GetFromJsonAsync<PagedResult<AdminGymDto>>(
                 "/api/admin/gyms?query=Stabilization&page=1&pageSize=10");
@@ -199,6 +203,14 @@ public sealed class AdminGymApiTests
                     x => x.TenantId == gym.TenantId &&
                          x.Role == RoleNames.GymAdmin &&
                          x.Status == AssignmentStatus.Active));
+            Assert.Equal(
+                "Assigned during activation-ready gym creation.",
+                await verification.UserGymAssignments.IgnoreQueryFilters()
+                    .Where(x => x.TenantId == gym.TenantId &&
+                                x.Role == RoleNames.GymAdmin &&
+                                x.Status == AssignmentStatus.Active)
+                    .Select(x => x.Reason)
+                    .SingleAsync());
             Assert.True(await verification.UserGymAssignments.IgnoreQueryFilters().AnyAsync(
                 x => x.TenantId == secondGym.TenantId &&
                      x.Role == RoleNames.GymAdmin &&
@@ -633,7 +645,6 @@ public sealed class AdminGymApiTests
                 currency = "BAM",
             },
             gymAdminUserId,
-            gymAdminAssignmentReason = "Assigned during complete gym creation.",
         };
 
     private static async Task<AuthSessionDto> LoginAsync(HttpClient client, string identifier)

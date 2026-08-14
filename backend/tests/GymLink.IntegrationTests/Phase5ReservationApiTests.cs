@@ -418,9 +418,9 @@ public sealed class Phase5ReservationApiTests
                                 "reservation.confirmed_pay_in_person" &&
                             notification.GetProperty("targetId").GetGuid() ==
                                 inPerson.Id &&
-                            text.Contains(inPersonSession.User.DisplayName) &&
                             text.Contains(trainer.DisplayName) &&
                             text.Contains(offering.Name) &&
+                            text.Contains("je potvrđen") &&
                             !text.Contains("Plaćanje se vrši uživo na treningu.");
                     });
             }

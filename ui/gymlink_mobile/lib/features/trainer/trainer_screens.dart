@@ -186,9 +186,9 @@ class _TrainerAppointmentDetailsState extends State<TrainerAppointmentDetails> {
       if (mounted) setState(() {});
     } on ApiProblem catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.firstFieldError ?? error.message)),
+        );
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -819,7 +819,7 @@ class _TrainerOfferingsScreenState extends State<TrainerOfferingsScreen> {
             as Map,
       );
       if (!mounted) return;
-      final result = await showDialog<Map<String, Object?>>(
+      final created = await showDialog<bool>(
         context: context,
         builder: (_) => _OfferingDialog(
           trainingTypes: (lookups['trainingTypes'] as List? ?? const [])
@@ -828,17 +828,12 @@ class _TrainerOfferingsScreenState extends State<TrainerOfferingsScreen> {
               .toList(),
         ),
       );
-      if (result == null) return;
-      await api.post(
-        '/api/tenant/trainer-offerings',
-        body: {'trainerProfileId': _emptyGuid, ...result},
-      );
-      await _load();
+      if (created == true) await _load();
     } on ApiProblem catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.firstFieldError ?? error.message)),
+        );
       }
     }
   }
@@ -904,10 +899,14 @@ class _OfferingDialog extends StatefulWidget {
 }
 
 class _OfferingDialogState extends State<_OfferingDialog> {
+  final _formKey = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _duration = TextEditingController(text: '60');
   final _price = TextEditingController(text: '25');
   Map<String, dynamic>? _type;
+  Map<String, List<String>> _serverErrors = const {};
+  String? _serverMessage;
+  bool _busy = false;
 
   @override
   void initState() {
@@ -923,60 +922,153 @@ class _OfferingDialogState extends State<_OfferingDialog> {
     super.dispose();
   }
 
+  String? _serverError(String field) {
+    for (final entry in _serverErrors.entries) {
+      if (entry.key.toLowerCase() == field.toLowerCase()) {
+        return entry.value.firstOrNull;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _serverErrors = const {};
+      _serverMessage = null;
+    });
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    setState(() => _busy = true);
+    try {
+      await context.read<ApiClient>().post(
+        '/api/tenant/trainer-offerings',
+        body: {
+          'trainerProfileId': _emptyGuid,
+          'trainingTypeId': _type!['id'],
+          'name': _name.text.trim(),
+          'durationMinutes': int.parse(_duration.text.trim()),
+          'price': double.parse(_price.text.trim().replaceFirst(',', '.')),
+          'currency': 'BAM',
+        },
+      );
+      if (mounted) Navigator.pop(context, true);
+    } on ApiProblem catch (error) {
+      if (!mounted) return;
+      if (error.fieldErrors.isNotEmpty) {
+        setState(() {
+          _serverErrors = error.fieldErrors;
+          _serverMessage = error.firstFieldError;
+        });
+        _formKey.currentState?.validate();
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Uslugu trenutno nije moguće sačuvati.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: const Text('Nova usluga'),
-    content: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        TextField(
-          controller: _name,
-          decoration: const InputDecoration(labelText: 'Naziv'),
-        ),
-        const SizedBox(height: 10),
-        DropdownButtonFormField<Map<String, dynamic>>(
-          initialValue: _type,
-          decoration: const InputDecoration(labelText: 'Tip treninga'),
-          items: widget.trainingTypes
-              .map(
-                (item) => DropdownMenuItem(
-                  value: item,
-                  child: Text(item['name'].toString()),
-                ),
-              )
-              .toList(),
-          onChanged: (value) => _type = value,
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: _duration,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'Trajanje (min)'),
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: _price,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(labelText: 'Cijena (BAM)'),
-        ),
-      ],
+    content: Form(
+      key: _formKey,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextFormField(
+            controller: _name,
+            decoration: const InputDecoration(labelText: 'Naziv'),
+            validator: (value) {
+              final server = _serverError('Name');
+              if (server != null) return server;
+              final normalized = value?.trim() ?? '';
+              if (normalized.isEmpty) return 'Unesite naziv usluge.';
+              if (normalized.length > 200) {
+                return 'Naziv može imati najviše 200 znakova.';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<Map<String, dynamic>>(
+            initialValue: _type,
+            decoration: const InputDecoration(labelText: 'Tip treninga'),
+            items: widget.trainingTypes
+                .map(
+                  (item) => DropdownMenuItem(
+                    value: item,
+                    child: Text(item['name'].toString()),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) => _type = value,
+            validator: (value) => value == null
+                ? 'Izaberite tip treninga.'
+                : _serverError('TrainingTypeId'),
+          ),
+          const SizedBox(height: 10),
+          TextFormField(
+            controller: _duration,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Trajanje (min)'),
+            validator: (value) {
+              final server = _serverError('DurationMinutes');
+              if (server != null) return server;
+              final duration = int.tryParse(value?.trim() ?? '');
+              if (duration == null || duration < 1 || duration > 1440) {
+                return 'Unesite cijeli broj od 1 do 1440.';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 10),
+          TextFormField(
+            controller: _price,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'Cijena (BAM)'),
+            validator: (value) {
+              final server = _serverError('Price');
+              if (server != null) return server;
+              final price = double.tryParse(
+                (value ?? '').trim().replaceFirst(',', '.'),
+              );
+              if (price == null || price < 0 || price > 1000000) {
+                return 'Unesite cijenu od 0 do 1.000.000.';
+              }
+              return null;
+            },
+          ),
+          if (_serverMessage != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _serverMessage!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+          ],
+        ],
+      ),
     ),
     actions: [
       TextButton(
-        onPressed: () => Navigator.pop(context),
+        onPressed: _busy ? null : () => Navigator.pop(context),
         child: const Text('Odustani'),
       ),
       FilledButton(
-        onPressed: _type == null
-            ? null
-            : () => Navigator.pop(context, {
-                'trainingTypeId': _type!['id'],
-                'name': _name.text.trim(),
-                'durationMinutes': int.tryParse(_duration.text),
-                'price': double.tryParse(_price.text.replaceFirst(',', '.')),
-                'currency': 'BAM',
-              }),
-        child: const Text('Sačuvaj'),
+        onPressed: _busy ? null : _submit,
+        child: Text(_busy ? 'Čuvanje...' : 'Sačuvaj'),
       ),
     ],
   );

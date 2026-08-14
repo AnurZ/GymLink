@@ -464,15 +464,20 @@ internal sealed class DevelopmentDataSeeder(
         gym.PhoneNumber = definition.PhoneNumber;
         gym.IsPubliclyVisible = true;
 
+        var existingImages = await dbContext.GymImages.IgnoreQueryFilters()
+            .Where(x => x.GymId == gym.Id)
+            .ToListAsync(cancellationToken);
+        var nextSortOrder = existingImages.Count == 0
+            ? 0
+            : existingImages.Max(x => x.SortOrder) + 1;
+        var hasPrimaryImage = existingImages.Any(x => x.IsPrimary);
+
         for (var index = 0; index < definition.ImageUrls.Length; index++)
         {
             var storageKey = index == 0
                 ? $"seed/{definition.Slug}/primary"
                 : $"seed/{definition.Slug}/gallery-{index + 1}";
-            var image = await dbContext.GymImages.IgnoreQueryFilters()
-                .SingleOrDefaultAsync(
-                    x => x.GymId == gym.Id && x.StorageKey == storageKey,
-                    cancellationToken);
+            var image = existingImages.SingleOrDefault(x => x.StorageKey == storageKey);
             if (image is null)
             {
                 image = new GymImage
@@ -480,14 +485,16 @@ internal sealed class DevelopmentDataSeeder(
                     TenantId = tenantId,
                     GymId = gym.Id,
                     StorageKey = storageKey,
+                    SortOrder = nextSortOrder++,
+                    IsPrimary = !hasPrimaryImage,
                 };
                 dbContext.GymImages.Add(image);
+                existingImages.Add(image);
+                hasPrimaryImage = true;
             }
 
             image.PublicUrl = definition.ImageUrls[index];
             image.AltText = $"{definition.Name} - fotografija {index + 1}";
-            image.SortOrder = index;
-            image.IsPrimary = index == 0;
         }
 
         return gym;

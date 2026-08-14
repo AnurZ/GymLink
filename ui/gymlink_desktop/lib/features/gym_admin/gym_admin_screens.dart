@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -1524,6 +1525,24 @@ class _TenantReservationsScreenState extends State<TenantReservationsScreen> {
   );
 }
 
+class _GalleryDraftItem {
+  _GalleryDraftItem({
+    required this.server,
+    this.bytes,
+    this.fileName,
+    this.contentType,
+  });
+
+  final Map<String, dynamic>? server;
+  Uint8List? bytes;
+  String? fileName;
+  String? contentType;
+
+  String? get id => server?['id']?.toString();
+  String? get concurrencyToken => server?['concurrencyToken']?.toString();
+  String? get imageUrl => server?['imageUrl']?.toString();
+}
+
 class GymCatalogScreen extends StatefulWidget {
   const GymCatalogScreen({super.key});
   @override
@@ -1536,8 +1555,8 @@ class _GymCatalogScreenState extends State<GymCatalogScreen> {
   List<Map<String, dynamic>> _plans = const [];
   bool _loading = true;
   bool _galleryBusy = false;
-  Uint8List? _galleryPreview;
-  String? _galleryPreviewImageId;
+  bool _galleryDirty = false;
+  List<_GalleryDraftItem> _galleryDraft = [];
   Object? _error;
 
   List<Map<String, dynamic>> get _galleryImages {
@@ -1567,6 +1586,7 @@ class _GymCatalogScreenState extends State<GymCatalogScreen> {
         api.get('/api/reference-data/lookups', authenticated: false),
       ]);
       _gym = Map<String, dynamic>.from(results[0]! as Map);
+      _resetGalleryDraft();
       _plans = (results[1] as PagedData).items;
       _lookups = Map<String, dynamic>.from(results[2]! as Map);
       _error = null;
@@ -1615,7 +1635,14 @@ class _GymCatalogScreenState extends State<GymCatalogScreen> {
     }
   }
 
-  Future<void> _pickGymImage([Map<String, dynamic>? existing]) async {
+  void _resetGalleryDraft() {
+    _galleryDraft = _galleryImages
+        .map((image) => _GalleryDraftItem(server: image))
+        .toList();
+    _galleryDirty = false;
+  }
+
+  Future<void> _pickGymImage([_GalleryDraftItem? existing]) async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
@@ -1642,105 +1669,141 @@ class _GymCatalogScreenState extends State<GymCatalogScreen> {
       _showGalleryMessage('Dozvoljene su JPG, PNG i WebP slike.');
       return;
     }
-    if (existing == null && _galleryImages.length >= _maximumGalleryImages) {
+    if (existing == null && _galleryDraft.length >= _maximumGalleryImages) {
       _showGalleryMessage('Galerija može sadržavati najviše 5 slika.');
       return;
     }
 
-    final imageId = existing?['id']?.toString();
-    final token = existing?['concurrencyToken']?.toString();
-    if (existing != null && (token == null || token.isEmpty)) {
+    if (existing?.server != null &&
+        (existing!.concurrencyToken == null ||
+            existing.concurrencyToken!.isEmpty)) {
       _showGalleryMessage('Osvježite galeriju prije zamjene slike.');
       return;
     }
     setState(() {
-      _galleryBusy = true;
-      _galleryPreview = bytes;
-      _galleryPreviewImageId = imageId;
-    });
-    try {
-      final response = await context.read<ApiClient>().postMultipart(
-        existing == null
-            ? '/api/tenant/gym/images'
-            : '/api/tenant/gym/images/$imageId/content',
-        bytes: bytes,
-        fileName: file.name,
-        contentType: contentType,
-        fields: token == null ? const {} : {'concurrencyToken': token},
-      );
-      _applyGallery(response);
-      _showGalleryMessage(
-        existing == null
-            ? 'Slika je dodana u galeriju.'
-            : 'Slika je zamijenjena.',
-      );
-    } on ApiProblem catch (error) {
-      _showGalleryMessage(error.message);
-      if (error.status == 409) await _load();
-    } finally {
-      if (mounted) {
-        setState(() {
-          _galleryBusy = false;
-          _galleryPreview = null;
-          _galleryPreviewImageId = null;
-        });
+      if (existing == null) {
+        _galleryDraft.add(
+          _GalleryDraftItem(
+            server: null,
+            bytes: bytes,
+            fileName: file.name,
+            contentType: contentType,
+          ),
+        );
+      } else {
+        existing.bytes = bytes;
+        existing.fileName = file.name;
+        existing.contentType = contentType;
       }
-    }
+      _galleryDirty = true;
+    });
   }
 
-  Future<void> _removeGymImage(Map<String, dynamic> image) async {
+  Future<void> _removeGymImage(_GalleryDraftItem image) async {
+    final index = _galleryDraft.indexOf(image);
     if (!await confirmAction(
       context,
       title: 'Ukloni sliku',
-      message: image['isPrimary'] == true
+      message: index == 0 && _galleryDraft.length > 1
           ? 'Sljedeća slika postat će naslovna slika teretane.'
-          : 'Slika će biti uklonjena iz galerije.',
+          : 'Slika će biti uklonjena iz lokalnog nacrta galerije.',
     )) {
       return;
     }
     if (!mounted) return;
+    setState(() {
+      _galleryDraft.remove(image);
+      _galleryDirty = true;
+    });
+  }
+
+  void _moveGymImage(int from, int to) {
+    if (from == to || to < 0 || to >= _galleryDraft.length) return;
+    setState(() {
+      final moved = _galleryDraft.removeAt(from);
+      _galleryDraft.insert(to, moved);
+      _galleryDirty = true;
+    });
+  }
+
+  Future<void> _saveGallery() async {
+    if (!_galleryDirty || _galleryBusy) return;
+    final files = <MultipartUploadPart>[];
+    final items = <Map<String, Object?>>[];
+    for (final item in _galleryDraft) {
+      int? uploadIndex;
+      if (item.bytes != null) {
+        uploadIndex = files.length;
+        files.add(
+          MultipartUploadPart(
+            fieldName: 'files',
+            bytes: item.bytes!,
+            fileName: item.fileName!,
+            contentType: item.contentType!,
+          ),
+        );
+      }
+      items.add({
+        'imageId': item.id,
+        'concurrencyToken': item.concurrencyToken,
+        'uploadIndex': uploadIndex,
+      });
+    }
+    final retainedIds = _galleryDraft
+        .map((item) => item.id)
+        .whereType<String>()
+        .toSet();
+    final removedImages = _galleryImages
+        .where((image) => !retainedIds.contains(image['id']?.toString()))
+        .map(
+          (image) => {
+            'imageId': image['id'],
+            'concurrencyToken': image['concurrencyToken'],
+          },
+        )
+        .toList();
+
     setState(() => _galleryBusy = true);
     try {
-      final response = await context.read<ApiClient>().delete(
-        '/api/tenant/gym/images/${image['id']}',
-        body: {'concurrencyToken': image['concurrencyToken']},
+      final response = await context.read<ApiClient>().putMultipart(
+        '/api/tenant/gym/images',
+        fields: {
+          'manifest': jsonEncode({
+            'items': items,
+            'removedImages': removedImages,
+          }),
+        },
+        files: files,
       );
       _applyGallery(response);
+      _showGalleryMessage('Galerija je sačuvana.');
     } on ApiProblem catch (error) {
       _showGalleryMessage(error.message);
-      if (error.status == 409) await _load();
+      if (error.status == 409 && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Galerija je promijenjena na serveru. Lokalni nacrt je zadržan.',
+            ),
+            action: SnackBarAction(label: 'Osvježi', onPressed: _load),
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _galleryBusy = false);
     }
   }
 
-  Future<void> _moveGymImage(int from, int to) async {
-    final images = _galleryImages;
-    if (from == to || to < 0 || to >= images.length) return;
-    final moved = images.removeAt(from);
-    images.insert(to, moved);
-    setState(() => _galleryBusy = true);
-    try {
-      final response = await context.read<ApiClient>().put(
-        '/api/tenant/gym/images/order',
-        body: {
-          'images': images
-              .map(
-                (image) => {
-                  'imageId': image['id'],
-                  'concurrencyToken': image['concurrencyToken'],
-                },
-              )
-              .toList(),
-        },
-      );
-      _applyGallery(response);
-    } on ApiProblem catch (error) {
-      _showGalleryMessage(error.message);
-      await _load();
-    } finally {
-      if (mounted) setState(() => _galleryBusy = false);
+  Future<void> _discardGalleryChanges() async {
+    if (!_galleryDirty || _galleryBusy) return;
+    if (!await confirmAction(
+      context,
+      title: 'Odbaci promjene',
+      message: 'Sve nesačuvane promjene galerije bit će izgubljene.',
+    )) {
+      return;
     }
+    if (mounted) setState(_resetGalleryDraft);
   }
 
   void _applyGallery(Object? response) {
@@ -1751,6 +1814,7 @@ class _GymCatalogScreenState extends State<GymCatalogScreen> {
           .map((image) => image['imageUrl'])
           .whereType<String>()
           .toList();
+      _resetGalleryDraft();
     });
   }
 
@@ -1805,15 +1869,16 @@ class _GymCatalogScreenState extends State<GymCatalogScreen> {
                   ),
                   const SizedBox(height: 18),
                   _GymGalleryManager(
-                    images: _galleryImages,
+                    images: _galleryDraft,
                     maximumImages: _maximumGalleryImages,
                     busy: _galleryBusy,
-                    preview: _galleryPreview,
-                    previewImageId: _galleryPreviewImageId,
+                    dirty: _galleryDirty,
                     onAdd: () => _pickGymImage(),
                     onReplace: _pickGymImage,
                     onRemove: _removeGymImage,
                     onMove: _moveGymImage,
+                    onSave: _saveGallery,
+                    onDiscard: _discardGalleryChanges,
                   ),
                   const SizedBox(height: 10),
                   Text('${_gym?['address']}, ${_gym?['city']}'),
@@ -1904,23 +1969,25 @@ class _GymGalleryManager extends StatelessWidget {
     required this.images,
     required this.maximumImages,
     required this.busy,
-    required this.preview,
-    required this.previewImageId,
+    required this.dirty,
     required this.onAdd,
     required this.onReplace,
     required this.onRemove,
     required this.onMove,
+    required this.onSave,
+    required this.onDiscard,
   });
 
-  final List<Map<String, dynamic>> images;
+  final List<_GalleryDraftItem> images;
   final int maximumImages;
   final bool busy;
-  final Uint8List? preview;
-  final String? previewImageId;
+  final bool dirty;
   final VoidCallback onAdd;
-  final ValueChanged<Map<String, dynamic>> onReplace;
-  final ValueChanged<Map<String, dynamic>> onRemove;
+  final ValueChanged<_GalleryDraftItem> onReplace;
+  final ValueChanged<_GalleryDraftItem> onRemove;
   final void Function(int from, int to) onMove;
+  final VoidCallback onSave;
+  final VoidCallback onDiscard;
 
   @override
   Widget build(BuildContext context) {
@@ -1949,7 +2016,7 @@ class _GymGalleryManager extends StatelessWidget {
         const SizedBox(height: 10),
         if (busy) const LinearProgressIndicator(),
         if (busy) const SizedBox(height: 8),
-        if (images.isEmpty && preview == null)
+        if (images.isEmpty)
           Container(
             height: 120,
             width: double.infinity,
@@ -1965,26 +2032,14 @@ class _GymGalleryManager extends StatelessWidget {
             height: 160,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              itemCount:
-                  images.length +
-                  (preview != null && previewImageId == null ? 1 : 0),
+              itemCount: images.length,
               separatorBuilder: (_, _) => const SizedBox(width: 10),
               itemBuilder: (context, index) {
-                if (index == images.length) {
-                  return _GalleryImageTile(
-                    preview: preview,
-                    label: 'Slanje...',
-                  );
-                }
                 final image = images[index];
                 return _GalleryImageTile(
-                  imageUrl: api.mediaUrl(image['imageUrl']),
-                  preview: previewImageId == image['id']?.toString()
-                      ? preview
-                      : null,
-                  label: image['isPrimary'] == true
-                      ? 'Naslovna'
-                      : 'Slika ${index + 1}',
+                  imageUrl: api.mediaUrl(image.imageUrl),
+                  preview: image.bytes,
+                  label: index == 0 ? 'Naslovna' : 'Slika ${index + 1}',
                   actions: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -2036,6 +2091,35 @@ class _GymGalleryManager extends StatelessWidget {
         const Text(
           'Prva slika je naslovna. Koristite strelice ili opciju za promjenu redoslijeda.',
           style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            if (dirty)
+              const Expanded(
+                child: Text(
+                  'Nesačuvane promjene',
+                  style: TextStyle(
+                    color: Color(0xFFB45309),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              )
+            else
+              const Spacer(),
+            OutlinedButton(
+              key: const Key('gym-gallery-discard'),
+              onPressed: dirty && !busy ? onDiscard : null,
+              child: const Text('Odbaci promjene'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              key: const Key('gym-gallery-save'),
+              onPressed: dirty && !busy ? onSave : null,
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Sačuvaj galeriju'),
+            ),
+          ],
         ),
       ],
     );

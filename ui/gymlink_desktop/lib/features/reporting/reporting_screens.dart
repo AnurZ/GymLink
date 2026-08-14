@@ -46,7 +46,7 @@ NiceAxisScale reservationCountAxis(int maximumCount) {
       : normalized <= 5
       ? 5
       : 10;
-  final interval = niceMultiplier * magnitude;
+  final interval = math.max(1.0, niceMultiplier * magnitude).toDouble();
   var maximum = (maximumCount / interval).ceil() * interval;
   if (maximum <= maximumCount) maximum += interval;
   return NiceAxisScale(interval: interval, maximum: maximum);
@@ -633,12 +633,12 @@ class _MonthlyBarChart extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(8, 18, 12, 4),
       child: BarChart(
         BarChartData(
-          maxY: reservationCountStyle ? scale.maximum : maximumCount * 1.2,
+          maxY: scale.maximum,
           borderData: FlBorderData(show: false),
           gridData: FlGridData(
             show: true,
             drawVerticalLine: false,
-            horizontalInterval: reservationCountStyle ? scale.interval : null,
+            horizontalInterval: scale.interval,
             getDrawingHorizontalLine: (_) => FlLine(
               color: Theme.of(context).dividerColor.withValues(alpha: .42),
               strokeWidth: 1,
@@ -665,7 +665,15 @@ class _MonthlyBarChart extends StatelessWidget {
                         fontSize: 12,
                       ),
                     )
-                  : null,
+                  : (group, groupIndex, rod, rodIndex) => BarTooltipItem(
+                      '${rod.toY.toInt()} '
+                      '${rod.toY.toInt() == 1 ? 'član' : 'članova'}',
+                      TextStyle(
+                        color: Theme.of(context).colorScheme.onInverseSurface,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
             ),
           ),
           titlesData: FlTitlesData(
@@ -675,25 +683,25 @@ class _MonthlyBarChart extends StatelessWidget {
             rightTitles: const AxisTitles(
               sideTitles: SideTitles(showTitles: false),
             ),
-            leftTitles: reservationCountStyle
-                ? AxisTitles(
-                    axisNameSize: 24,
-                    axisNameWidget: const Text(
+            leftTitles: AxisTitles(
+              axisNameSize: reservationCountStyle ? 24 : 0,
+              axisNameWidget: reservationCountStyle
+                  ? const Text(
                       'Broj rezervacija',
                       key: Key('reservations-axis-title'),
                       style: TextStyle(fontSize: 12),
-                    ),
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 38,
-                      interval: scale.interval,
-                      getTitlesWidget: (value, meta) => SideTitleWidget(
-                        meta: meta,
-                        child: Text(value.toInt().toString()),
-                      ),
-                    ),
-                  )
-                : const AxisTitles(sideTitles: SideTitles(showTitles: true)),
+                    )
+                  : null,
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 42,
+                interval: scale.interval,
+                getTitlesWidget: (value, meta) => SideTitleWidget(
+                  meta: meta,
+                  child: Text(value.toInt().toString()),
+                ),
+              ),
+            ),
             bottomTitles: AxisTitles(
               sideTitles: SideTitles(
                 showTitles: true,

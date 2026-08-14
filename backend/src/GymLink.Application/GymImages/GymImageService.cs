@@ -227,6 +227,144 @@ public sealed class GymImageService(
         return ToGallery(ordered);
     }
 
+    public async Task<GymImageGalleryDto> SaveGalleryAsync(
+        GymImageGallerySaveManifest manifest,
+        IReadOnlyList<GymImageUpload> uploads,
+        CancellationToken cancellationToken)
+    {
+        RequireGymAdmin();
+        var actorId = RequireUser();
+        var gym = await ResolveGymAsync(cancellationToken);
+        var current = await LoadImagesAsync(gym.Id, cancellationToken);
+        ValidateGallerySave(manifest, uploads, current);
+
+        var byId = current.ToDictionary(x => x.Id);
+        var removed = manifest.RemovedImages.Select(x => byId[x.ImageId]).ToArray();
+        var replaced = manifest.Items
+            .Where(x => x.ImageId.HasValue && x.UploadIndex.HasValue)
+            .Select(x => byId[x.ImageId!.Value])
+            .ToArray();
+        var oldManagedKeys = removed.Concat(replaced)
+            .Where(IsManaged)
+            .Select(x => x.StorageKey)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        if (uploads.Count == 0 && removed.Length == 0 &&
+            manifest.Items.Select(x => x.ImageId).SequenceEqual(current.Select(x => (Guid?)x.Id)))
+        {
+            return ToGallery(current);
+        }
+
+        var validatedContentTypes = uploads.Select(ValidateUpload).ToArray();
+        var saved = new List<FileStorageResult>(uploads.Count);
+        try
+        {
+            for (var index = 0; index < uploads.Count; index++)
+            {
+                var upload = uploads[index];
+                await using var content = new MemoryStream(upload.Content, writable: false);
+                saved.Add(await fileStorage.SaveAsync(
+                    FileStorageArea.GymImages,
+                    content,
+                    validatedContentTypes[index],
+                    upload.FileName,
+                    cancellationToken));
+            }
+
+            var previousPrimaryId = current.FirstOrDefault(x => x.IsPrimary)?.Id;
+            var final = await transaction.ExecuteAsync(async ct =>
+            {
+                var retained = manifest.Items
+                    .Where(x => x.ImageId.HasValue)
+                    .Select(x => byId[x.ImageId!.Value])
+                    .ToList();
+                dbContext.GymImages.RemoveRange(removed);
+                if (retained.Count > 0)
+                {
+                    SetTemporaryPositions(retained);
+                }
+                await dbContext.SaveChangesAsync(ct);
+
+                var result = new List<GymImage>(manifest.Items.Count);
+                foreach (var item in manifest.Items)
+                {
+                    GymImage image;
+                    if (item.ImageId.HasValue)
+                    {
+                        image = byId[item.ImageId.Value];
+                    }
+                    else
+                    {
+                        image = new GymImage { GymId = gym.Id, AltText = gym.Name };
+                        dbContext.GymImages.Add(image);
+                    }
+
+                    if (item.UploadIndex.HasValue)
+                    {
+                        var uploadIndex = item.UploadIndex.Value;
+                        var stored = saved[uploadIndex];
+                        image.SetManagedContent(
+                            stored.StorageKey,
+                            stored.PublicUrl ?? throw new InvalidOperationException(
+                                "Gym image storage must return a public URL."),
+                            validatedContentTypes[uploadIndex],
+                            uploads[uploadIndex].Content.LongLength);
+                    }
+                    result.Add(image);
+                }
+
+                SetFinalPositions(result);
+                if (manifest.Items.Any(x => !x.ImageId.HasValue))
+                {
+                    AddAudit(actorId, gym, "gym_image.uploaded");
+                }
+                if (replaced.Length > 0)
+                {
+                    AddAudit(actorId, gym, "gym_image.replaced");
+                }
+                if (removed.Length > 0)
+                {
+                    AddAudit(actorId, gym, "gym_image.removed");
+                }
+                if (!manifest.Items.Select(x => x.ImageId)
+                    .SequenceEqual(current.Where(x => !removed.Contains(x)).Select(x => (Guid?)x.Id)))
+                {
+                    AddAudit(actorId, gym, "gym_image.reordered");
+                }
+                if (result.FirstOrDefault()?.Id != previousPrimaryId)
+                {
+                    AddAudit(actorId, gym, "gym_image.primary_changed");
+                }
+
+                await dbContext.SaveChangesAsync(ct);
+                return result;
+            }, cancellationToken);
+
+            foreach (var storageKey in oldManagedKeys)
+            {
+                await DeleteSupersededAsync(storageKey, cancellationToken);
+            }
+            return ToGallery(final);
+        }
+        catch (Exception exception)
+        {
+            dbContext.ClearTrackedChanges();
+            foreach (var stored in saved)
+            {
+                await DeleteCompensatingAsync(stored.StorageKey, cancellationToken);
+            }
+            if (exception is DbUpdateException)
+            {
+                throw new ConflictException(
+                    "concurrency_conflict",
+                    "The gym gallery changed. Reload it and try again.",
+                    exception);
+            }
+            throw;
+        }
+    }
+
     private async Task<Gym> ResolveGymAsync(CancellationToken cancellationToken) =>
         await dbContext.Gyms.SingleOrDefaultAsync(cancellationToken) ??
         throw new NotFoundException("gym_not_found", "No gym exists for the current tenant.");
@@ -261,6 +399,59 @@ public sealed class GymImageService(
             ValidateConcurrencyToken(byId[item.ImageId].RowVersion, item.ConcurrencyToken);
         }
     }
+
+    private static void ValidateGallerySave(
+        GymImageGallerySaveManifest manifest,
+        IReadOnlyList<GymImageUpload> uploads,
+        List<GymImage> current)
+    {
+        if (manifest.Items is null || manifest.RemovedImages is null ||
+            manifest.Items.Count > GymImage.MaximumGalleryImages ||
+            uploads.Count > GymImage.MaximumGalleryImages)
+        {
+            throw InvalidGallerySave();
+        }
+
+        var finalExisting = manifest.Items
+            .Where(x => x.ImageId.HasValue)
+            .Select(x => x.ImageId!.Value)
+            .ToArray();
+        var removed = manifest.RemovedImages.Select(x => x.ImageId).ToArray();
+        var represented = finalExisting.Concat(removed).ToArray();
+        if (represented.Length != current.Count ||
+            represented.Distinct().Count() != represented.Length ||
+            !represented.ToHashSet().SetEquals(current.Select(x => x.Id)))
+        {
+            throw InvalidGallerySave();
+        }
+
+        var uploadIndexes = manifest.Items
+            .Where(x => x.UploadIndex.HasValue)
+            .Select(x => x.UploadIndex!.Value)
+            .ToArray();
+        if (manifest.Items.Any(x => !x.ImageId.HasValue && !x.UploadIndex.HasValue) ||
+            uploadIndexes.Any(x => x < 0 || x >= uploads.Count) ||
+            uploadIndexes.Distinct().Count() != uploadIndexes.Length ||
+            !uploadIndexes.ToHashSet().SetEquals(Enumerable.Range(0, uploads.Count)))
+        {
+            throw InvalidGallerySave();
+        }
+
+        var byId = current.ToDictionary(x => x.Id);
+        foreach (var item in manifest.Items.Where(x => x.ImageId.HasValue))
+        {
+            ValidateConcurrencyToken(byId[item.ImageId!.Value].RowVersion, item.ConcurrencyToken);
+        }
+        foreach (var item in manifest.RemovedImages)
+        {
+            ValidateConcurrencyToken(byId[item.ImageId].RowVersion, item.ConcurrencyToken);
+        }
+    }
+
+    private static ApplicationRuleException InvalidGallerySave() =>
+        new(
+            "gym_image_gallery_invalid",
+            "The complete valid gallery draft is required.");
 
     private static void SetTemporaryPositions(List<GymImage> images)
     {

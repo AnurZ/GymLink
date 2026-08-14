@@ -58,8 +58,6 @@ public sealed record CreateAdminGymRequest
 
     public required Guid GymAdminUserId { get; init; }
 
-    [Required, StringLength(1000, MinimumLength = 2)]
-    public required string GymAdminAssignmentReason { get; init; }
 }
 
 public sealed record AdminGymDto(
@@ -78,6 +76,7 @@ public sealed record AdminGymDto(
     int ActiveGymAdminCount,
     bool CanActivate,
     IReadOnlyList<string> MissingActivationRequirements,
+    int MemberCount,
     DateTime CreatedAtUtc);
 
 public interface IGymAdministrationService
@@ -106,6 +105,7 @@ internal sealed class GymAdministrationService(
     {
         request.Validate();
         var queryText = request.Query?.Trim();
+        var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
         var query =
             from gym in dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
             join tenant in dbContext.Tenants.AsNoTracking() on gym.TenantId equals tenant.Id
@@ -133,6 +133,14 @@ internal sealed class GymAdministrationService(
                     type.TenantId == gym.TenantId),
                 HasPlan = dbContext.MembershipPlans.IgnoreQueryFilters().Any(plan =>
                     plan.TenantId == gym.TenantId && plan.IsActive),
+                MemberCount = dbContext.Memberships.IgnoreQueryFilters().Count(membership =>
+                    membership.TenantId == gym.TenantId &&
+                    membership.StartsAtUtc.HasValue && membership.StartsAtUtc <= nowUtc &&
+                    membership.EndsAtUtc.HasValue && membership.EndsAtUtc > nowUtc &&
+                    (membership.Status == MembershipStatus.Active ||
+                     (membership.Status != MembershipStatus.PendingPayment &&
+                      (!membership.StatusChangedAtUtc.HasValue ||
+                       membership.StatusChangedAtUtc > nowUtc)))),
             };
 
         var totalCount = await query.LongCountAsync(cancellationToken);
@@ -167,6 +175,7 @@ internal sealed class GymAdministrationService(
                 x.HasGymAdmin ? 1 : 0,
                 readiness.CanActivate,
                 readiness.MissingRequirements,
+                x.MemberCount,
                 x.Gym.CreatedAtUtc);
         }).ToArray();
         return new(items, request.Page, request.PageSize, totalCount);
@@ -316,7 +325,7 @@ internal sealed class GymAdministrationService(
                 await gymAdminAssignment.AssignAsync(
                     request.GymAdminUserId,
                     tenant.Id,
-                    request.GymAdminAssignmentReason,
+                    "Assigned during activation-ready gym creation.",
                     actorId,
                     token);
                 await dbContext.SaveChangesAsync(token);
@@ -353,6 +362,16 @@ internal sealed class GymAdministrationService(
                 select new { Gym = gym, Tenant = tenant, CityName = city.Name })
             .SingleAsync(cancellationToken);
         var readiness = await readinessService.GetAsync(core.Gym.TenantId, cancellationToken);
+        var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
+        var memberCount = await dbContext.Memberships.IgnoreQueryFilters().AsNoTracking().CountAsync(
+            membership => membership.TenantId == core.Gym.TenantId &&
+                membership.StartsAtUtc.HasValue && membership.StartsAtUtc <= nowUtc &&
+                membership.EndsAtUtc.HasValue && membership.EndsAtUtc > nowUtc &&
+                (membership.Status == MembershipStatus.Active ||
+                 (membership.Status != MembershipStatus.PendingPayment &&
+                  (!membership.StatusChangedAtUtc.HasValue ||
+                   membership.StatusChangedAtUtc > nowUtc))),
+            cancellationToken);
         return new(
             core.Gym.Id,
             core.Gym.TenantId,
@@ -369,6 +388,7 @@ internal sealed class GymAdministrationService(
             readiness.MissingRequirements.Contains(ActivationRequirementCodes.GymAdmin) ? 0 : 1,
             readiness.CanActivate,
             readiness.MissingRequirements,
+            memberCount,
             core.Gym.CreatedAtUtc);
     }
 

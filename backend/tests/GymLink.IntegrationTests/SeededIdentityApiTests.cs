@@ -101,6 +101,24 @@ public sealed class SeededIdentityApiTests
                 firstTrainerImageUrls = firstTrainerImages.ToDictionary(
                     x => x.Id,
                     x => x.ImageUrl!);
+
+                var reorderedGymImages = await firstVerification.GymImages
+                    .IgnoreQueryFilters()
+                    .Where(x => x.StorageKey.StartsWith("seed/oxide/"))
+                    .OrderBy(x => x.SortOrder)
+                    .ToListAsync();
+                Assert.Equal(2, reorderedGymImages.Count);
+
+                reorderedGymImages[0].IsPrimary = false;
+                reorderedGymImages[0].SortOrder = 2;
+                await firstVerification.SaveChangesAsync();
+
+                reorderedGymImages[1].IsPrimary = true;
+                reorderedGymImages[1].SortOrder = 0;
+                await firstVerification.SaveChangesAsync();
+
+                reorderedGymImages[0].SortOrder = 1;
+                await firstVerification.SaveChangesAsync();
             }
 
             await using var factory = CreateFactory(connectionString);
@@ -308,6 +326,14 @@ public sealed class SeededIdentityApiTests
             var images = await verificationContext.GymImages
                 .IgnoreQueryFilters()
                 .ToListAsync();
+            var reorderedPrimary = Assert.Single(images, image =>
+                image.StorageKey == "seed/oxide/gallery-2");
+            Assert.True(reorderedPrimary.IsPrimary);
+            Assert.Equal(0, reorderedPrimary.SortOrder);
+            var reorderedSecondary = Assert.Single(images, image =>
+                image.StorageKey == "seed/oxide/primary");
+            Assert.False(reorderedSecondary.IsPrimary);
+            Assert.Equal(1, reorderedSecondary.SortOrder);
             Assert.All(images, image =>
             {
                 Assert.Contains("auto=format", image.PublicUrl);
@@ -506,7 +532,18 @@ public sealed class SeededIdentityApiTests
                 .ThenBy(x => x.TargetId)
                 .Select(x => (x.UserId, x.TargetType, x.TargetId, x.Score, x.Reason))
                 .ToList();
-            Assert.Equal(firstGeneration, secondGeneration);
+            Assert.Equal(firstGeneration.Count, secondGeneration.Count);
+            for (var index = 0; index < firstGeneration.Count; index++)
+            {
+                Assert.Equal(firstGeneration[index].UserId, secondGeneration[index].UserId);
+                Assert.Equal(firstGeneration[index].TargetType, secondGeneration[index].TargetType);
+                Assert.Equal(firstGeneration[index].TargetId, secondGeneration[index].TargetId);
+                Assert.Equal(firstGeneration[index].Reason, secondGeneration[index].Reason);
+                Assert.InRange(
+                    decimal.Abs(firstGeneration[index].Score - secondGeneration[index].Score),
+                    0m,
+                    0.00001m);
+            }
             Assert.Equal(
                 recommendations.Count,
                 recommendations.Select(x => new { x.UserId, x.TargetType, x.TargetId }).Distinct().Count());

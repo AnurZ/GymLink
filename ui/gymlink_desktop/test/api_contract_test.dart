@@ -165,6 +165,21 @@ void main() {
           ],
         },
       );
+      await api.putMultipart(
+        '/api/tenant/gym/images',
+        fields: const {
+          'manifest':
+              '{"items":[{"imageId":"image-1","concurrencyToken":"next","uploadIndex":0}],"removedImages":[]}',
+        },
+        files: const [
+          MultipartUploadPart(
+            fieldName: 'files',
+            bytes: [0x89, 0x50, 0x4e, 0x47],
+            fileName: 'draft.png',
+            contentType: 'image/png',
+          ),
+        ],
+      );
 
       expect(
         captured[0].headers['content-type'],
@@ -173,6 +188,13 @@ void main() {
       expect(latin1.decode(captured[0].bodyBytes), contains('gym.png'));
       expect(captured[1].method, 'PUT');
       expect(utf8.decode(captured[1].bodyBytes), contains('image-1'));
+      expect(captured[2].method, 'PUT');
+      expect(
+        captured[2].headers['content-type'],
+        contains('multipart/form-data'),
+      );
+      expect(latin1.decode(captured[2].bodyBytes), contains('draft.png'));
+      expect(latin1.decode(captured[2].bodyBytes), contains('removedImages'));
     },
   );
 

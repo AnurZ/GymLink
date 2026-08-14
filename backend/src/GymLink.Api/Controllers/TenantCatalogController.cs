@@ -19,6 +19,8 @@ public sealed class TenantCatalogController(
     ITrainerImageService trainerImages,
     IGymImageService gymImages) : ControllerBase
 {
+    private const long MaximumGalleryRequestBytes =
+        GymImage.MaximumGalleryImages * GymImage.MaximumFileSizeBytes + 262144;
     [HttpGet("gym")]
     public async Task<IActionResult> GetGym(CancellationToken cancellationToken) =>
         Ok(await gyms.GetCurrentTenantGymAsync(cancellationToken));
@@ -39,6 +41,21 @@ public sealed class TenantCatalogController(
         Ok(await gymImages.AddAsync(
             await form.ToUploadAsync(cancellationToken),
             cancellationToken));
+
+    [HttpPut("gym/images")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(MaximumGalleryRequestBytes)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaximumGalleryRequestBytes)]
+    public async Task<ActionResult<GymImageGalleryDto>> SaveGymImages(
+        [FromForm] GymImageGallerySaveForm form,
+        CancellationToken cancellationToken)
+    {
+        var request = await form.ToRequestAsync(cancellationToken);
+        return Ok(await gymImages.SaveGalleryAsync(
+            request.Manifest,
+            request.Uploads,
+            cancellationToken));
+    }
 
     [HttpPost("gym/images/{imageId:guid}/content")]
     [Consumes("multipart/form-data")]

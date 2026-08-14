@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,6 +17,12 @@ import 'package:gymlink_desktop/features/reporting/reporting_screens.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  test('small statistics counts use an integer axis', () {
+    final scale = reservationCountAxis(2);
+    expect(scale.interval, 1);
+    expect(scale.maximum, 3);
+  });
+
   testWidgets('desktop notification opens detail before mark-read', (
     tester,
   ) async {
@@ -91,6 +98,20 @@ void main() {
         bars.data.barGroups.map((group) => group.barRods.single.color).toSet(),
         hasLength(6),
       );
+      expect(
+        bars.data.barGroups.expand((group) => group.showingTooltipIndicators),
+        isEmpty,
+      );
+      final firstGroup = bars.data.barGroups.first;
+      final tooltip = bars.data.barTouchData.touchTooltipData.getTooltipItem(
+        firstGroup,
+        0,
+        firstGroup.barRods.single,
+        0,
+      );
+      expect(tooltip!.text, '30 članova');
+      expect(find.text('4.0'), findsNothing);
+      expect(find.text('8.0'), findsNothing);
       final pie = tester.widget<PieChart>(find.byType(PieChart));
       expect(
         pie.data.sections.map((section) => section.color),
@@ -545,9 +566,15 @@ void main() {
     await tester.pumpWidget(_centralHarness(api));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Aktiviraj'));
+    expect(find.text('Naziv teretane'), findsOneWidget);
+    expect(find.text('Lokacija'), findsOneWidget);
+    expect(find.text('Broj članova'), findsOneWidget);
+    expect(find.text('Status'), findsWidgets);
+    expect(find.text('Akcije'), findsOneWidget);
+    expect(find.text('12'), findsOneWidget);
+    expect(find.byType(PopupMenuButton<String>), findsNothing);
+
+    await tester.tap(find.byTooltip('Aktiviraj'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Potvrdi'));
     await tester.pumpAndSettle();
@@ -567,6 +594,29 @@ void main() {
     expect(find.text('Nova teretana'), findsOneWidget);
     expect(find.textContaining('Prikaz nije moguće učitati'), findsNothing);
     expect(find.text('Status teretane je uspješno promijenjen.'), findsNothing);
+  });
+
+  testWidgets('CentralAdmin gym table paginates and search resets the page', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _CentralAdminApi(gymTotalCount: 21);
+    await tester.pumpWidget(_centralHarness(api));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Stranica 1 od 2'), findsOneWidget);
+    await tester.tap(find.byTooltip('Sljedeća stranica'));
+    await tester.pumpAndSettle();
+    expect(api.gymQueries.last['page'], 2);
+
+    await tester.enterText(find.byType(TextField).first, 'Arena');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(api.gymQueries.last['page'], 1);
+    expect(api.gymQueries.last['query'], 'Arena');
   });
 
   testWidgets('gym creation searches locations only after explicit action', (
@@ -753,7 +803,7 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('gym-create-continue')));
     await tester.pumpAndSettle();
-    expect(find.text('Radno vrijeme'), findsOneWidget);
+    expect(find.text('Radno vrijeme'), findsWidgets);
   });
 
   testWidgets('complete gym wizard sends activation-ready payload', (
@@ -769,6 +819,15 @@ void main() {
 
     await tester.tap(find.text('Dodaj teretanu'));
     await tester.pumpAndSettle();
+    final initialStepper = tester.widget<Stepper>(find.byType(Stepper));
+    expect(initialStepper.steps, hasLength(5));
+    expect(
+      initialStepper.steps
+          .map((step) => (step.title as Text).data)
+          .toList(growable: false),
+      ['Osnovno', 'Lokacija', 'Radno vrijeme', 'Katalog', 'Pregled'],
+    );
+    expect(find.text('Razlog dodjele GymAdmin uloge'), findsNothing);
     await tester.enterText(
       find.widgetWithText(TextFormField, 'Naziv'),
       'Kompletna teretana',
@@ -777,6 +836,11 @@ void main() {
       find.widgetWithText(TextFormField, 'Opis'),
       'Potpun opis nove teretane za aktivaciju.',
     );
+    await tester.enterText(find.byKey(const Key('gym-admin-search')), 'owner');
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pump();
+    await tester.tap(find.text('Owner Account'));
+    await tester.pump();
     await tester.tap(find.byKey(const Key('gym-create-continue')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('gym-manual-location-toggle')));
@@ -805,6 +869,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(stepper.controller!.offset, 0);
 
+    expect(find.text('Radno vrijeme'), findsWidgets);
+    await tester.tap(find.byKey(const Key('gym-create-continue')));
+    await tester.pumpAndSettle();
+
     await tester.scrollUntilVisible(
       find.text('Oprema'),
       300,
@@ -824,18 +892,6 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('gym-create-continue')));
     await tester.pumpAndSettle();
-
-    await tester.enterText(find.byKey(const Key('gym-admin-search')), 'owner');
-    await tester.pump(const Duration(milliseconds: 350));
-    await tester.pump();
-    await tester.tap(find.text('Owner Account'));
-    await tester.pump();
-    await tester.enterText(
-      find.widgetWithText(TextField, 'Razlog dodjele GymAdmin uloge'),
-      'Vlasnik teretane',
-    );
-    await tester.tap(find.byKey(const Key('gym-create-continue')));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('gym-create-continue')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Potvrdi'));
@@ -846,6 +902,7 @@ void main() {
     expect(api.creationBody?['latitude'], api.lastReverseQuery?['latitude']);
     expect(api.creationBody?['longitude'], api.lastReverseQuery?['longitude']);
     expect(api.creationBody?['gymAdminUserId'], 'user-owner');
+    expect(api.creationBody, isNot(contains('gymAdminAssignmentReason')));
     expect(api.creationBody?['equipmentIds'], ['equipment-1']);
     expect(api.creationBody?['trainingTypeIds'], ['type-1']);
     expect((api.creationBody?['workingHours'] as List).length, 7);
@@ -875,6 +932,14 @@ void main() {
         find.widgetWithText(TextFormField, 'Opis'),
         'Potpun opis teretane za provjeru konflikta.',
       );
+      await tester.enterText(
+        find.byKey(const Key('gym-admin-search')),
+        'owner',
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pump();
+      await tester.tap(find.text('Owner Account'));
+      await tester.pump();
       await tester.tap(find.byKey(const Key('gym-create-continue')));
       await tester.pumpAndSettle();
       await tester.enterText(
@@ -884,6 +949,9 @@ void main() {
       await tester.tap(find.byKey(const Key('gym-location-search-button')));
       await tester.pumpAndSettle();
       await tester.tap(find.textContaining('Grad Sarajevo').first);
+      await tester.tap(find.byKey(const Key('gym-create-continue')));
+      await tester.pumpAndSettle();
+
       await tester.tap(find.byKey(const Key('gym-create-continue')));
       await tester.pumpAndSettle();
 
@@ -901,20 +969,6 @@ void main() {
       await tester.tap(find.byKey(const Key('gym-create-continue')));
       await tester.pumpAndSettle();
 
-      await tester.enterText(
-        find.byKey(const Key('gym-admin-search')),
-        'owner',
-      );
-      await tester.pump(const Duration(milliseconds: 350));
-      await tester.pump();
-      await tester.tap(find.text('Owner Account'));
-      await tester.pump();
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Razlog dodjele GymAdmin uloge'),
-        'Vlasnik teretane',
-      );
-      await tester.tap(find.byKey(const Key('gym-create-continue')));
-      await tester.pumpAndSettle();
       expect(find.text('Konflikt teretana'), findsOneWidget);
       await tester.tap(find.byKey(const Key('gym-create-continue')));
       await tester.pumpAndSettle();
@@ -951,14 +1005,7 @@ void main() {
     await tester.pumpWidget(_centralHarness(api));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    expect(find.text('Dodijeli GymAdmina'), findsOneWidget);
-    expect(
-      tester.getTopLeft(find.text('Dodijeli GymAdmina')).dy,
-      lessThan(tester.getTopLeft(find.text('Aktivacija nije dostupna')).dy),
-    );
-    await tester.tap(find.text('Dodijeli GymAdmina'));
+    await tester.tap(find.byTooltip('Dodijeli GymAdmina'));
     await tester.pumpAndSettle();
 
     await tester.enterText(
@@ -981,12 +1028,7 @@ void main() {
     expect(api.assignmentBody?['tenantId'], 'tenant-1');
     expect(api.assignmentBody?['identifier'], 'owner@gymlink.local');
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    final disabledItem = tester.widget<PopupMenuItem<String>>(
-      find.widgetWithText(PopupMenuItem<String>, 'GymAdmin je već dodijeljen'),
-    );
-    expect(disabledItem.enabled, isFalse);
+    expect(find.byTooltip('Dodijeli GymAdmina'), findsNothing);
   });
 
   testWidgets('GymAdmin conflict remains inline and preserves dialog values', (
@@ -1002,9 +1044,7 @@ void main() {
     await tester.pumpWidget(_centralHarness(api));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Dodijeli GymAdmina'));
+    await tester.tap(find.byTooltip('Dodijeli GymAdmina'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.widgetWithText(TextFormField, 'Registrovani korisnik'),
@@ -1045,9 +1085,7 @@ void main() {
     await tester.pumpWidget(_centralHarness(api));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Aktiviraj'));
+    await tester.tap(find.byTooltip('Aktiviraj'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Potvrdi'));
     await tester.pumpAndSettle();
@@ -1202,6 +1240,23 @@ void main() {
     expect(find.text('Naslovna'), findsOneWidget);
     expect(find.text('Slika 2'), findsOneWidget);
     expect(find.byKey(const Key('gym-gallery-add')), findsOneWidget);
+    final save = tester.widget<FilledButton>(
+      find.byKey(const Key('gym-gallery-save')),
+    );
+    expect(save.onPressed, isNull);
+
+    await tester.tap(find.byTooltip('Pomjeri lijevo').last);
+    await tester.pump();
+    expect(find.text('Nesačuvane promjene'), findsOneWidget);
+    expect(api.gallerySaveCalls, 0);
+
+    await tester.tap(find.byKey(const Key('gym-gallery-save')));
+    await tester.pumpAndSettle();
+    expect(api.gallerySaveCalls, 1);
+    expect(api.savedManifest?['items'], isA<List>());
+    expect((api.savedManifest!['items'] as List).first['imageId'], 'image-2');
+    expect(api.savedFiles, isEmpty);
+    expect(find.text('Nesačuvane promjene'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }
@@ -1220,6 +1275,13 @@ Future<void> _openGymWizardAtLocation(WidgetTester tester) async {
     find.widgetWithText(TextFormField, 'Opis'),
     'Potpun opis testne teretane.',
   );
+  await tester.enterText(find.byKey(const Key('gym-admin-search')), 'owner');
+  await tester.pump(const Duration(milliseconds: 350));
+  await tester.pump();
+  await tester.ensureVisible(find.text('Owner Account'));
+  await tester.pump();
+  await tester.tap(find.text('Owner Account'));
+  await tester.pump();
   await tester.tap(find.byKey(const Key('gym-create-continue')));
   await tester.pumpAndSettle();
 
@@ -1410,6 +1472,10 @@ class _DelayedReportingApi extends _ReportingApi {
 class _GymGalleryApi extends ApiClient {
   _GymGalleryApi() : super(_TestTokens());
 
+  int gallerySaveCalls = 0;
+  Map<String, dynamic>? savedManifest;
+  List<MultipartUploadPart> savedFiles = const [];
+
   @override
   Future<Object?> get(
     String path, {
@@ -1470,6 +1536,33 @@ class _GymGalleryApi extends ApiClient {
     }
     throw StateError('Unexpected page request: $path');
   }
+
+  @override
+  Future<Object?> putMultipart(
+    String path, {
+    required Map<String, String> fields,
+    required List<MultipartUploadPart> files,
+  }) async {
+    gallerySaveCalls++;
+    savedManifest = Map<String, dynamic>.from(
+      jsonDecode(fields['manifest']!) as Map,
+    );
+    savedFiles = files;
+    final items = savedManifest!['items'] as List;
+    return {
+      'maximumImages': 5,
+      'images': [
+        for (var index = 0; index < items.length; index++)
+          {
+            'id': (items[index] as Map)['imageId'],
+            'imageUrl': null,
+            'sortOrder': index,
+            'isPrimary': index == 0,
+            'concurrencyToken': 'saved-$index',
+          },
+      ],
+    };
+  }
 }
 
 class _CentralAdminApi extends ApiClient {
@@ -1479,6 +1572,7 @@ class _CentralAdminApi extends ApiClient {
     this.creationConflictCode,
     this.successfulActivationWithRefreshFailure = false,
     this.reverseUnavailable = false,
+    this.gymTotalCount = 1,
   }) : super(_TestTokens());
 
   final String? assignmentConflictCode;
@@ -1486,6 +1580,8 @@ class _CentralAdminApi extends ApiClient {
   final String? creationConflictCode;
   final bool successfulActivationWithRefreshFailure;
   final bool reverseUnavailable;
+  final int gymTotalCount;
+  final List<Map<String, Object?>> gymQueries = [];
   Map<String, Object?>? lastLocationQuery;
   Map<String, Object?>? lastReverseQuery;
   Map<String, dynamic>? assignmentBody;
@@ -1499,6 +1595,7 @@ class _CentralAdminApi extends ApiClient {
     Map<String, Object?> query = const {},
   }) async {
     if (path == '/api/admin/gyms') {
+      gymQueries.add(Map<String, Object?>.from(query));
       if (successfulActivationWithRefreshFailure && activationAttempts > 0) {
         throw ApiProblem(
           status: 503,
@@ -1521,6 +1618,7 @@ class _CentralAdminApi extends ApiClient {
             'address': 'Testna 1',
             'cityName': 'Sarajevo',
             'status': 0,
+            'memberCount': 12,
             'activeGymAdminCount': hasAdmin ? 1 : 0,
             'canActivate':
                 activationReady ||
@@ -1535,7 +1633,7 @@ class _CentralAdminApi extends ApiClient {
         ],
         page: 1,
         pageSize: 50,
-        totalCount: 1,
+        totalCount: gymTotalCount,
       );
     }
     if (path == '/api/admin/reference-data/countries') {

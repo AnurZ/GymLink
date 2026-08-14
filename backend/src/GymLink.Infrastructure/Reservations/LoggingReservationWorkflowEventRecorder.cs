@@ -4,6 +4,7 @@ using GymLink.Application.Messaging;
 using GymLink.Application.Reservations;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
+using GymLink.Domain.Reservations;
 using GymLink.Domain.Trainers;
 using GymLink.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -20,61 +21,49 @@ internal sealed class LoggingReservationWorkflowEventRecorder(
         ReservationWorkflowEventIntent intent,
         CancellationToken cancellationToken)
     {
-        var recipients = new HashSet<Guid>();
         var reservation = dbContext.AppointmentReservations.Local
             .FirstOrDefault(x => x.Id == intent.TargetId);
-        reservation ??= await dbContext.AppointmentReservations
-            .IgnoreQueryFilters()
+        reservation ??= await dbContext.AppointmentReservations.IgnoreQueryFilters()
             .SingleOrDefaultAsync(x => x.Id == intent.TargetId, cancellationToken);
-        if (reservation is not null)
-        {
-            recipients.Add(reservation.MemberUserId);
-            var trainerUserId = await dbContext.TrainerProfiles
-                .IgnoreQueryFilters()
-                .Where(x => x.Id == reservation.TrainerProfileId)
-                .Select(x => (Guid?)x.UserId)
-                .SingleOrDefaultAsync(cancellationToken);
-            if (trainerUserId.HasValue)
-            {
-                recipients.Add(trainerUserId.Value);
-            }
-        }
+        var details = reservation is null
+            ? null
+            : await LoadReservationDetailsAsync(reservation, cancellationToken);
 
-        if (intent.Name == "review.trainer_created")
-        {
-            var trainerProfileId = dbContext.Reviews.Local
-                .FirstOrDefault(x => x.Id == intent.TargetId)?.TrainerProfileId;
-            if (trainerProfileId.HasValue)
-            {
-                var trainerUserId = await dbContext.TrainerProfiles
-                    .IgnoreQueryFilters()
-                    .Where(x => x.Id == trainerProfileId.Value)
-                    .Select(x => (Guid?)x.UserId)
-                    .SingleOrDefaultAsync(cancellationToken);
-                if (trainerUserId.HasValue)
-                {
-                    recipients.Add(trainerUserId.Value);
-                }
-            }
-        }
-
-        var administrators = await dbContext.UserGymAssignments
-            .IgnoreQueryFilters()
-            .Where(x =>
-                x.TenantId == intent.TenantId &&
-                x.Role == RoleNames.GymAdmin &&
-                x.Status == AssignmentStatus.Active)
+        var administrators = await dbContext.UserGymAssignments.IgnoreQueryFilters()
+            .Where(x => x.TenantId == intent.TenantId &&
+                        x.Role == RoleNames.GymAdmin &&
+                        x.Status == AssignmentStatus.Active)
             .Select(x => x.UserId)
             .ToListAsync(cancellationToken);
-        recipients.UnionWith(administrators);
-        if (recipients.Count == 0)
+        var recipients = new HashSet<Guid>(administrators);
+        if (details is not null)
         {
-            recipients.Add(intent.ActorUserId);
+            recipients.Add(reservation!.MemberUserId);
+            recipients.Add(details.TrainerUserId);
         }
+        else if (intent.Name == "review.trainer_created")
+        {
+            var review = dbContext.Reviews.Local.FirstOrDefault(x => x.Id == intent.TargetId);
+            if (review is not null)
+            {
+                var trainerUserId = await dbContext.TrainerProfiles.IgnoreQueryFilters()
+                    .Where(x => x.Id == review.TrainerProfileId)
+                    .Select(x => (Guid?)x.UserId).SingleOrDefaultAsync(cancellationToken);
+                if (trainerUserId.HasValue) recipients.Add(trainerUserId.Value);
+            }
+        }
+        if (recipients.Count == 0) recipients.Add(intent.ActorUserId);
 
-        var text = await ResolveTextAsync(intent, reservation, cancellationToken);
         foreach (var recipient in recipients)
         {
+            var role = details is null || administrators.Contains(recipient)
+                ? NotificationRole.GymAdmin
+                : recipient == reservation!.MemberUserId
+                    ? NotificationRole.Member
+                    : NotificationRole.Trainer;
+            var text = details is not null
+                ? FormatReservation(intent.Name, details, role)
+                : await FormatNonReservationAsync(intent, cancellationToken);
             outbox.AddNotification(new(
                 recipient,
                 intent.TenantId,
@@ -92,72 +81,124 @@ internal sealed class LoggingReservationWorkflowEventRecorder(
         }
     }
 
-    private async Task<string> ResolveTextAsync(
-        ReservationWorkflowEventIntent intent,
-        GymLink.Domain.Reservations.AppointmentReservation? reservation,
-        CancellationToken cancellationToken)
+    private async Task<ReservationNotificationDetails> LoadReservationDetailsAsync(
+        AppointmentReservation reservation,
+        CancellationToken cancellationToken) =>
+        await (
+            from trainer in dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
+            join trainerUser in dbContext.UserProfiles.AsNoTracking() on trainer.UserId equals trainerUser.Id
+            join offering in dbContext.TrainerServiceOfferings.IgnoreQueryFilters().AsNoTracking()
+                on reservation.TrainerServiceOfferingId equals offering.Id
+            from member in dbContext.UserProfiles.AsNoTracking()
+                .Where(x => x.Id == reservation.MemberUserId)
+            from gym in dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
+                .Where(x => x.TenantId == reservation.TenantId)
+            where trainer.Id == reservation.TrainerProfileId
+            select new ReservationNotificationDetails(
+                member.DisplayName,
+                trainerUser.DisplayName,
+                trainer.UserId,
+                gym.Name,
+                offering.Name,
+                reservation.StartsAtUtc,
+                reservation.Status,
+                reservation.CancellationReason))
+        .SingleAsync(cancellationToken);
+
+    internal static string FormatReservation(
+        string eventName,
+        ReservationNotificationDetails details,
+        NotificationRole role)
     {
-        if (intent.Name != "reservation.confirmed_pay_in_person" || reservation is null)
+        var local = Sarajevo(details.StartsAtUtc);
+        var date = local.ToString("dd.MM.yyyy.", CultureInfo.GetCultureInfo("bs-BA"));
+        var time = local.ToString("HH:mm", CultureInfo.InvariantCulture);
+        var status = eventName switch
         {
-            return Text(intent.Name);
-        }
-
-        var details = await (
-                from trainer in dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
-                join trainerUser in dbContext.UserProfiles.AsNoTracking()
-                    on trainer.UserId equals trainerUser.Id
-                join offering in dbContext.TrainerServiceOfferings
-                    .IgnoreQueryFilters()
-                    .AsNoTracking()
-                    on trainer.Id equals offering.TrainerProfileId
-                from member in dbContext.UserProfiles.AsNoTracking()
-                    .Where(x => x.Id == reservation.MemberUserId)
-                where trainer.Id == reservation.TrainerProfileId &&
-                      offering.Id == reservation.TrainerServiceOfferingId
-                select new ReservationNotificationDetails(
-                    member.DisplayName,
-                    trainerUser.DisplayName,
-                    offering.Name,
-                    reservation.StartsAtUtc))
-            .SingleOrDefaultAsync(cancellationToken);
-        if (details is null)
+            "reservation.created" => "zakazan",
+            "reservation.confirmed_pay_in_person" => "potvrđen",
+            _ => details.Status switch
+            {
+                ReservationStatus.Confirmed => "potvrđen",
+                ReservationStatus.Completed => "završen",
+                ReservationStatus.Cancelled => "otkazan",
+                _ => "kreiran i čeka plaćanje",
+            },
+        };
+        var reason = string.IsNullOrWhiteSpace(details.Reason)
+            ? string.Empty
+            : $" Razlog: {details.Reason}";
+        return role switch
         {
-            return "Termin je potvrđen.";
-        }
-
-        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(
-            TrainerAvailabilitySchedule.SarajevoTimeZoneId);
-        var localStart = TimeZoneInfo.ConvertTimeFromUtc(details.StartsAtUtc, timeZone);
-        var formatted = localStart.ToString(
-            "dd.MM.yyyy. 'u' HH:mm",
-            CultureInfo.GetCultureInfo("bs-BA"));
-        return $"Termin za korisnika {details.MemberName} kod trenera " +
-            $"{details.TrainerName} je potvrđen: {details.OfferingName}, {formatted}.";
+            NotificationRole.Member =>
+                $"{details.GymName}: Termin kod trenera {details.TrainerName}: {details.OfferingName}, {date} u {time}, je {status}.{reason}",
+            NotificationRole.Trainer =>
+                $"Termin sa korisnikom {details.MemberName}: {details.OfferingName}, {date} u {time}, je {status}.{reason}",
+            _ =>
+                $"Termin korisnika {details.MemberName} kod trenera {details.TrainerName}: {details.OfferingName}, {date} u {time}, je {status}.{reason}",
+        };
     }
 
-    private static string Title(string name) =>
-        name.StartsWith("availability", StringComparison.Ordinal)
-            ? "Dostupnost trenera"
-            : name.StartsWith("review", StringComparison.Ordinal)
-                ? "Nova recenzija"
-                : name == "reservation.confirmed_pay_in_person"
-                    ? "Termin potvrđen"
-                    : "Rezervacija";
-
-    private static string Text(string name) =>
-        name switch
+    private async Task<string> FormatNonReservationAsync(
+        ReservationWorkflowEventIntent intent,
+        CancellationToken cancellationToken)
+    {
+        var gymName = await dbContext.Gyms.IgnoreQueryFilters()
+            .Where(x => x.TenantId == intent.TenantId)
+            .Select(x => x.Name).SingleOrDefaultAsync(cancellationToken) ?? "teretani";
+        if (intent.Name == "review.trainer_created")
         {
-            "reservation.created" => "Kreirana je nova rezervacija termina.",
-            "reservation.confirmed_pay_in_person" => "Termin je potvrđen.",
-            "reservation.status_changed" => "Status rezervacije je promijenjen.",
-            "review.trainer_created" => "Objavljena je nova recenzija trenera.",
-            "review.gym_created" => "Objavljena je nova recenzija teretane.",
-            _ => "Dostupnost trenera je ažurirana.",
-        };
+            var review = dbContext.Reviews.Local.FirstOrDefault(x => x.Id == intent.TargetId)
+                ?? await dbContext.Reviews.IgnoreQueryFilters().AsNoTracking()
+                    .SingleAsync(x => x.Id == intent.TargetId, cancellationToken);
+            var names = await (
+                from trainer in dbContext.TrainerProfiles.IgnoreQueryFilters()
+                from trainerUser in dbContext.UserProfiles.Where(x => x.Id == trainer.UserId)
+                from reviewer in dbContext.UserProfiles.Where(x => x.Id == review.ReviewerUserId)
+                where trainer.Id == review.TrainerProfileId
+                select new { Trainer = trainerUser.DisplayName, Reviewer = reviewer.DisplayName })
+                .SingleAsync(cancellationToken);
+            return $"{names.Reviewer} je ocijenio trenera {names.Trainer} sa {review.Rating}/5 u teretani {gymName}.";
+        }
+        if (intent.Name == "review.gym_created")
+        {
+            var review = dbContext.GymReviews.Local.FirstOrDefault(x => x.Id == intent.TargetId)
+                ?? await dbContext.GymReviews.IgnoreQueryFilters().AsNoTracking()
+                    .SingleAsync(x => x.Id == intent.TargetId, cancellationToken);
+            var reviewer = await dbContext.UserProfiles.Where(x => x.Id == review.ReviewerUserId)
+                .Select(x => x.DisplayName).SingleAsync(cancellationToken);
+            return $"{reviewer} je ocijenio teretanu {gymName} sa {review.Rating}/5.";
+        }
+        var trainerId = dbContext.TrainerAvailabilitySlots.Local
+            .FirstOrDefault(x => x.Id == intent.TargetId)?.TrainerProfileId
+            ?? dbContext.TrainerAvailabilitySchedules.Local
+                .FirstOrDefault(x => x.Id == intent.TargetId)?.TrainerProfileId;
+        var trainerName = trainerId.HasValue
+            ? await (from trainer in dbContext.TrainerProfiles.IgnoreQueryFilters()
+                     join user in dbContext.UserProfiles on trainer.UserId equals user.Id
+                     where trainer.Id == trainerId
+                     select user.DisplayName).SingleOrDefaultAsync(cancellationToken)
+            : null;
+        return $"Dostupnost trenera {trainerName ?? "trenera"} u teretani {gymName} je ažurirana.";
+    }
 
-    private sealed record ReservationNotificationDetails(
+    private static DateTime Sarajevo(DateTime utc) => TimeZoneInfo.ConvertTimeFromUtc(
+        utc,
+        TimeZoneInfo.FindSystemTimeZoneById(TrainerAvailabilitySchedule.SarajevoTimeZoneId));
+
+    private static string Title(string name) =>
+        name.StartsWith("availability", StringComparison.Ordinal) ? "Dostupnost trenera" :
+        name.StartsWith("review", StringComparison.Ordinal) ? "Nova recenzija" : "Rezervacija";
+
+    internal enum NotificationRole { Member, Trainer, GymAdmin }
+
+    internal sealed record ReservationNotificationDetails(
         string MemberName,
         string TrainerName,
+        Guid TrainerUserId,
+        string GymName,
         string OfferingName,
-        DateTime StartsAtUtc);
+        DateTime StartsAtUtc,
+        ReservationStatus Status,
+        string? Reason);
 }
