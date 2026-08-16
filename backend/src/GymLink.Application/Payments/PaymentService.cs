@@ -4,6 +4,7 @@ using GymLink.Application.Identity;
 using GymLink.Application.Messaging;
 using GymLink.Application.Memberships;
 using GymLink.Application.Recommendations;
+using GymLink.Application.Reservations;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Memberships;
@@ -25,6 +26,7 @@ internal sealed class PaymentService(
     IConversationRealtimeNotifier conversationNotifier,
     IMemberAssignmentActivator memberAssignmentActivator,
     IRecommendationActivityRecorder recommendationActivity,
+    IReservationWorkflowEventRecorder reservationEvents,
     TimeProvider timeProvider,
     IIdentityAccountManager? identityAccounts = null) : IPaymentService
 {
@@ -484,7 +486,20 @@ internal sealed class PaymentService(
                             now);
                         provisionedConversation =
                             await ActivateTargetAsync(payment, now, ct);
-                        await AddPaidNotificationAsync(payment, now, ct);
+                        if (payment.Purpose == PaymentPurpose.TrainerReservation)
+                        {
+                            await reservationEvents.RecordAsync(new(
+                                "reservation.confirmed_stripe",
+                                payment.TenantId,
+                                payment.UserId,
+                                payment.TargetId,
+                                now),
+                                ct);
+                        }
+                        else
+                        {
+                            await AddMembershipPaidNotificationAsync(payment, now, ct);
+                        }
                     }
                 }
                 else if (IsExpired(providerEvent, session) &&
@@ -600,29 +615,23 @@ internal sealed class PaymentService(
         }
     }
 
-    private async Task AddPaidNotificationAsync(
+    private async Task AddMembershipPaidNotificationAsync(
         Payment payment,
         DateTime now,
         CancellationToken cancellationToken)
     {
-        var text = payment.Purpose == PaymentPurpose.Membership
-            ? await MembershipPaymentTextAsync(
-                payment.TargetId,
-                payment.Amount,
-                payment.Currency,
-                cancellationToken)
-            : await ReservationPaymentTextAsync(
-                await dbContext.AppointmentReservations.IgnoreQueryFilters()
-                    .SingleAsync(x => x.Id == payment.TargetId, cancellationToken),
-                $"je uspješno plaćen ({payment.Amount:0.##} {payment.Currency}) i potvrđen.",
-                cancellationToken);
+        var text = await MembershipPaymentTextAsync(
+            payment.TargetId,
+            payment.Amount,
+            payment.Currency,
+            cancellationToken);
         outbox.AddNotification(new(
             payment.UserId,
             payment.TenantId,
             "payment",
             "Plaćeno",
             text,
-            payment.Purpose == PaymentPurpose.Membership ? "membership" : "reservation",
+            "membership",
             payment.TargetId,
             now,
             requestMetadata.CorrelationId));

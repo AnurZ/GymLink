@@ -222,14 +222,36 @@ public sealed class Phase5ReservationApiTests
             var pendingMemberReservations =
                 await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
                     "/api/me/reservations?page=1&pageSize=20");
-            Assert.DoesNotContain(
+            Assert.Contains(
                 pendingMemberReservations!.Items,
-                item => item.Id == reservation.Id);
+                item => item.Id == reservation.Id &&
+                        item.Status == ReservationStatus.Pending &&
+                        item.AllowedActions.Contains("pay"));
             var explicitlyPendingMemberReservations =
                 await setupClient.GetFromJsonAsync<PagedResult<ReservationDto>>(
                     $"/api/me/reservations?status={(int)ReservationStatus.Pending}" +
                     "&page=1&pageSize=20");
-            Assert.Empty(explicitlyPendingMemberReservations!.Items);
+            Assert.Contains(
+                explicitlyPendingMemberReservations!.Items,
+                item => item.Id == reservation.Id);
+
+            var adjacentResponse = await setupClient.PostAsJsonAsync(
+                "/api/reservations",
+                new
+                {
+                    startsAtUtc = start.AddMinutes(offering.DurationMinutes),
+                    trainerServiceOfferingId = offering.Id,
+                });
+            adjacentResponse.EnsureSuccessStatusCode();
+            var adjacent = await adjacentResponse.Content
+                .ReadFromJsonAsync<ReservationDto>();
+            Assert.NotNull(adjacent);
+            Assert.Equal(ReservationStatus.Pending, adjacent.Status);
+            Assert.Equal(reservation.EndsAtUtc, adjacent.StartsAtUtc);
+            var cancelAdjacent = await setupClient.PostAsJsonAsync(
+                $"/api/me/reservations/{adjacent.Id}/cancel",
+                new { concurrencyToken = adjacent.ConcurrencyToken });
+            cancelAdjacent.EnsureSuccessStatusCode();
 
             Authorize(setupClient, trainerSession);
             var pendingTrainerReservations =
@@ -246,6 +268,22 @@ public sealed class Phase5ReservationApiTests
             Assert.DoesNotContain(
                 pendingTenantReservations!.Items,
                 item => item.Id == reservation.Id);
+
+            await using (var beforePayment = CreateContext(connectionString))
+            {
+                var payloads = await beforePayment.OutboxMessages
+                    .Where(x => x.MessageType == "notification.requested.v1")
+                    .Select(x => x.Payload)
+                    .ToListAsync();
+                Assert.DoesNotContain(
+                    payloads,
+                    payload =>
+                    {
+                        using var document = JsonDocument.Parse(payload);
+                        var notification = document.RootElement.GetProperty("payload");
+                        return notification.GetProperty("targetId").GetGuid() == reservation.Id;
+                    });
+            }
 
             Authorize(setupClient, otherAdmin);
             Assert.Equal(
@@ -274,6 +312,38 @@ public sealed class Phase5ReservationApiTests
             var paymentReturn = await setupClient.GetAsync(
                 $"/payments/stripe/success?session_id={providerSessionId}");
             paymentReturn.EnsureSuccessStatusCode();
+
+            await using (var afterPayment = CreateContext(connectionString))
+            {
+                var payloads = await afterPayment.OutboxMessages
+                    .Where(x => x.MessageType == "notification.requested.v1")
+                    .Select(x => x.Payload)
+                    .ToListAsync();
+                var recipients = payloads.Select(payload =>
+                    {
+                        using var document = JsonDocument.Parse(payload);
+                        var notification = document.RootElement.GetProperty("payload");
+                        return new
+                        {
+                            TargetId = notification.GetProperty("targetId").GetGuid(),
+                            Category = notification.GetProperty("category").GetString(),
+                            Recipient = notification.GetProperty("recipientUserId").GetGuid(),
+                        };
+                    })
+                    .Where(x =>
+                        x.TargetId == reservation.Id &&
+                        x.Category == "reservation.confirmed")
+                    .Select(x => x.Recipient)
+                    .ToHashSet();
+                Assert.Equal(
+                    new HashSet<Guid>
+                    {
+                        winningSession.User.Id,
+                        trainerSession.User.Id,
+                        admin.User.Id,
+                    },
+                    recipients);
+            }
 
             Authorize(setupClient, admin);
             var confirmed = await setupClient.GetFromJsonAsync<ReservationDto>(
@@ -415,7 +485,7 @@ public sealed class Phase5ReservationApiTests
                         return notification.GetProperty("recipientUserId").GetGuid() ==
                                 inPersonSession.User.Id &&
                             notification.GetProperty("category").GetString() ==
-                                "reservation.confirmed_pay_in_person" &&
+                                "reservation.confirmed" &&
                             notification.GetProperty("targetId").GetGuid() ==
                                 inPerson.Id &&
                             text.Contains(trainer.DisplayName) &&
@@ -524,13 +594,13 @@ public sealed class Phase5ReservationApiTests
                     """);
             }
 
-            Authorize(setupClient, trainerSession);
-            var trainerDetail = await setupClient.GetFromJsonAsync<ReservationDto>(
-                $"/api/me/trainer-reservations/{reservation.Id}");
-            Assert.NotNull(trainerDetail);
+            Authorize(setupClient, admin);
+            var adminDetail = await setupClient.GetFromJsonAsync<ReservationDto>(
+                $"/api/tenant/reservations/{reservation.Id}");
+            Assert.NotNull(adminDetail);
             var complete = await setupClient.PostAsJsonAsync(
                 $"/api/tenant/reservations/{reservation.Id}/complete",
-                new { concurrencyToken = trainerDetail.ConcurrencyToken });
+                new { concurrencyToken = adminDetail.ConcurrencyToken });
             complete.EnsureSuccessStatusCode();
             var completed = await complete.Content.ReadFromJsonAsync<ReservationDto>();
             Assert.NotNull(completed);

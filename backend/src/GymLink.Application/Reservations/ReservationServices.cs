@@ -1026,15 +1026,16 @@ internal sealed class ReservationService(
                             ? await conversationProvisioner
                                 .EnsureForConfirmedReservationAsync(entity, ct)
                             : null;
-                    await eventRecorder.RecordAsync(new(
-                        request.PaymentMethod == ReservationPaymentMethod.PayInPerson
-                            ? "reservation.confirmed_pay_in_person"
-                            : "reservation.created",
-                        entity.TenantId,
-                        memberId,
-                        entity.Id,
-                        now),
-                        ct);
+                    if (request.PaymentMethod == ReservationPaymentMethod.PayInPerson)
+                    {
+                        await eventRecorder.RecordAsync(new(
+                            "reservation.confirmed_pay_in_person",
+                            entity.TenantId,
+                            memberId,
+                            entity.Id,
+                            now),
+                            ct);
+                    }
                     await dbContext.SaveChangesAsync(ct);
                     return (Reservation: entity, Conversation: conversation);
                 }
@@ -1249,13 +1250,6 @@ internal sealed class ReservationService(
     {
         if (tenantContext.TenantRole == RoleNames.GymAdmin)
         {
-            if (action == ReservationAction.Complete)
-            {
-                throw new AuthorizationDeniedException(
-                    "trainer_completion_required",
-                    "Only the assigned Trainer may complete a reservation.");
-            }
-
             return;
         }
 
@@ -1345,10 +1339,19 @@ internal sealed class ReservationService(
 
         if (!reservationId.HasValue)
         {
-            query = query.Where(x =>
-                x.Reservation.Status != ReservationStatus.Pending &&
-                (!x.Reservation.PaymentDueAtUtc.HasValue ||
-                 x.Reservation.PaymentId.HasValue));
+            var now = timeProvider.GetUtcNow().UtcDateTime;
+            query = memberId.HasValue
+                ? query.Where(x =>
+                    (x.Reservation.Status != ReservationStatus.Pending &&
+                     (!x.Reservation.PaymentDueAtUtc.HasValue ||
+                      x.Reservation.PaymentId.HasValue)) ||
+                    (x.Reservation.Status == ReservationStatus.Pending &&
+                     x.Reservation.PaymentDueAtUtc.HasValue &&
+                     x.Reservation.PaymentDueAtUtc > now))
+                : query.Where(x =>
+                    x.Reservation.Status != ReservationStatus.Pending &&
+                    (!x.Reservation.PaymentDueAtUtc.HasValue ||
+                     x.Reservation.PaymentId.HasValue));
         }
 
         if (request.Status.HasValue)

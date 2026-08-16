@@ -43,7 +43,7 @@ public sealed class NotificationTextTests
     }
 
     [Theory]
-    [InlineData("reservation.created", ReservationStatus.Pending, "zakazan")]
+    [InlineData("reservation.confirmed_stripe", ReservationStatus.Confirmed, "uspješno plaćen i potvrđen")]
     [InlineData("reservation.confirmed_pay_in_person", ReservationStatus.Confirmed, "potvrđen")]
     [InlineData("reservation.status_changed", ReservationStatus.Completed, "završen")]
     [InlineData("reservation.status_changed", ReservationStatus.Cancelled, "otkazan")]

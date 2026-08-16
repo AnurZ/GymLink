@@ -67,7 +67,7 @@ internal sealed class LoggingReservationWorkflowEventRecorder(
             outbox.AddNotification(new(
                 recipient,
                 intent.TenantId,
-                intent.Name,
+                Category(intent.Name, reservation?.Status),
                 Title(intent.Name),
                 text,
                 intent.Name.StartsWith("availability", StringComparison.Ordinal)
@@ -115,7 +115,7 @@ internal sealed class LoggingReservationWorkflowEventRecorder(
         var time = local.ToString("HH:mm", CultureInfo.InvariantCulture);
         var status = eventName switch
         {
-            "reservation.created" => "zakazan",
+            "reservation.confirmed_stripe" => "uspješno plaćen i potvrđen",
             "reservation.confirmed_pay_in_person" => "potvrđen",
             _ => details.Status switch
             {
@@ -185,6 +185,18 @@ internal sealed class LoggingReservationWorkflowEventRecorder(
     private static string Title(string name) =>
         name.StartsWith("availability", StringComparison.Ordinal) ? "Dostupnost trenera" :
         name.StartsWith("review", StringComparison.Ordinal) ? "Nova recenzija" : "Rezervacija";
+
+    private static string Category(string eventName, ReservationStatus? status) =>
+        eventName switch
+        {
+            "reservation.confirmed_stripe" or "reservation.confirmed_pay_in_person" =>
+                "reservation.confirmed",
+            "reservation.status_changed" when status == ReservationStatus.Completed =>
+                "reservation.completed",
+            "reservation.status_changed" when status == ReservationStatus.Cancelled =>
+                "reservation.cancelled",
+            _ => eventName,
+        };
 
     internal enum NotificationRole { Member, Trainer, GymAdmin }
 

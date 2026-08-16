@@ -138,7 +138,7 @@ public sealed record CreateTrainerRequest : TrainerWriteRequest
 {
     public Guid UserId { get; init; }
 
-    [Required, StringLength(1000, MinimumLength = 2)]
+    [Required, StringLength(200, MinimumLength = 2)]
     public required string Reason { get; init; }
 }
 

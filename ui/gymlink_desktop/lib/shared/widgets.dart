@@ -103,6 +103,7 @@ Future<bool> confirmAction(
   BuildContext context, {
   required String title,
   required String message,
+  String action = 'Potvrdi',
 }) async =>
     await showDialog<bool>(
       context: context,
@@ -116,7 +117,7 @@ Future<bool> confirmAction(
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Potvrdi'),
+            child: Text(action),
           ),
         ],
       ),
@@ -208,7 +209,7 @@ class _ReasonDialogState extends State<_ReasonDialog> {
             autofocus: true,
             minLines: 2,
             maxLines: 4,
-            maxLength: 1000,
+            maxLength: 200,
             decoration: const InputDecoration(
               labelText: 'Razlog',
               helperText: 'Najmanje 2 znaka',
@@ -223,7 +224,7 @@ class _ReasonDialogState extends State<_ReasonDialog> {
             validator: (value) {
               final length = value?.trim().length ?? 0;
               if (length < 2) return 'Unesite razlog (najmanje 2 znaka).';
-              if (length > 1000) return 'Najviše 1000 znakova.';
+              if (length > 200) return 'Najviše 200 znakova.';
               return _serverProblem?.fieldError('Reason');
             },
             onFieldSubmitted: (_) => _submit(),

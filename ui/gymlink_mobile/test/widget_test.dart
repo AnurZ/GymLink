@@ -179,7 +179,7 @@ void main() {
     expect(item['isRead'], false);
   });
 
-  testWidgets('completed reservation notification opens reviewable details', (
+  testWidgets('completed reservation notification opens review dialog', (
     tester,
   ) async {
     FlutterSecureStorage.setMockInitialValues({});
@@ -258,8 +258,83 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(reservationLoads, 1);
-    expect(find.byType(ReservationDetailsScreen), findsOneWidget);
-    expect(find.text('Ocijeni trenera'), findsOneWidget);
+    expect(find.byType(TrainerReviewDialog), findsOneWidget);
+  });
+
+  testWidgets('trainer reservation notification opens appointment details', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final auth = AuthController();
+    final api = ApiClient(
+      auth,
+      baseUrlOverride: 'https://api.test',
+      httpClient: MockClient((request) async {
+        if (request.url.path == '/api/auth/login') {
+          return _jsonResponse({
+            'accessToken': 'access-token',
+            'refreshToken': 'refresh-token',
+            'user': {
+              'id': 'trainer-user-1',
+              'displayName': 'Trener Test',
+              'role': 'Trainer',
+            },
+          });
+        }
+        if (request.url.path == '/api/me/trainer-reservations/reservation-1') {
+          return _jsonResponse({
+            'id': 'reservation-1',
+            'memberName': 'Član Test',
+            'gymName': 'GymLink Centar',
+            'offeringName': 'Individualni trening',
+            'startsAtUtc': '2026-08-01T10:00:00Z',
+            'durationMinutes': 60,
+            'paymentMethod': 1,
+            'status': 1,
+            'allowedActions': <String>[],
+            'concurrencyToken': 'token-1',
+          });
+        }
+        return _jsonResponse({}, statusCode: 404);
+      }),
+    );
+    auth.attachApi(api);
+    await auth.login('trainer', 'Test123!');
+    addTearDown(api.close);
+    addTearDown(auth.dispose);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<ApiClient>.value(value: api),
+          ChangeNotifierProvider.value(value: auth),
+        ],
+        child: MaterialApp(
+          home: NotificationDetailScreen(
+            item: {
+              'id': 'notice-1',
+              'category': 'reservation.confirmed',
+              'title': 'Rezervacija',
+              'text': 'Termin je potvrđen.',
+              'createdAtUtc': '2026-08-01T09:00:00Z',
+              'isRead': true,
+              'targetType': 'reservation',
+              'targetId': 'reservation-1',
+              'concurrencyToken': 'notice-token',
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const Key('notification-open-trainer-reservation')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TrainerAppointmentDetails), findsOneWidget);
+    expect(find.text('Detalji termina'), findsOneWidget);
   });
 
   testWidgets('trainer image avatar falls back to initials', (tester) async {
@@ -1083,7 +1158,7 @@ void main() {
   });
 
   testWidgets(
-    'Member Termini status filter omits Pending and keeps enum values',
+    'Member Termini status filter includes pending payment and keeps enum values',
     (tester) async {
       final requestedStatuses = <String?>[];
       final client = MockClient((request) async {
@@ -1113,7 +1188,7 @@ void main() {
 
       await tester.tap(find.byKey(const Key('reservation-status-filter')));
       await tester.pumpAndSettle();
-      expect(find.text('Pending'), findsNothing);
+      expect(find.text('Čeka plaćanje'), findsOneWidget);
       expect(find.text('Confirmed'), findsOneWidget);
       expect(find.text('Completed'), findsOneWidget);
       expect(find.text('Cancelled'), findsOneWidget);
@@ -1124,55 +1199,54 @@ void main() {
     },
   );
 
-  testWidgets(
-    'Termini details hide internal Stripe deadline and retry action',
-    (tester) async {
-      final client = MockClient((request) async {
-        return http.Response(
-          jsonEncode({
-            'id': 'pending-stripe-reservation',
-            'trainerName': 'Trener Test',
-            'gymName': 'GymLink Centar',
-            'offeringName': 'Individualni trening',
-            'startsAtUtc': '2026-08-01T10:00:00Z',
-            'durationMinutes': 60,
-            'price': 30,
-            'currency': 'BAM',
-            'paymentMethod': 0,
-            'paymentDueAtUtc': '2026-08-01T09:45:00Z',
-            'isPaid': false,
-            'status': 0,
-            'cancellationReason': null,
-            'canReview': false,
-            'allowedActions': ['pay'],
-          }),
-          200,
-          headers: {'content-type': 'application/json; charset=utf-8'},
-        );
-      });
-      final api = ApiClient(
-        _TestTokenSource(),
-        httpClient: client,
-        baseUrlOverride: 'http://test.local',
+  testWidgets('Termini details show active Stripe deadline and retry action', (
+    tester,
+  ) async {
+    final client = MockClient((request) async {
+      return http.Response(
+        jsonEncode({
+          'id': 'pending-stripe-reservation',
+          'trainerName': 'Trener Test',
+          'gymName': 'GymLink Centar',
+          'offeringName': 'Individualni trening',
+          'startsAtUtc': '2026-08-01T10:00:00Z',
+          'durationMinutes': 60,
+          'price': 30,
+          'currency': 'BAM',
+          'paymentMethod': 0,
+          'paymentDueAtUtc': '2999-08-01T09:45:00Z',
+          'isPaid': false,
+          'status': 0,
+          'cancellationReason': null,
+          'canReview': false,
+          'allowedActions': ['pay'],
+        }),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
       );
-      addTearDown(api.close);
-      await tester.pumpWidget(
-        Provider<ApiClient>.value(
-          value: api,
-          child: MaterialApp(
-            theme: buildGymLinkTheme(),
-            home: const ReservationDetailsScreen(
-              reservationId: 'pending-stripe-reservation',
-            ),
+    });
+    final api = ApiClient(
+      _TestTokenSource(),
+      httpClient: client,
+      baseUrlOverride: 'http://test.local',
+    );
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const ReservationDetailsScreen(
+            reservationId: 'pending-stripe-reservation',
           ),
         ),
-      );
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.textContaining('Platiti do'), findsNothing);
-      expect(find.text('Nastavi Stripe plaćanje'), findsNothing);
-    },
-  );
+    expect(find.textContaining('Platiti do'), findsOneWidget);
+    expect(find.text('Nastavi Stripe plaćanje'), findsOneWidget);
+  });
 
   testWidgets('Trainer Termini refresh shows a newly confirmed booking', (
     tester,

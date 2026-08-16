@@ -10,6 +10,7 @@ import '../../core/auth.dart';
 import '../../core/theme.dart';
 import '../chat/chat_screens.dart';
 import '../member/reservation_screen.dart';
+import '../trainer/trainer_screens.dart';
 import 'notification_controller.dart';
 
 class NotificationBell extends StatelessWidget {
@@ -252,6 +253,7 @@ class NotificationDetailScreen extends StatefulWidget {
 
 class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
   String? _readError;
+  bool _targetBusy = false;
 
   @override
   void initState() {
@@ -287,6 +289,86 @@ class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
       widget.item['category'] == 'reservation.completed' &&
       widget.item['targetType'] == 'reservation' &&
       widget.item['targetId'] != null;
+
+  bool get _canOpenTrainerReservation =>
+      context.read<AuthController>().session?.role == 'Trainer' &&
+      widget.item['category']?.toString().startsWith('reservation.') == true &&
+      widget.item['targetType'] == 'reservation' &&
+      widget.item['targetId'] != null;
+
+  Future<void> _openTrainerReservation() async {
+    if (_targetBusy) return;
+    setState(() => _targetBusy = true);
+    try {
+      final item = Map<String, dynamic>.from(
+        (await context.read<ApiClient>().get(
+              '/api/me/trainer-reservations/${widget.item['targetId']}',
+            ))!
+            as Map,
+      );
+      if (!mounted) return;
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => TrainerAppointmentDetails(item: item),
+        ),
+      );
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _targetBusy = false);
+    }
+  }
+
+  Future<void> _reviewCompletedReservation() async {
+    if (_targetBusy) return;
+    setState(() => _targetBusy = true);
+    try {
+      final reservationId = widget.item['targetId'].toString();
+      final reservation = Map<String, dynamic>.from(
+        (await context.read<ApiClient>().get(
+              '/api/me/reservations/$reservationId',
+            ))!
+            as Map,
+      );
+      if (!mounted) return;
+      if (reservation['canReview'] != true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Ovaj termin je već ocijenjen ili nije dostupan za ocjenjivanje.',
+            ),
+          ),
+        );
+        return;
+      }
+      final api = context.read<ApiClient>();
+      final saved = await showDialog<bool>(
+        context: context,
+        builder: (_) => TrainerReviewDialog(
+          onSubmit: (body) =>
+              api.post('/api/reservations/$reservationId/review', body: body),
+        ),
+      );
+      if (saved == true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Recenzija je objavljena.')),
+        );
+      }
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.firstFieldError ?? error.message)),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _targetBusy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -338,16 +420,18 @@ class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
           const SizedBox(height: 28),
           FilledButton.icon(
             key: const Key('notification-open-completed-reservation'),
-            onPressed: () => Navigator.push<void>(
-              context,
-              MaterialPageRoute(
-                builder: (_) => ReservationDetailsScreen(
-                  reservationId: widget.item['targetId'].toString(),
-                ),
-              ),
-            ),
+            onPressed: _targetBusy ? null : _reviewCompletedReservation,
+            icon: const Icon(Icons.star_outline),
+            label: const Text('Ocijeni'),
+          ),
+        ],
+        if (_canOpenTrainerReservation) ...[
+          const SizedBox(height: 28),
+          FilledButton.icon(
+            key: const Key('notification-open-trainer-reservation'),
+            onPressed: _targetBusy ? null : _openTrainerReservation,
             icon: const Icon(Icons.event_available_outlined),
-            label: const Text('Otvori termin'),
+            label: const Text('Idi na rezervaciju'),
           ),
         ],
       ],

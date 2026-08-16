@@ -963,7 +963,11 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
                         leading: Text('★ ${review['rating']}'),
                         title: Text(
                           review['comment']?.toString() ?? 'Bez komentara',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _showGymReviewDetails(context, review),
                       ),
                     ),
                   ),
@@ -1931,15 +1935,15 @@ class _ReviewDialogState extends State<_ReviewDialog> {
           const SizedBox(height: 14),
           TextFormField(
             controller: _comment,
-            maxLength: 2000,
+            maxLength: 300,
             maxLines: 4,
             decoration: const InputDecoration(
               labelText: 'Komentar (opcionalno)',
             ),
             onChanged: (_) => setState(() => _serverProblem = null),
             validator: (value) {
-              if ((value?.trim().length ?? 0) > 2000) {
-                return 'Najviše 2000 znakova.';
+              if ((value?.trim().length ?? 0) > 300) {
+                return 'Najviše 300 znakova.';
               }
               return _serverProblem?.fieldError('Comment');
             },
@@ -1964,3 +1968,42 @@ class _ReviewDialogState extends State<_ReviewDialog> {
     ],
   );
 }
+
+Future<void> _showGymReviewDetails(
+  BuildContext context,
+  Map<String, dynamic> review,
+) => showDialog<void>(
+  context: context,
+  builder: (context) {
+    final createdAt = DateTime.tryParse(
+      review['createdAtUtc']?.toString() ?? '',
+    );
+    return AlertDialog(
+      title: Text('Recenzija · ${review['rating']}/5'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            review['comment']?.toString().trim().isNotEmpty == true
+                ? review['comment'].toString()
+                : 'Bez komentara',
+          ),
+          if (createdAt != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              DateFormat('dd.MM.yyyy. HH:mm').format(createdAt.toLocal()),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Zatvori'),
+        ),
+      ],
+    );
+  },
+);

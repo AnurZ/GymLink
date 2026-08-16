@@ -31,7 +31,7 @@ public sealed record RoleAssignmentRequest
 
     public Guid? TenantId { get; init; }
 
-    [Required, StringLength(1000, MinimumLength = 2)]
+    [Required, StringLength(200, MinimumLength = 2)]
     public required string Reason { get; init; }
 }
 
@@ -40,7 +40,7 @@ public sealed record UserActionRequest
     [Required, MaxLength(320)]
     public required string Identifier { get; init; }
 
-    [Required, StringLength(1000, MinimumLength = 2)]
+    [Required, StringLength(200, MinimumLength = 2)]
     public required string Reason { get; init; }
 }
 

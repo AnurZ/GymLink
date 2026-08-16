@@ -363,7 +363,7 @@ class _TrainerCancellationReasonDialogState
           TextFormField(
             controller: _controller,
             autofocus: true,
-            maxLength: 1000,
+            maxLength: 200,
             maxLines: 3,
             decoration: const InputDecoration(labelText: 'Razlog'),
             onChanged: (_) {
@@ -377,7 +377,7 @@ class _TrainerCancellationReasonDialogState
             validator: (value) {
               final length = value?.trim().length ?? 0;
               if (length < 2) return 'Unesite razlog otkazivanja.';
-              if (length > 1000) return 'Najviše 1000 znakova.';
+              if (length > 200) return 'Najviše 200 znakova.';
               return _serverProblem?.fieldError('Reason');
             },
             onFieldSubmitted: (_) => _submit(),
@@ -1253,6 +1253,8 @@ class _TrainerReviewsScreenState extends State<TrainerReviewsScreen> {
                           ),
                           title: Text(
                             item['comment']?.toString() ?? 'Bez komentara',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                           subtitle: Text(
                             DateFormat('dd.MM.yyyy.').format(

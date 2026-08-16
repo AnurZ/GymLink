@@ -109,7 +109,7 @@ public record ReservationConcurrencyRequest
 
 public sealed record StaffCancellationRequest : ReservationConcurrencyRequest
 {
-    [Required, MaxLength(1000)]
+    [Required, StringLength(200, MinimumLength = 2)]
     public required string Reason { get; init; }
 }
 
@@ -142,7 +142,7 @@ public sealed record CreateReviewRequest
     [Range(1, 5)]
     public int Rating { get; init; }
 
-    [MaxLength(2000)]
+    [MaxLength(300)]
     public string? Comment { get; init; }
 }
 

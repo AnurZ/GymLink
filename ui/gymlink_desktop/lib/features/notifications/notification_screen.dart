@@ -156,98 +156,107 @@ class _NotificationScreenState extends State<NotificationScreen>
   }
 
   Future<void> _openDetails(Map<String, dynamic> item) async {
-    await showDialog<void>(
-      context: context,
-      builder: (_) => _NotificationDetailDialog(item: item),
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(builder: (_) => NotificationDetailScreen(item: item)),
     );
     if (mounted) await _load(reset: true);
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      title: const Text('Obavijesti'),
-      actions: [
-        TextButton(
-          onPressed:
-              _markingAll || !_items.any((item) => item['isRead'] != true)
-              ? null
-              : _markAllRead,
-          child: Text(
-            _markingAll ? 'Označavanje…' : 'Označi sve kao pročitano',
-          ),
+  Widget build(BuildContext context) => DefaultTabController(
+    length: 2,
+    initialIndex: _isRead == false ? 1 : 0,
+    child: Scaffold(
+      appBar: AppBar(
+        title: const Text('Obavijesti'),
+        bottom: TabBar.secondary(
+          tabs: const [
+            Tab(key: Key('notifications-all-tab'), text: 'Sve'),
+            Tab(key: Key('notifications-unread-tab'), text: 'Nepročitane'),
+          ],
+          onTap: (index) {
+            final next = index == 1 ? false : null;
+            if (_isRead == next) return;
+            setState(() => _isRead = next);
+            _load(reset: true);
+          },
         ),
-        const SizedBox(width: 16),
-      ],
-    ),
-    body: Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 900),
-        child: RefreshIndicator(
-          onRefresh: () => _load(reset: true),
-          child: ListView(
-            padding: const EdgeInsets.all(28),
-            children: [
-              SegmentedButton<bool?>(
-                segments: const [
-                  ButtonSegment(value: null, label: Text('Sve')),
-                  ButtonSegment(value: false, label: Text('Nepročitane')),
-                  ButtonSegment(value: true, label: Text('Pročitane')),
-                ],
-                selected: {_isRead},
-                onSelectionChanged: (value) {
-                  setState(() => _isRead = value.first);
-                  _load(reset: true);
-                },
-              ),
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Text(
-                    _error!,
-                    style: const TextStyle(color: GymLinkColors.danger),
-                  ),
-                ),
-              if (!_busy && _items.isEmpty && _error == null)
-                const Padding(
-                  padding: EdgeInsets.all(48),
-                  child: Center(child: Text('Nemate obavijesti.')),
-                ),
-              for (final item in _items)
-                Card(
-                  color: item['isRead'] == true
-                      ? null
-                      : GymLinkColors.blue.withValues(alpha: 0.08),
-                  child: ListTile(
-                    leading: const Icon(Icons.notifications_outlined),
-                    title: Text(item['title']?.toString() ?? 'Obavijest'),
-                    subtitle: Text(
-                      '${_notificationPreview(item['text'])}\n${_notificationDate(item['createdAtUtc'])}',
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: item['isRead'] == true
+      ),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 900),
+          child: RefreshIndicator(
+            onRefresh: () => _load(reset: true),
+            child: ListView(
+              padding: const EdgeInsets.all(28),
+              children: [
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    key: const Key('mark-all-notifications-read'),
+                    onPressed:
+                        _markingAll ||
+                            !_items.any((item) => item['isRead'] != true)
                         ? null
-                        : const Icon(Icons.circle, size: 10),
-                    onTap: () => _openDetails(item),
+                        : _markAllRead,
+                    child: _markingAll
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Označi sve kao pročitano'),
                   ),
                 ),
-              if (_hasMore)
-                TextButton(
-                  onPressed: _busy
-                      ? null
-                      : () {
-                          _page++;
-                          _load(reset: false);
-                        },
-                  child: const Text('Učitaj još'),
-                ),
-              if (_busy)
-                const Padding(
-                  padding: EdgeInsets.all(20),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-            ],
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: GymLinkColors.danger),
+                    ),
+                  ),
+                if (!_busy && _items.isEmpty && _error == null)
+                  const Padding(
+                    padding: EdgeInsets.all(48),
+                    child: Center(child: Text('Nemate obavijesti.')),
+                  ),
+                for (final item in _items)
+                  Card(
+                    color: item['isRead'] == true
+                        ? null
+                        : GymLinkColors.blue.withValues(alpha: 0.08),
+                    child: ListTile(
+                      leading: const Icon(Icons.notifications_outlined),
+                      title: Text(item['title']?.toString() ?? 'Obavijest'),
+                      subtitle: Text(
+                        '${_notificationPreview(item['text'])}\n${_notificationDate(item['createdAtUtc'])}',
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: item['isRead'] == true
+                          ? null
+                          : const Icon(Icons.circle, size: 10),
+                      onTap: () => _openDetails(item),
+                    ),
+                  ),
+                if (_hasMore)
+                  TextButton(
+                    onPressed: _busy
+                        ? null
+                        : () {
+                            _page++;
+                            _load(reset: false);
+                          },
+                    child: const Text('Učitaj još'),
+                  ),
+                if (_busy)
+                  const Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -255,17 +264,17 @@ class _NotificationScreenState extends State<NotificationScreen>
   );
 }
 
-class _NotificationDetailDialog extends StatefulWidget {
-  const _NotificationDetailDialog({required this.item});
+class NotificationDetailScreen extends StatefulWidget {
+  const NotificationDetailScreen({required this.item, super.key});
 
   final Map<String, dynamic> item;
 
   @override
-  State<_NotificationDetailDialog> createState() =>
-      _NotificationDetailDialogState();
+  State<NotificationDetailScreen> createState() =>
+      _NotificationDetailScreenState();
 }
 
-class _NotificationDetailDialogState extends State<_NotificationDetailDialog> {
+class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
   String? _readError;
   late final Map<String, dynamic> _item;
 
@@ -293,39 +302,47 @@ class _NotificationDetailDialogState extends State<_NotificationDetailDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(_item['title']?.toString() ?? 'Obavijest'),
-    content: SizedBox(
-      width: 560,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            _notificationDate(_item['createdAtUtc']),
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 18),
-          Text(
-            _item['text']?.toString() ?? '',
-            style: Theme.of(context).textTheme.bodyLarge,
-          ),
-          if (_readError != null) ...[
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Detalji obavijesti')),
+    body: Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: ListView(
+          padding: const EdgeInsets.all(32),
+          children: [
+            Icon(
+              Icons.notifications_outlined,
+              size: 48,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(height: 20),
+            Text(
+              _item['title']?.toString() ?? 'Obavijest',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _notificationDate(_item['createdAtUtc']),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             const SizedBox(height: 18),
             Text(
-              _readError!,
-              style: const TextStyle(color: GymLinkColors.danger),
+              _item['text']?.toString() ?? '',
+              style: Theme.of(context).textTheme.bodyLarge,
             ),
+            if (_readError != null) ...[
+              const SizedBox(height: 18),
+              Text(
+                _readError!,
+                style: const TextStyle(color: GymLinkColors.danger),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     ),
-    actions: [
-      FilledButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('Zatvori'),
-      ),
-    ],
   );
 }
 

@@ -2150,10 +2150,14 @@ class _GymAdminAssignmentDialogState extends State<_GymAdminAssignmentDialog> {
               controller: _reason,
               minLines: 2,
               maxLines: 3,
+              maxLength: 200,
               decoration: const InputDecoration(labelText: 'Razlog dodjele'),
-              validator: (value) => (value?.trim().length ?? 0) < 2
-                  ? 'Unesite razlog dodjele.'
-                  : null,
+              validator: (value) {
+                final length = value?.trim().length ?? 0;
+                if (length < 2) return 'Unesite razlog dodjele.';
+                if (length > 200) return 'Najviše 200 znakova.';
+                return null;
+              },
             ),
             if (_error != null) ...[
               const SizedBox(height: 12),
@@ -2708,12 +2712,13 @@ class _RoleDialogState extends State<_RoleDialog> {
               const SizedBox(height: 10),
               TextFormField(
                 controller: _reason,
+                maxLength: 200,
                 decoration: const InputDecoration(labelText: 'Razlog'),
                 onChanged: (_) => _clearError('Reason'),
                 validator: (value) {
                   final length = value?.trim().length ?? 0;
                   if (length < 2) return 'Unesite razlog.';
-                  if (length > 1000) return 'Najviše 1000 znakova.';
+                  if (length > 200) return 'Najviše 200 znakova.';
                   return _serverProblem?.fieldError('Reason');
                 },
               ),

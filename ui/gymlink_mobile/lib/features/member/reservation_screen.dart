@@ -1,14 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
+import '../../core/payments.dart';
 import '../../shared/widgets.dart';
 import '../chat/chat_screens.dart';
 import '../reservations/reservation_refresh_controller.dart';
 
 const _reservationStatuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
-const _visibleReservationStatuses = [1, 2, 3];
+const _visibleReservationStatuses = [0, 1, 2, 3];
+
+String _memberReservationStatus(Object? status) {
+  final label = enumLabel(status, _reservationStatuses);
+  return label == 'Pending' ? 'Čeka plaćanje' : label;
+}
 
 bool _canOpenReservationChat(Object? status) {
   final label = enumLabel(status, _reservationStatuses);
@@ -86,7 +94,7 @@ class _MemberReservationsScreenState extends State<MemberReservationsScreen> {
             ..._visibleReservationStatuses.map(
               (status) => DropdownMenuItem(
                 value: status,
-                child: Text(_reservationStatuses[status]),
+                child: Text(_memberReservationStatus(status)),
               ),
             ),
           ],
@@ -133,10 +141,7 @@ class _MemberReservationsScreenState extends State<MemberReservationsScreen> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   StatusPill(
-                                    enumLabel(
-                                      item['status'],
-                                      _reservationStatuses,
-                                    ),
+                                    _memberReservationStatus(item['status']),
                                   ),
                                   if (_canOpenReservationChat(item['status']))
                                     IconButton(
@@ -187,7 +192,9 @@ class ReservationDetailsScreen extends StatefulWidget {
 class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
   Map<String, dynamic>? _item;
   bool _loading = true;
+  bool _paying = false;
   Object? _error;
+  Timer? _paymentDeadlineTimer;
 
   @override
   void initState() {
@@ -207,11 +214,31 @@ class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
             ))!
             as Map,
       );
+      _schedulePaymentDeadlineRefresh();
     } catch (error) {
       _error = error;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _schedulePaymentDeadlineRefresh() {
+    _paymentDeadlineTimer?.cancel();
+    final dueAt = DateTime.tryParse(
+      _item?['paymentDueAtUtc']?.toString() ?? '',
+    );
+    if (dueAt == null) return;
+    final delay = dueAt.difference(DateTime.now().toUtc());
+    if (delay <= Duration.zero) return;
+    _paymentDeadlineTimer = Timer(delay, () {
+      if (mounted) unawaited(_load());
+    });
+  }
+
+  @override
+  void dispose() {
+    _paymentDeadlineTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _cancel() async {
@@ -241,6 +268,33 @@ class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
       ),
     );
     if (saved == true) await _load();
+  }
+
+  Future<void> _continuePayment() async {
+    if (_paying) return;
+    setState(() => _paying = true);
+    try {
+      await openHostedCheckout(
+        context.read<ApiClient>(),
+        '/api/payments/reservations/${widget.reservationId}/checkout',
+      );
+      await _load();
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.firstFieldError ?? error.message)),
+        );
+      }
+      await _load();
+    } on StateError catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _paying = false);
+    }
   }
 
   Future<void> _command(String path, Map<String, Object?> body) async {
@@ -307,9 +361,12 @@ class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
                             ),
                           ),
                         const SizedBox(height: 14),
-                        StatusPill(
-                          enumLabel(_item!['status'], _reservationStatuses),
-                        ),
+                        StatusPill(_memberReservationStatus(_item!['status'])),
+                        if ((_item!['status'] as num?)?.toInt() == 0 &&
+                            _item!['paymentDueAtUtc'] != null) ...[
+                          const SizedBox(height: 10),
+                          Text(_paymentDeadlineText(_item!['paymentDueAtUtc'])),
+                        ],
                         if (_item!['cancellationReason'] != null) ...[
                           const SizedBox(height: 10),
                           Text('Razlog: ${_item!['cancellationReason']}'),
@@ -319,6 +376,21 @@ class _ReservationDetailsScreenState extends State<ReservationDetailsScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
+                if ((_item!['allowedActions'] as List? ?? const []).contains(
+                      'pay',
+                    ) &&
+                    _paymentWindowOpen(_item!['paymentDueAtUtc']))
+                  FilledButton.icon(
+                    key: const Key('continue-reservation-payment'),
+                    onPressed: _paying ? null : _continuePayment,
+                    icon: _paying
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.credit_card),
+                    label: const Text('Nastavi Stripe plaćanje'),
+                  ),
                 if ((_item!['allowedActions'] as List? ?? const []).contains(
                   'cancel',
                 ))
@@ -428,12 +500,12 @@ class _TrainerReviewDialogState extends State<TrainerReviewDialog> {
           TextFormField(
             controller: _comment,
             maxLines: 4,
-            maxLength: 2000,
+            maxLength: 300,
             decoration: const InputDecoration(labelText: 'Komentar'),
             onChanged: (_) => setState(() => _serverProblem = null),
             validator: (value) {
-              if ((value?.trim().length ?? 0) > 2000) {
-                return 'Najviše 2000 znakova.';
+              if ((value?.trim().length ?? 0) > 300) {
+                return 'Najviše 300 znakova.';
               }
               return _serverProblem?.fieldError('Comment');
             },
@@ -457,4 +529,18 @@ class _TrainerReviewDialogState extends State<TrainerReviewDialog> {
       ),
     ],
   );
+}
+
+bool _paymentWindowOpen(Object? value) {
+  final dueAt = DateTime.tryParse(value?.toString() ?? '');
+  return dueAt != null && dueAt.isAfter(DateTime.now().toUtc());
+}
+
+String _paymentDeadlineText(Object? value) {
+  final dueAt = DateTime.tryParse(value?.toString() ?? '');
+  if (dueAt == null) return 'Rok plaćanja nije dostupan.';
+  if (!dueAt.isAfter(DateTime.now().toUtc())) {
+    return 'Rok za plaćanje je istekao. Osvježite rezervaciju.';
+  }
+  return 'Platiti do ${DateFormat('dd.MM.yyyy. HH:mm').format(dueAt.toLocal())}';
 }

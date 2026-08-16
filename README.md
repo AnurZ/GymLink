@@ -1,16 +1,6 @@
 ## Docker Build
 
-To build GymLink using Docker, copy `.env.example` to `.env`, enter the required local configuration values, and run `docker compose up --build -d` from the repository root. Swagger is available at `http://localhost:62287/swagger` and RabbitMQ Management at `http://localhost:15672`. Internet access is required for Gmail SMTP, maps, address search, external gym images, and Stripe test payments.
-
-## Password-reset email
-
-The normal Compose stack sends password-reset codes through authenticated Gmail SMTP. Enable Google 2-Step Verification for the sender account, create a dedicated 16-character [Google App Password](https://support.google.com/mail/answer/185833?hl=en-EN), and set `Smtp__Host=smtp.gmail.com`, `Smtp__Port=465`, `Smtp__UseSsl=true`, `Smtp__Username`, `Smtp__Password`, and `Smtp__SenderEmail` in the private `.env`. Use the full Gmail address for both username and sender email. Never commit or share the App Password.
-
-The release audit also uses Gmail SMTP. Docker verification therefore requires a real recipient through `-AuditEmail`; the isolated audit account and database are removed with the audit stack. The automated assertion proves that Gmail accepted the message and the Worker recorded completed inbox processing, while final mailbox placement remains external to GymLink.
-
-## Address search
-
-CentralAdmin address search uses Nominatim with `Geocoding__UserAgent=GymLink/1.0`. `Geocoding__ContactEmail` is optional; when supplied it must be a real contact address. Placeholder values such as `replace-with-your-email@example.com` are rejected during startup. If the provider is unavailable, gym creation remains available through the searchable active BiH city list, manual address field, and exact map-point selection.
+To build GymLink using Docker, unzip and copy .env to root folder and run `docker compose up --build -d` from the repository root. Swagger is available at `http://localhost:62287/swagger` and RabbitMQ Management at `http://localhost:15672`. Internet access is required for Gmail SMTP, maps, address search, external gym images, and Stripe test payments.
 
 ## GymLink
 

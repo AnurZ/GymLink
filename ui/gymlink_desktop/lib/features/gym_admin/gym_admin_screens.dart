@@ -782,22 +782,41 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
 
   Future<void> _addTrainer() async {
     final api = context.read<ApiClient>();
-    final saved = await showDialog<bool>(
+    final created = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (_) => _TrainerPromotionDialog(
-        onSubmit: (body) => api.post('/api/tenant/trainers', body: body),
+        onSubmit: (body) async => Map<String, dynamic>.from(
+          (await api.post('/api/tenant/trainers', body: body))! as Map,
+        ),
       ),
     );
-    if (saved != true || !mounted) return;
+    if (created == null || !mounted) return;
     await _load();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Član je promovisan u trenera. Njegove postojeće sesije su odjavljene.',
-          ),
+    if (!mounted) return;
+    final addOffering = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.warning_amber_rounded),
+        title: const Text('Dodajte uslugu trenera'),
+        content: Text(
+          '${created['displayName'] ?? 'Novi trener'} je uspješno dodat. '
+          'Bez aktivne usluge korisnici ne mogu rezervisati njegove termine.',
         ),
-      );
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Kasnije'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.add),
+            label: const Text('Dodaj uslugu'),
+          ),
+        ],
+      ),
+    );
+    if (addOffering == true && mounted) {
+      await _addOffering(trainerId: created['id']?.toString());
     }
   }
 
@@ -882,7 +901,7 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _addOffering() async {
+  Future<void> _addOffering({String? trainerId}) async {
     final api = context.read<ApiClient>();
     try {
       final lookups = Map<String, dynamic>.from(
@@ -900,6 +919,7 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
               .whereType<Map>()
               .map((item) => Map<String, dynamic>.from(item))
               .toList(),
+          initialTrainerId: trainerId,
           onSubmit: (body) =>
               api.post('/api/tenant/trainer-offerings', body: body),
         ),
@@ -951,6 +971,12 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
                           itemBuilder: (_, index) {
                             final item = _trainers[index];
                             final id = item['id'].toString();
+                            final hasActiveOffering = _offerings.any(
+                              (offering) =>
+                                  offering['trainerProfileId']?.toString() ==
+                                      item['id']?.toString() &&
+                                  offering['isActive'] == true,
+                            );
                             final imageUrl = context.read<ApiClient>().mediaUrl(
                               item['imageUrl'],
                             );
@@ -961,7 +987,8 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
                               ),
                               title: Text(item['displayName'].toString()),
                               subtitle: Text(
-                                '${item['credentials'] ?? 'Bez unesenih kvalifikacija'} · ★ ${item['averageRating']}',
+                                '${item['credentials'] ?? 'Bez unesenih kvalifikacija'} · ★ ${item['averageRating']}'
+                                '${hasActiveOffering ? '' : ' · Nema aktivnu uslugu'}',
                               ),
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -971,6 +998,20 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
                                         ? 'Active'
                                         : 'Inactive',
                                   ),
+                                  if (item['isActive'] == true &&
+                                      !hasActiveOffering)
+                                    IconButton(
+                                      key: Key('add-offering-$id'),
+                                      tooltip: 'Dodaj uslugu ovom treneru',
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.error,
+                                      onPressed: () =>
+                                          _addOffering(trainerId: id),
+                                      icon: const Icon(
+                                        Icons.warning_amber_rounded,
+                                      ),
+                                    ),
                                   if (_imageBusy.contains(id))
                                     const Padding(
                                       padding: EdgeInsets.all(12),
@@ -1129,10 +1170,12 @@ class _TenantAvailabilityScreenState extends State<TenantAvailabilityScreen> {
   ];
   List<Map<String, dynamic>> _trainers = const [];
   final Set<(int, int)> _selected = {};
+  final Set<(int, int)> _baseline = {};
   String? _trainerId;
   String? _concurrencyToken;
   bool _loading = true;
   bool _saving = false;
+  bool _refreshing = false;
   Object? _error;
 
   @override
@@ -1161,6 +1204,7 @@ class _TenantAvailabilityScreenState extends State<TenantAvailabilityScreen> {
   Future<void> _loadSchedule() async {
     if (_trainerId == null) {
       _selected.clear();
+      _baseline.clear();
       _concurrencyToken = null;
       return;
     }
@@ -1182,6 +1226,9 @@ class _TenantAvailabilityScreenState extends State<TenantAvailabilityScreen> {
           ),
         ),
       );
+    _baseline
+      ..clear()
+      ..addAll(_selected);
     if (mounted) setState(() {});
   }
 
@@ -1203,6 +1250,9 @@ class _TenantAvailabilityScreenState extends State<TenantAvailabilityScreen> {
             as Map,
       );
       _concurrencyToken = schedule['concurrencyToken']?.toString();
+      _baseline
+        ..clear()
+        ..addAll(_selected);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Sedmični raspored je sačuvan.')),
@@ -1217,6 +1267,67 @@ class _TenantAvailabilityScreenState extends State<TenantAvailabilityScreen> {
       if (error.status == 409) await _loadSchedule();
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  bool get _isDirty =>
+      _selected.length != _baseline.length ||
+      !_selected.every(_baseline.contains);
+
+  Future<void> _refresh() async {
+    if (_refreshing || _saving) return;
+    if (_isDirty) {
+      final confirmed = await confirmAction(
+        context,
+        title: 'Odbaci nespremljene izmjene',
+        message:
+            'Osvježavanje će vratiti raspored sa servera i odbaciti lokalne izmjene.',
+        action: 'Osvježi',
+      );
+      if (!confirmed || !mounted) return;
+    }
+    setState(() => _refreshing = true);
+    final previousTrainers = _trainers;
+    final previousTrainerId = _trainerId;
+    final previousToken = _concurrencyToken;
+    final previousSelected = Set<(int, int)>.from(_selected);
+    final previousBaseline = Set<(int, int)>.from(_baseline);
+    try {
+      final trainers = (await context.read<ApiClient>().page(
+        '/api/tenant/trainers',
+        query: {'isActive': true},
+      )).items;
+      final trainerId =
+          trainers.any((item) => item['id']?.toString() == _trainerId)
+          ? _trainerId
+          : trainers.firstOrNull?['id']?.toString();
+      _trainers = trainers;
+      _trainerId = trainerId;
+      await _loadSchedule();
+      _error = null;
+    } catch (error) {
+      _trainers = previousTrainers;
+      _trainerId = previousTrainerId;
+      _concurrencyToken = previousToken;
+      _selected
+        ..clear()
+        ..addAll(previousSelected);
+      _baseline
+        ..clear()
+        ..addAll(previousBaseline);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error is ApiProblem
+                  ? error.message
+                  : 'Osvježavanje rasporeda nije uspjelo.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
     }
   }
 
@@ -1256,8 +1367,22 @@ class _TenantAvailabilityScreenState extends State<TenantAvailabilityScreen> {
               ),
             ),
             const Spacer(),
+            FilledButton.tonalIcon(
+              key: const Key('refresh-schedule'),
+              onPressed: _loading || _saving || _refreshing ? null : _refresh,
+              icon: _refreshing
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh),
+              label: const Text('Osvježi'),
+            ),
+            const SizedBox(width: 10),
             FilledButton.icon(
-              onPressed: _trainerId == null || _saving ? null : _save,
+              onPressed: _trainerId == null || _saving || _refreshing
+                  ? null
+                  : _save,
               icon: _saving
                   ? const SizedBox.square(
                       dimension: 18,
@@ -1418,10 +1543,29 @@ class _TenantReservationsScreenState extends State<TenantReservationsScreen> {
       );
       if (saved) await _load();
       return;
-    } else if (!await confirmAction(
+    }
+    final confirmation = switch (action) {
+      'complete' => const (
+        title: 'Završetak rezervacije',
+        message: 'Želite li označiti rezervaciju završenom?',
+        action: 'Označi završenom',
+      ),
+      'confirm' => const (
+        title: 'Potvrda rezervacije',
+        message: 'Želite li potvrditi ovu rezervaciju?',
+        action: 'Potvrdi',
+      ),
+      _ => const (
+        title: 'Promjena rezervacije',
+        message: 'Želite li nastaviti?',
+        action: 'Potvrdi',
+      ),
+    };
+    if (!await confirmAction(
       context,
-      title: 'Promjena rezervacije',
-      message: 'Izvrši akciju “$action”?',
+      title: confirmation.title,
+      message: confirmation.message,
+      action: confirmation.action,
     )) {
       return;
     }
@@ -1505,7 +1649,10 @@ class _TenantReservationsScreenState extends State<TenantReservationsScreen> {
                     separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (_, index) {
                       final item = _items[index];
-                      final status = (item['status'] as num?)?.toInt() ?? -1;
+                      final actions =
+                          (item['allowedActions'] as List? ?? const [])
+                              .whereType<String>()
+                              .toList(growable: false);
                       return ListTile(
                         title: Text(
                           '${item['memberName']} · ${item['trainerName']}',
@@ -1520,23 +1667,24 @@ class _TenantReservationsScreenState extends State<TenantReservationsScreen> {
                               enumLabel(item['status'], _reservationStatuses),
                             ),
                             PopupMenuButton<String>(
-                              enabled: status < 2,
+                              enabled: actions.isNotEmpty,
                               onSelected: (action) => _command(item, action),
                               itemBuilder: (_) => [
-                                if (status == 0)
+                                if (actions.contains('confirm'))
                                   const PopupMenuItem(
                                     value: 'confirm',
                                     child: Text('Potvrdi'),
                                   ),
-                                if (status == 1)
+                                if (actions.contains('complete'))
                                   const PopupMenuItem(
                                     value: 'complete',
                                     child: Text('Označi završenom'),
                                   ),
-                                const PopupMenuItem(
-                                  value: 'cancel',
-                                  child: Text('Otkaži uz razlog'),
-                                ),
+                                if (actions.contains('cancel'))
+                                  const PopupMenuItem(
+                                    value: 'cancel',
+                                    child: Text('Otkaži uz razlog'),
+                                  ),
                               ],
                             ),
                           ],
@@ -2216,7 +2364,8 @@ class _GalleryImageTile extends StatelessWidget {
 class _TrainerPromotionDialog extends StatefulWidget {
   const _TrainerPromotionDialog({required this.onSubmit});
 
-  final Future<void> Function(Map<String, Object?> body) onSubmit;
+  final Future<Map<String, dynamic>> Function(Map<String, Object?> body)
+  onSubmit;
 
   @override
   State<_TrainerPromotionDialog> createState() =>
@@ -2292,7 +2441,7 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
     if (!_formKey.currentState!.validate() || _candidate == null) return;
     setState(() => _saving = true);
     try {
-      await widget.onSubmit({
+      final created = await widget.onSubmit({
         'userId': _candidate!['userId'],
         'biography': _biography.text.trim(),
         'credentials': _credentials.text.trim().isEmpty
@@ -2301,7 +2450,7 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
         'trainingTypeIds': _trainingTypeIds.toList(),
         'reason': _reason.text.trim(),
       });
-      if (mounted) Navigator.pop(context, true);
+      if (mounted) Navigator.pop(context, created);
     } on ApiProblem catch (error) {
       if (mounted) {
         setState(() {
@@ -2449,6 +2598,7 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _reason,
+                  maxLength: 200,
                   decoration: const InputDecoration(
                     labelText: 'Razlog promocije',
                   ),
@@ -2456,7 +2606,7 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
                   validator: (value) {
                     final length = value?.trim().length ?? 0;
                     if (length < 2) return 'Unesite razlog promocije.';
-                    if (length > 1000) return 'Najviše 1000 znakova.';
+                    if (length > 200) return 'Najviše 200 znakova.';
                     return _serverProblem?.fieldError('Reason');
                   },
                 ),
@@ -2493,9 +2643,11 @@ class _OfferingDialog extends StatefulWidget {
     required this.trainers,
     required this.types,
     required this.onSubmit,
+    this.initialTrainerId,
   });
   final List<Map<String, dynamic>> trainers;
   final List<Map<String, dynamic>> types;
+  final String? initialTrainerId;
   final Future<void> Function(Map<String, Object?> body) onSubmit;
   @override
   State<_OfferingDialog> createState() => _OfferingDialogState();
@@ -2515,7 +2667,11 @@ class _OfferingDialogState extends State<_OfferingDialog> {
   @override
   void initState() {
     super.initState();
-    _trainer = widget.trainers.firstOrNull;
+    _trainer =
+        widget.trainers
+            .where((item) => item['id']?.toString() == widget.initialTrainerId)
+            .firstOrNull ??
+        widget.trainers.firstOrNull;
     _type = widget.types.firstOrNull;
   }
 

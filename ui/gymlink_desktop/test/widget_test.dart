@@ -71,14 +71,14 @@ void main() {
 
     expect(api.readRequests, 0);
     expect(find.text('Označi sve kao pročitano'), findsOneWidget);
+    expect(find.byKey(const Key('notifications-all-tab')), findsOneWidget);
+    expect(find.byKey(const Key('notifications-unread-tab')), findsOneWidget);
     await tester.tap(find.text('Članstvo aktivirano'));
     await tester.pumpAndSettle();
 
     expect(api.readRequests, 1);
-    expect(
-      find.widgetWithText(AlertDialog, 'Članstvo aktivirano'),
-      findsOneWidget,
-    );
+    expect(find.byType(NotificationDetailScreen), findsOneWidget);
+    expect(find.text('Detalji obavijesti'), findsOneWidget);
     expect(find.text('Članarina je aktivirana.'), findsWidgets);
   });
 
@@ -616,6 +616,35 @@ void main() {
     expect(api.requestedStatuses, [null, null]);
     expect(find.text('Test Member · Test Trainer'), findsOneWidget);
     expect(find.textContaining('prethodni podaci'), findsOneWidget);
+  });
+
+  testWidgets('GymAdmin completes reservation with localized confirmation', (
+    tester,
+  ) async {
+    final api = _GymAdminReservationsApi(withItem: true);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: TenantReservationsScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Označi završenom'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Želite li označiti rezervaciju završenom?'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Označi završenom'));
+    await tester.pumpAndSettle();
+
+    expect(api.completed, isTrue);
   });
 
   testWidgets('successful tenant mutation with failed refresh keeps the view', (
@@ -1235,6 +1264,9 @@ void main() {
     expect(find.text('Jutarnja · 08:00–15:00'), findsWidgets);
     expect(find.text('Popodnevna · 15:00–22:00'), findsWidgets);
     expect(find.text('Dodaj termin'), findsNothing);
+    await tester.tap(find.byKey(const Key('refresh-schedule')));
+    await tester.pumpAndSettle();
+    expect(api.scheduleLoads, 2);
     await tester.tap(find.text('Jutarnja · 08:00–15:00').first);
     await tester.tap(find.text('Sačuvaj raspored'));
     await tester.pumpAndSettle();
@@ -1279,6 +1311,11 @@ void main() {
     expect(api.promotionBody?['userId'], 'member-1');
     expect(api.promotionBody?['reason'], 'Odobrio GymAdmin');
     expect(api.promotionBody?['trainingTypeIds'], ['type-1']);
+    expect(find.text('Dodajte uslugu trenera'), findsOneWidget);
+    expect(find.text('Dodaj uslugu'), findsWidgets);
+    await tester.tap(find.text('Kasnije'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('add-offering-trainer-1')), findsOneWidget);
   });
 
   testWidgets('GymAdmin profile renders the ordered gallery controls', (
@@ -1939,6 +1976,7 @@ class _GymAdminScheduleApi extends ApiClient {
   _GymAdminScheduleApi() : super(_TestTokens());
 
   Map<String, dynamic>? savedSchedule;
+  int scheduleLoads = 0;
 
   @override
   Future<PagedData> page(
@@ -1965,6 +2003,7 @@ class _GymAdminScheduleApi extends ApiClient {
     bool authenticated = true,
   }) async {
     if (path == '/api/tenant/trainer-availability/schedule') {
+      scheduleLoads++;
       return {
         'id': 'schedule-1',
         'trainerProfileId': 'trainer-1',
@@ -1994,6 +2033,7 @@ class _GymAdminReservationsApi extends ApiClient {
   final List<int?> requestedStatuses = [];
   final bool withItem;
   final bool failAfterFirst;
+  bool completed = false;
 
   @override
   Future<PagedData> page(
@@ -2015,6 +2055,7 @@ class _GymAdminReservationsApi extends ApiClient {
                   'offeringName': 'Personalni trening',
                   'startsAtUtc': '2026-08-13T10:00:00Z',
                   'status': 1,
+                  'allowedActions': ['complete'],
                   'concurrencyToken': 'token',
                 },
               ]
@@ -2025,6 +2066,19 @@ class _GymAdminReservationsApi extends ApiClient {
       );
     }
     throw StateError('Unexpected page request: $path');
+  }
+
+  @override
+  Future<Object?> post(
+    String path, {
+    Object? body,
+    bool authenticated = true,
+  }) async {
+    if (path == '/api/tenant/reservations/reservation-1/complete') {
+      completed = true;
+      return const {};
+    }
+    throw StateError('Unexpected post request: $path');
   }
 }
 
@@ -2107,14 +2161,32 @@ class _GymAdminTrainerApi extends ApiClient {
   _GymAdminTrainerApi() : super(_TestTokens());
 
   Map<String, dynamic>? promotionBody;
+  bool _promoted = false;
 
   @override
   Future<PagedData> page(
     String path, {
     Map<String, Object?> query = const {},
   }) async {
-    if (path == '/api/tenant/trainers' ||
-        path == '/api/tenant/trainer-offerings') {
+    if (path == '/api/tenant/trainers') {
+      return PagedData(
+        items: _promoted
+            ? const [
+                {
+                  'id': 'trainer-1',
+                  'displayName': 'Active Member',
+                  'credentials': null,
+                  'averageRating': 0,
+                  'isActive': true,
+                },
+              ]
+            : const [],
+        page: 1,
+        pageSize: 50,
+        totalCount: _promoted ? 1 : 0,
+      );
+    }
+    if (path == '/api/tenant/trainer-offerings') {
       return const PagedData(items: [], page: 1, pageSize: 50, totalCount: 0);
     }
     if (path == '/api/tenant/trainer-candidates') {
@@ -2160,7 +2232,12 @@ class _GymAdminTrainerApi extends ApiClient {
   }) async {
     if (path == '/api/tenant/trainers') {
       promotionBody = Map<String, dynamic>.from(body! as Map);
-      return const {};
+      _promoted = true;
+      return const {
+        'id': 'trainer-1',
+        'displayName': 'Active Member',
+        'isActive': true,
+      };
     }
     throw StateError('Unexpected post request: $path');
   }
