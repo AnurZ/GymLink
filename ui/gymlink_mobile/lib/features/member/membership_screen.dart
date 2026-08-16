@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../core/api.dart';
 import '../../core/payments.dart';
 import '../../shared/widgets.dart';
+import 'gym_screens.dart';
 
 const _requestStatuses = ['Pending', 'Approved', 'Rejected', 'Cancelled'];
 const _membershipStatuses = [
@@ -315,6 +316,23 @@ class _MembershipDetailsScreenState extends State<MembershipDetailsScreen> {
                       ),
                     ),
                   ),
+                  if ((membership['gymId']?.toString().trim() ?? '')
+                      .isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      key: const Key('membership-open-gym'),
+                      onPressed: () => Navigator.push<void>(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => GymDetailsScreen(
+                            gymId: membership['gymId'].toString(),
+                          ),
+                        ),
+                      ),
+                      icon: const Icon(Icons.fitness_center),
+                      label: const Text('Otvori teretanu'),
+                    ),
+                  ],
                   if ((membership['allowedActions'] as List? ?? const [])
                       .contains('pay')) ...[
                     const SizedBox(height: 16),

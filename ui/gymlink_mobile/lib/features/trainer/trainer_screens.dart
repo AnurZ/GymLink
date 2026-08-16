@@ -11,6 +11,11 @@ import '../reservations/reservation_refresh_controller.dart';
 const _reservationStatuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
 const _emptyGuid = '00000000-0000-0000-0000-000000000000';
 
+bool _canOpenAppointmentChat(Object? status) {
+  final label = enumLabel(status, _reservationStatuses);
+  return label == 'Confirmed' || label == 'Completed';
+}
+
 class TrainerAppointmentsScreen extends StatefulWidget {
   const TrainerAppointmentsScreen({this.controller, super.key});
 
@@ -109,8 +114,25 @@ class _TrainerAppointmentsScreenState extends State<TrainerAppointmentsScreen> {
                           '${DateFormat('dd.MM.yyyy. HH:mm').format(DateTime.parse(item['startsAtUtc'].toString()).toLocal())}\n${item['offeringName']}',
                         ),
                         isThreeLine: true,
-                        trailing: StatusPill(
-                          enumLabel(item['status'], _reservationStatuses),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            StatusPill(
+                              enumLabel(item['status'], _reservationStatuses),
+                            ),
+                            if (_canOpenAppointmentChat(item['status']))
+                              IconButton(
+                                key: Key(
+                                  'trainer-appointment-chat-${item['id']}',
+                                ),
+                                tooltip: 'Otvori razgovor',
+                                onPressed: () => openChatForReservation(
+                                  context,
+                                  item['id'].toString(),
+                                ),
+                                icon: const Icon(Icons.forum_outlined),
+                              ),
+                          ],
                         ),
                         onTap: () async {
                           await Navigator.push(
@@ -166,10 +188,28 @@ class _TrainerAppointmentDetailsState extends State<TrainerAppointmentDetails> {
 
   Future<void> _command(String action, {String? reason}) async {
     final api = context.read<ApiClient>();
+    final confirmation = switch (action) {
+      'complete' => const (
+        title: 'Završetak treninga',
+        message: 'Želite li označiti trening završenim?',
+        action: 'Označi završenim',
+      ),
+      'confirm' => const (
+        title: 'Potvrda termina',
+        message: 'Želite li potvrditi ovaj termin?',
+        action: 'Potvrdi termin',
+      ),
+      _ => const (
+        title: 'Potvrda akcije',
+        message: 'Želite li nastaviti?',
+        action: 'Potvrdi',
+      ),
+    };
     if (!await confirmAction(
       context,
-      title: 'Potvrda akcije',
-      message: 'Želite li izvršiti akciju “$action”?',
+      title: confirmation.title,
+      message: confirmation.message,
+      action: confirmation.action,
     )) {
       return;
     }
@@ -1221,6 +1261,14 @@ class _TrainerReviewsScreenState extends State<TrainerReviewsScreen> {
                               ).toLocal(),
                             ),
                           ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => Navigator.push<void>(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  TrainerReviewDetailsScreen(review: item),
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -1229,4 +1277,72 @@ class _TrainerReviewsScreenState extends State<TrainerReviewsScreen> {
             ),
     ),
   );
+}
+
+class TrainerReviewDetailsScreen extends StatelessWidget {
+  const TrainerReviewDetailsScreen({required this.review, super.key});
+
+  final Map<String, dynamic> review;
+
+  @override
+  Widget build(BuildContext context) {
+    final rating = (review['rating'] as num?)?.toInt() ?? 0;
+    final createdAt = DateTime.tryParse(
+      review['createdAtUtc']?.toString() ?? '',
+    );
+    final comment = review['comment']?.toString().trim();
+    return Scaffold(
+      appBar: AppBar(title: const Text('Detalji recenzije')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.star, color: Colors.amber, size: 30),
+                      const SizedBox(width: 8),
+                      Text(
+                        '$rating od 5',
+                        style: Theme.of(context).textTheme.headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    comment == null || comment.isEmpty
+                        ? 'Bez komentara'
+                        : comment,
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    createdAt == null
+                        ? 'Datum nije dostupan'
+                        : DateFormat(
+                            'dd.MM.yyyy. HH:mm',
+                          ).format(createdAt.toLocal()),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Card(
+            child: ListTile(
+              leading: Icon(Icons.privacy_tip_outlined),
+              title: Text('Anonimna recenzija'),
+              subtitle: Text('Identitet korisnika se ne prikazuje treneru.'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

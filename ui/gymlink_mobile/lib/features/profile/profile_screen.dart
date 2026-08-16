@@ -239,6 +239,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           session?.displayName ?? '',
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
+                        if ((_profile?['username']?.toString().trim() ?? '')
+                            .isNotEmpty)
+                          Text(
+                            '@${_profile!['username'].toString().trim()}',
+                            key: const Key('profile-username'),
+                          ),
                         Text(session?.role ?? ''),
                         if (session?.tenant?['name'] != null)
                           Text(session!.tenant!['name'].toString()),

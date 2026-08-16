@@ -10,6 +10,11 @@ import '../reservations/reservation_refresh_controller.dart';
 const _reservationStatuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
 const _visibleReservationStatuses = [1, 2, 3];
 
+bool _canOpenReservationChat(Object? status) {
+  final label = enumLabel(status, _reservationStatuses);
+  return label == 'Confirmed' || label == 'Completed';
+}
+
 class MemberReservationsScreen extends StatefulWidget {
   const MemberReservationsScreen({this.controller, super.key});
 
@@ -124,8 +129,28 @@ class _MemberReservationsScreenState extends State<MemberReservationsScreen> {
                                 '${DateFormat('dd.MM.yyyy. HH:mm').format(DateTime.parse(item['startsAtUtc'].toString()).toLocal())}\n${item['offeringName']} · ${item['price']} ${item['currency']}',
                               ),
                               isThreeLine: true,
-                              trailing: StatusPill(
-                                enumLabel(item['status'], _reservationStatuses),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  StatusPill(
+                                    enumLabel(
+                                      item['status'],
+                                      _reservationStatuses,
+                                    ),
+                                  ),
+                                  if (_canOpenReservationChat(item['status']))
+                                    IconButton(
+                                      key: Key(
+                                        'member-reservation-chat-${item['id']}',
+                                      ),
+                                      tooltip: 'Otvori razgovor',
+                                      onPressed: () => openChatForReservation(
+                                        context,
+                                        item['id'].toString(),
+                                      ),
+                                      icon: const Icon(Icons.forum_outlined),
+                                    ),
+                                ],
                               ),
                               onTap: () async {
                                 await Navigator.push(

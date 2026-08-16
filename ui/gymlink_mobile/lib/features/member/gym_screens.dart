@@ -85,9 +85,9 @@ class _GymDiscoveryScreenState extends State<GymDiscoveryScreen> {
             const SizedBox(width: 10),
             IconButton.filledTonal(
               key: const Key('gym-search-submit'),
-              tooltip: 'Primijeni pretragu',
+              tooltip: 'Pretraži teretane',
               onPressed: _load,
-              icon: const Icon(Icons.tune),
+              icon: const Icon(Icons.search),
             ),
           ],
         ),

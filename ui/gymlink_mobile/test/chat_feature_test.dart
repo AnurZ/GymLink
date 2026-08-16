@@ -13,6 +13,7 @@ import 'package:gymlink_mobile/features/chat/chat_models.dart';
 import 'package:gymlink_mobile/features/chat/chat_realtime.dart';
 import 'package:gymlink_mobile/features/chat/chat_repository.dart';
 import 'package:gymlink_mobile/features/chat/chat_screens.dart';
+import 'package:gymlink_mobile/features/member/gym_screens.dart';
 import 'package:gymlink_mobile/features/member/member_shell.dart';
 import 'package:gymlink_mobile/features/notifications/notification_controller.dart';
 import 'package:gymlink_mobile/features/reservations/reservation_refresh_controller.dart';
@@ -367,6 +368,135 @@ void main() {
     expect(repository.sentClientIds, hasLength(1));
   });
 
+  testWidgets('member opens trainer profile from the chat header', (
+    tester,
+  ) async {
+    final conversation = _conversation('trainer-profile');
+    final repository = _FakeChatRepository(conversations: [conversation]);
+    final realtime = _FakeChatRealtime();
+    final controller = ChatController(repository, realtime, AuthController());
+    final api = ApiClient(
+      AuthController(),
+      baseUrlOverride: 'http://test.local',
+      httpClient: MockClient((request) async {
+        final Object body = switch (request.url.path) {
+          '/api/gyms/gym/trainers' => [
+            {
+              'id': 'trainer-profile-id',
+              'userId': 'counterpart-trainer-profile',
+              'displayName': 'Trener Test',
+              'biography': 'Biografija trenera',
+              'credentials': 'Certifikat',
+              'averageRating': 4.9,
+              'reviewCount': 12,
+              'imageUrl': null,
+            },
+          ],
+          '/api/trainers/trainer-profile-id/offerings' => <Object>[],
+          _ => <Object>[],
+        };
+        return http.Response(
+          jsonEncode(body),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+    );
+    addTearDown(realtime.close);
+    addTearDown(controller.dispose);
+    addTearDown(api.close);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: controller),
+          Provider<ApiClient>.value(value: api),
+        ],
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: ChatDetailScreen(conversation: conversation),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('chat-trainer-profile')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(BookingScreen), findsOneWidget);
+    expect(find.text('Trener Test'), findsOneWidget);
+    expect(find.text('Biografija trenera'), findsOneWidget);
+  });
+
+  testWidgets('trainer cannot open a member profile from chat', (tester) async {
+    final conversation = _conversation(
+      'member-profile',
+      counterpartRole: 'Member',
+    );
+    final repository = _FakeChatRepository(conversations: [conversation]);
+    final realtime = _FakeChatRealtime();
+    final controller = ChatController(repository, realtime, AuthController());
+    addTearDown(realtime.close);
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: controller,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: ChatDetailScreen(conversation: conversation),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('chat-trainer-profile')), findsNothing);
+    expect(find.text('Osoba member-profile'), findsOneWidget);
+  });
+
+  testWidgets('missing trainer profile leaves chat open with a safe error', (
+    tester,
+  ) async {
+    final conversation = _conversation('missing-profile');
+    final repository = _FakeChatRepository(conversations: [conversation]);
+    final realtime = _FakeChatRealtime();
+    final controller = ChatController(repository, realtime, AuthController());
+    final api = ApiClient(
+      AuthController(),
+      baseUrlOverride: 'http://test.local',
+      httpClient: MockClient(
+        (_) async => http.Response(
+          '[]',
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        ),
+      ),
+    );
+    addTearDown(realtime.close);
+    addTearDown(controller.dispose);
+    addTearDown(api.close);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: controller),
+          Provider<ApiClient>.value(value: api),
+        ],
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: ChatDetailScreen(conversation: conversation),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('chat-trainer-profile')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ChatDetailScreen), findsOneWidget);
+    expect(find.text('Profil trenera trenutno nije dostupan.'), findsOneWidget);
+  });
+
   testWidgets('paperclip picks and renders a standalone gallery image', (
     tester,
   ) async {
@@ -564,12 +694,16 @@ Future<_FakeChatRealtime> _pumpShell(
   return realtime;
 }
 
-ConversationModel _conversation(String id, {DateTime? at}) => ConversationModel(
+ConversationModel _conversation(
+  String id, {
+  DateTime? at,
+  String counterpartRole = 'Trainer',
+}) => ConversationModel(
   id: id,
   originatingReservationId: 'reservation-$id',
   counterpartUserId: 'counterpart-$id',
   counterpartDisplayName: 'Osoba $id',
-  counterpartRole: 'Trainer',
+  counterpartRole: counterpartRole,
   gymId: 'gym',
   gymName: 'GymLink Gym',
   lastMessageText: null,

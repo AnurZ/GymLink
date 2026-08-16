@@ -16,47 +16,45 @@ CentralAdmin address search uses Nominatim with `Geocoding__UserAgent=GymLink/1.
 
 GymLink is a fitness platform that allows users to discover gyms and trainers, purchase gym memberships, book personal training appointments, review completed services, and receive explained recommendations. Members and Trainers use the Android application, while Gym Administrators and Central Administrators use the Windows desktop application. Members can chat with Trainers and receive notifications, Gym Administrators manage their gym, members, trainers, schedules, reservations, gallery, statistics, and PDF reports, while Central Administrators manage gyms, activation, reference data, role assignments, and system statistics.
 
-## Builds
-
-The Android application build for Members and Trainers is located at `artifacts/release-candidate/gymlink-android-arm64.apk`. The Windows application build for Gym Administrators and Central Administrators is located at `artifacts/release-candidate/gymlink-windows-x64.zip`. File checksums are stored in `artifacts/release-candidate/SHA256SUMS.txt`.
-
 ## Demo Login Credentials for admins
 
-| Role / Gym | Email | Password |
+Both username and email are accepted at login. The shorter usernames are listed below.
+
+| Role / Gym | Username | Password |
 |---|---|---|
-| Central Admin | `centraladmin@gymlink.local` | `Test123!` |
-| Gym Admin (Arena Sport Centar) | `admin.arena@gymlink.local` | `Test123!` |
-| Gym Admin (Perfect Fit) | `admin.perfectfit@gymlink.local` | `Test123!` |
-| Gym Admin (Sportska Akademija Respect) | `admin.respect@gymlink.local` | `Test123!` |
-| Gym Admin (Oxide Gym) | `admin.oxide@gymlink.local` | `Test123!` |
-| Gym Admin (Fit Factory) | `admin.fitfactory@gymlink.local` | `Test123!` |
-| Gym Admin (Fitness Club Iskra) | `admin.iskra@gymlink.local` | `Test123!` |
+| Central Admin | `centraladmin` | `Test123!` |
+| Gym Admin (Arena Sport Centar) | `admin.arena` | `Test123!` |
+| Gym Admin (Perfect Fit) | `admin.perfectfit` | `Test123!` |
+| Gym Admin (Sportska Akademija Respect) | `admin.respect` | `Test123!` |
+| Gym Admin (Oxide Gym) | `admin.oxide` | `Test123!` |
+| Gym Admin (Fit Factory) | `admin.fitfactory` | `Test123!` |
+| Gym Admin (Fitness Club Iskra) | `admin.iskra` | `Test123!` |
 
 ## Demo Member Accounts
 
-| Role | Email | Password |
+| Role | Username | Password |
 |---|---|---|
-| Member | `mobile1@gymlink.local` | `Test123!` |
-| Member | `mobile2@gymlink.local` | `Test123!` |
-| Member | `mobile3@gymlink.local` | `Test123!` |
-| Member | `mobile4@gymlink.local` | `Test123!` |
+| Member | `mobile1` | `Test123!` |
+| Member | `mobile2` | `Test123!` |
+| Member | `mobile3` | `Test123!` |
+| Member | `mobile4` | `Test123!` |
 
 ## Demo Trainer Accounts
 
-| Role / Gym | Email | Password |
+| Role / Gym | Username | Password |
 |---|---|---|
-| Trainer - Marko Dogan (Arena Sport Centar) | `arenatrainer1@gymlink.local` | `Test123!` |
-| Trainer - Ana Marić (Arena Sport Centar) | `arenatrainer2@gymlink.local` | `Test123!` |
-| Trainer - Ivan Kraljević (Perfect Fit) | `perfectfittrainer1@gymlink.local` | `Test123!` |
-| Trainer - Petra Bošnjak (Perfect Fit) | `perfectfittrainer2@gymlink.local` | `Test123!` |
-| Trainer - Emir Hadžić (Sportska Akademija Respect) | `respecttrainer1@gymlink.local` | `Test123!` |
-| Trainer - Lejla Bećirović (Sportska Akademija Respect) | `respecttrainer2@gymlink.local` | `Test123!` |
-| Trainer - Amar Kovačević (Oxide Gym) | `oxidetrainer1@gymlink.local` | `Test123!` |
-| Trainer - Selma Delić (Oxide Gym) | `oxidetrainer2@gymlink.local` | `Test123!` |
-| Trainer - Adnan Mujić (Fit Factory) | `fitfactorytrainer1@gymlink.local` | `Test123!` |
-| Trainer - Emina Alagić (Fit Factory) | `fitfactorytrainer2@gymlink.local` | `Test123!` |
-| Trainer - Haris Mehić (Fitness Club Iskra) | `iskratrainer1@gymlink.local` | `Test123!` |
-| Trainer - Ivana Vuković (Fitness Club Iskra) | `iskratrainer2@gymlink.local` | `Test123!` |
+| Trainer - Marko Dogan (Arena Sport Centar) | `arenatrainer1` | `Test123!` |
+| Trainer - Ana Marić (Arena Sport Centar) | `arenatrainer2` | `Test123!` |
+| Trainer - Ivan Kraljević (Perfect Fit) | `perfectfittrainer1` | `Test123!` |
+| Trainer - Petra Bošnjak (Perfect Fit) | `perfectfittrainer2` | `Test123!` |
+| Trainer - Emir Hadžić (Sportska Akademija Respect) | `respecttrainer1` | `Test123!` |
+| Trainer - Lejla Bećirović (Sportska Akademija Respect) | `respecttrainer2` | `Test123!` |
+| Trainer - Amar Kovačević (Oxide Gym) | `oxidetrainer1` | `Test123!` |
+| Trainer - Selma Delić (Oxide Gym) | `oxidetrainer2` | `Test123!` |
+| Trainer - Adnan Mujić (Fit Factory) | `fitfactorytrainer1` | `Test123!` |
+| Trainer - Emina Alagić (Fit Factory) | `fitfactorytrainer2` | `Test123!` |
+| Trainer - Haris Mehić (Fitness Club Iskra) | `iskratrainer1` | `Test123!` |
+| Trainer - Ivana Vuković (Fitness Club Iskra) | `iskratrainer2` | `Test123!` |
 
 ## Notes
 

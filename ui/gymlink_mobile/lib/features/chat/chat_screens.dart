@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
 import '../../shared/widgets.dart';
+import '../member/gym_screens.dart';
 import 'chat_controller.dart';
 import 'chat_models.dart';
 import 'chat_repository.dart';
@@ -353,6 +354,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
     with WidgetsBindingObserver {
   final _draft = TextEditingController();
   late ChatController _chatController;
+  bool _openingTrainerProfile = false;
 
   @override
   void initState() {
@@ -439,23 +441,110 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
     ..hideCurrentSnackBar()
     ..showSnackBar(SnackBar(content: Text(message)));
 
+  Future<void> _openTrainerProfile(ConversationModel conversation) async {
+    if (_openingTrainerProfile || conversation.counterpartRole != 'Trainer') {
+      return;
+    }
+    setState(() => _openingTrainerProfile = true);
+    try {
+      final trainers = await context.read<ApiClient>().list(
+        '/api/gyms/${conversation.gymId}/trainers',
+        authenticated: false,
+      );
+      Map<String, dynamic>? trainer;
+      for (final candidate in trainers) {
+        if (candidate['userId']?.toString() == conversation.counterpartUserId) {
+          trainer = candidate;
+          break;
+        }
+      }
+      if (!mounted) return;
+      if (trainer == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Profil trenera trenutno nije dostupan.'),
+          ),
+        );
+        return;
+      }
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              BookingScreen(trainer: trainer!, gymId: conversation.gymId),
+        ),
+      );
+    } on ApiProblem catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Profil trenera trenutno nije dostupan.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _openingTrainerProfile = false);
+    }
+  }
+
+  Widget _conversationTitle(ConversationModel conversation) {
+    final details = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          conversation.counterpartDisplayName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        Text(
+          conversation.gymName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.labelMedium,
+        ),
+      ],
+    );
+    if (conversation.counterpartRole != 'Trainer') return details;
+    return Tooltip(
+      message: 'Otvori profil trenera',
+      child: InkWell(
+        key: const Key('chat-trainer-profile'),
+        borderRadius: BorderRadius.circular(8),
+        onTap: _openingTrainerProfile
+            ? null
+            : () => _openTrainerProfile(conversation),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              Expanded(child: details),
+              const SizedBox(width: 8),
+              if (_openingTrainerProfile)
+                const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                const Icon(Icons.person_outline, size: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Consumer<ChatController>(
     builder: (context, controller, _) {
       final conversation = controller.activeConversation ?? widget.conversation;
       return Scaffold(
-        appBar: AppBar(
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(conversation.counterpartDisplayName),
-              Text(
-                conversation.gymName,
-                style: Theme.of(context).textTheme.labelMedium,
-              ),
-            ],
-          ),
-        ),
+        appBar: AppBar(title: _conversationTitle(conversation)),
         body: SafeArea(
           child: Column(
             children: [

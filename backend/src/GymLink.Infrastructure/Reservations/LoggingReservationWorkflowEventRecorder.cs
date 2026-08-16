@@ -151,14 +151,7 @@ internal sealed class LoggingReservationWorkflowEventRecorder(
             var review = dbContext.Reviews.Local.FirstOrDefault(x => x.Id == intent.TargetId)
                 ?? await dbContext.Reviews.IgnoreQueryFilters().AsNoTracking()
                     .SingleAsync(x => x.Id == intent.TargetId, cancellationToken);
-            var names = await (
-                from trainer in dbContext.TrainerProfiles.IgnoreQueryFilters()
-                from trainerUser in dbContext.UserProfiles.Where(x => x.Id == trainer.UserId)
-                from reviewer in dbContext.UserProfiles.Where(x => x.Id == review.ReviewerUserId)
-                where trainer.Id == review.TrainerProfileId
-                select new { Trainer = trainerUser.DisplayName, Reviewer = reviewer.DisplayName })
-                .SingleAsync(cancellationToken);
-            return $"{names.Reviewer} je ocijenio trenera {names.Trainer} sa {review.Rating}/5 u teretani {gymName}.";
+            return FormatTrainerReview(review.Rating, gymName);
         }
         if (intent.Name == "review.gym_created")
         {
@@ -181,6 +174,9 @@ internal sealed class LoggingReservationWorkflowEventRecorder(
             : null;
         return $"Dostupnost trenera {trainerName ?? "trenera"} u teretani {gymName} je ažurirana.";
     }
+
+    internal static string FormatTrainerReview(int rating, string gymName) =>
+        $"Jedna od trenerskih sesija u teretani {gymName} ocijenjena je ocjenom {rating}/5.";
 
     private static DateTime Sarajevo(DateTime utc) => TimeZoneInfo.ConvertTimeFromUtc(
         utc,

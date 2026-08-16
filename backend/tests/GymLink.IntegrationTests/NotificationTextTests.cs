@@ -74,4 +74,18 @@ public sealed class NotificationTextTests
             Assert.Contains(expectedStatus, text, StringComparison.Ordinal);
         }
     }
+
+    [Fact]
+    public void Trainer_review_notification_is_anonymous()
+    {
+        var text = LoggingReservationWorkflowEventRecorder.FormatTrainerReview(
+            1,
+            "Oxide Gym");
+
+        Assert.Equal(
+            "Jedna od trenerskih sesija u teretani Oxide Gym ocijenjena je ocjenom 1/5.",
+            text);
+        Assert.DoesNotContain("Lamija Softić", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Ivan Kraljević", text, StringComparison.Ordinal);
+    }
 }

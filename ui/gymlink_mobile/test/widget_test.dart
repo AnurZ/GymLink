@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
@@ -20,6 +21,7 @@ import 'package:gymlink_mobile/features/notifications/notification_controller.da
 import 'package:gymlink_mobile/features/chat/chat_models.dart';
 import 'package:gymlink_mobile/features/chat/chat_realtime.dart';
 import 'package:gymlink_mobile/features/payments/payment_result_screen.dart';
+import 'package:gymlink_mobile/features/profile/profile_screen.dart';
 import 'package:gymlink_mobile/features/reservations/reservation_refresh_controller.dart';
 import 'package:gymlink_mobile/features/trainer/trainer_screens.dart';
 import 'package:gymlink_mobile/shared/widgets.dart';
@@ -158,8 +160,11 @@ void main() {
 
     expect(readRequests, 0);
     await tester.pumpWidget(
-      Provider<ApiClient>.value(
-        value: api,
+      MultiProvider(
+        providers: [
+          Provider<ApiClient>.value(value: api),
+          ChangeNotifierProvider(create: (_) => AuthController()),
+        ],
         child: MaterialApp(home: NotificationDetailScreen(item: item)),
       ),
     );
@@ -172,6 +177,89 @@ void main() {
       findsOneWidget,
     );
     expect(item['isRead'], false);
+  });
+
+  testWidgets('completed reservation notification opens reviewable details', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    var reservationLoads = 0;
+    final auth = AuthController();
+    final api = ApiClient(
+      auth,
+      baseUrlOverride: 'https://api.test',
+      httpClient: MockClient((request) async {
+        if (request.url.path == '/api/auth/login') {
+          return _jsonResponse({
+            'accessToken': 'access-token',
+            'refreshToken': 'refresh-token',
+            'user': {
+              'id': 'member-1',
+              'displayName': 'Član Test',
+              'role': 'Member',
+            },
+          });
+        }
+        if (request.url.path == '/api/me/reservations/reservation-1') {
+          reservationLoads++;
+          return _jsonResponse({
+            'id': 'reservation-1',
+            'trainerName': 'Trener Test',
+            'gymName': 'GymLink Centar',
+            'offeringName': 'Individualni trening',
+            'startsAtUtc': '2026-08-01T10:00:00Z',
+            'durationMinutes': 60,
+            'price': 30,
+            'currency': 'BAM',
+            'paymentMethod': 1,
+            'isPaid': false,
+            'status': 2,
+            'canReview': true,
+            'allowedActions': <String>[],
+            'concurrencyToken': 'token-1',
+          });
+        }
+        return _jsonResponse({}, statusCode: 404);
+      }),
+    );
+    auth.attachApi(api);
+    await auth.login('member', 'Test123!');
+    addTearDown(api.close);
+    addTearDown(auth.dispose);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<ApiClient>.value(value: api),
+          ChangeNotifierProvider.value(value: auth),
+        ],
+        child: MaterialApp(
+          home: NotificationDetailScreen(
+            item: {
+              'id': 'notice-1',
+              'category': 'reservation.completed',
+              'title': 'Rezervacija',
+              'text': 'Termin je završen.',
+              'createdAtUtc': '2026-08-01T11:00:00Z',
+              'isRead': true,
+              'targetType': 'reservation',
+              'targetId': 'reservation-1',
+              'concurrencyToken': 'notice-token',
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const Key('notification-open-completed-reservation')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(reservationLoads, 1);
+    expect(find.byType(ReservationDetailsScreen), findsOneWidget);
+    expect(find.text('Ocijeni trenera'), findsOneWidget);
   });
 
   testWidgets('trainer image avatar falls back to initials', (tester) async {
@@ -938,6 +1026,17 @@ void main() {
                 'status': 1,
                 'paymentMethod': 1,
               },
+              {
+                'id': 'reservation-cancelled',
+                'trainerName': 'Trener Otkazan',
+                'gymName': 'GymLink Centar',
+                'offeringName': 'Individualni trening',
+                'startsAtUtc': '2026-08-02T10:00:00Z',
+                'price': 30,
+                'currency': 'BAM',
+                'status': 3,
+                'paymentMethod': 1,
+              },
             ];
       return http.Response(
         jsonEncode(_page(items)),
@@ -972,6 +1071,14 @@ void main() {
 
     expect(find.text('Trener Test · GymLink Centar'), findsOneWidget);
     expect(find.text('Confirmed'), findsOneWidget);
+    expect(
+      find.byKey(const Key('member-reservation-chat-reservation-in-person')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('member-reservation-chat-reservation-cancelled')),
+      findsNothing,
+    );
     expect(reservationLoads, 2);
   });
 
@@ -1084,6 +1191,14 @@ void main() {
                 'status': 1,
                 'paymentMethod': 1,
               },
+              {
+                'id': 'reservation-cancelled',
+                'memberName': 'Član Otkazan',
+                'offeringName': 'Individualni trening',
+                'startsAtUtc': '2026-08-02T10:00:00Z',
+                'status': 3,
+                'paymentMethod': 1,
+              },
             ];
       return http.Response(
         jsonEncode(_page(items)),
@@ -1122,7 +1237,97 @@ void main() {
 
     expect(find.text('Član Test'), findsOneWidget);
     expect(find.text('Confirmed'), findsOneWidget);
+    expect(
+      find.byKey(const Key('trainer-appointment-chat-reservation-in-person')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const Key('trainer-appointment-chat-reservation-cancelled')),
+      findsNothing,
+    );
     expect(reservationLoads, 2);
+  });
+
+  testWidgets('trainer completion uses user-facing confirmation copy', (
+    tester,
+  ) async {
+    final api = ApiClient(
+      _TestTokenSource(),
+      httpClient: MockClient((_) async => _jsonResponse({})),
+      baseUrlOverride: 'http://test.local',
+    );
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          home: TrainerAppointmentDetails(
+            item: {
+              'id': 'reservation-1',
+              'memberName': 'Član Test',
+              'gymName': 'GymLink Centar',
+              'offeringName': 'Individualni trening',
+              'startsAtUtc': '2026-08-01T10:00:00Z',
+              'durationMinutes': 60,
+              'paymentMethod': 1,
+              'status': 1,
+              'allowedActions': ['complete'],
+              'concurrencyToken': 'token-1',
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Označi završenim'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Završetak treninga'), findsOneWidget);
+    expect(find.text('Želite li označiti trening završenim?'), findsOneWidget);
+    expect(find.textContaining('complete'), findsNothing);
+  });
+
+  testWidgets('trainer opens an anonymous review detail', (tester) async {
+    final api = ApiClient(
+      _TestTokenSource(),
+      baseUrlOverride: 'http://test.local',
+      httpClient: MockClient((request) async {
+        if (request.url.path == '/api/profile') {
+          return _jsonResponse({'trainerProfileId': 'trainer-1'});
+        }
+        if (request.url.path == '/api/trainers/trainer-1/reviews') {
+          return _jsonResponse(
+            _page([
+              {
+                'id': 'review-1',
+                'rating': 5,
+                'comment': 'Odličan trening i komunikacija.',
+                'createdAtUtc': '2026-08-16T10:30:00Z',
+                'reviewerName': 'Skriveni korisnik',
+              },
+            ]),
+          );
+        }
+        return _jsonResponse({}, statusCode: 404);
+      }),
+    );
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: const MaterialApp(home: TrainerReviewsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Odličan trening i komunikacija.'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TrainerReviewDetailsScreen), findsOneWidget);
+    expect(find.text('Detalji recenzije'), findsOneWidget);
+    expect(find.text('5 od 5'), findsOneWidget);
+    expect(find.text('Anonimna recenzija'), findsOneWidget);
+    expect(find.text('Skriveni korisnik'), findsNothing);
   });
 
   testWidgets(
@@ -1400,6 +1605,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('gym-discovery-map-controls')), findsOneWidget);
+    final searchButton = find.byKey(const Key('gym-search-submit'));
+    expect(
+      tester.widget<IconButton>(searchButton).tooltip,
+      'Pretraži teretane',
+    );
+    expect(
+      find.descendant(of: searchButton, matching: find.byIcon(Icons.search)),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('gym-discovery-map-zoom-in')), findsOneWidget);
     expect(find.byKey(const Key('gym-discovery-map-zoom-out')), findsOneWidget);
     expect(find.byKey(const Key('gym-discovery-map-center')), findsOneWidget);
@@ -1550,6 +1764,102 @@ void main() {
     expect(find.byType(ResetPasswordScreen), findsOneWidget);
   });
 
+  testWidgets('password reset can return to login without submitting', (
+    tester,
+  ) async {
+    var resetRequests = 0;
+    final api = ApiClient(
+      _TestTokenSource(),
+      baseUrlOverride: 'http://test.local',
+      httpClient: MockClient((request) async {
+        if (request.url.path == '/api/auth/reset-password') resetRequests++;
+        return _jsonResponse({});
+      }),
+    );
+    final router = GoRouter(
+      initialLocation: '/reset-password',
+      routes: [
+        GoRoute(
+          path: '/reset-password',
+          builder: (_, _) => const ResetPasswordScreen(initialEmail: ''),
+        ),
+        GoRoute(
+          path: '/login',
+          builder: (_, _) => const Scaffold(body: Text('Prijava test')),
+        ),
+      ],
+    );
+    addTearDown(api.close);
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+
+    final backToLogin = find.byKey(const Key('reset-password-back-to-login'));
+    await tester.ensureVisible(backToLogin);
+    await tester.tap(backToLogin);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Prijava test'), findsOneWidget);
+    expect(resetRequests, 0);
+  });
+
+  testWidgets('mobile profile shows username as read-only identity', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final auth = AuthController();
+    final api = ApiClient(
+      auth,
+      baseUrlOverride: 'http://test.local',
+      httpClient: MockClient((request) async {
+        if (request.url.path == '/api/auth/login') {
+          return _jsonResponse({
+            'accessToken': 'access-token',
+            'refreshToken': 'refresh-token',
+            'user': {
+              'id': 'member-1',
+              'displayName': 'Član Test',
+              'role': 'Member',
+            },
+          });
+        }
+        if (request.url.path == '/api/profile') {
+          return _jsonResponse({
+            'id': 'member-1',
+            'username': 'clan.test',
+            'displayName': 'Član Test',
+            'email': 'clan@example.test',
+            'phoneNumber': null,
+          });
+        }
+        return _jsonResponse({}, statusCode: 404);
+      }),
+    );
+    auth.attachApi(api);
+    await auth.login('clan.test', 'Test123!');
+    addTearDown(api.close);
+    addTearDown(auth.dispose);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<ApiClient>.value(value: api),
+          ChangeNotifierProvider.value(value: auth),
+        ],
+        child: const MaterialApp(home: Scaffold(body: ProfileScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('profile-username')), findsOneWidget);
+    expect(find.text('@clan.test'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, 'clan.test'), findsNothing);
+  });
+
   testWidgets('login exposes and opens password recovery', (tester) async {
     final router = GoRouter(
       initialLocation: '/login',
@@ -1665,9 +1975,9 @@ void main() {
   ) async {
     var requestCount = 0;
     final client = MockClient((request) async {
-      requestCount++;
       final membership = {
         'id': 'membership-1',
+        'gymId': 'gym-1',
         'gymName': 'Test Gym',
         'planName': 'Mjesečna',
         'price': 50,
@@ -1679,11 +1989,35 @@ void main() {
         'allowedActions': ['cancel'],
         'concurrencyToken': 'token-1',
       };
-      return http.Response(
-        jsonEncode(membership),
-        200,
-        headers: {'content-type': 'application/json; charset=utf-8'},
-      );
+      if (request.url.path == '/api/me/memberships/membership-1') {
+        requestCount++;
+        return _jsonResponse(membership);
+      }
+      if (request.url.path == '/api/gyms/gym-1') {
+        return _jsonResponse({
+          'id': 'gym-1',
+          'name': 'Test Gym',
+          'description': 'Opis teretane',
+          'address': 'Testna 1',
+          'city': 'Sarajevo',
+          'averageRating': 4.5,
+          'reviewCount': 2,
+          'imageUrls': <String>[],
+          'workingHours': <Object>[],
+          'equipment': <String>[],
+          'trainingTypes': <String>[],
+        });
+      }
+      if (request.url.path == '/api/gyms/gym-1/membership-plans' ||
+          request.url.path == '/api/gyms/gym-1/trainers') {
+        return _jsonResponse(<Object>[]);
+      }
+      if (request.url.path == '/api/gyms/gym-1/reviews' ||
+          request.url.path == '/api/me/memberships' ||
+          request.url.path == '/api/me/membership-requests') {
+        return _jsonResponse(_page(const <Object>[]));
+      }
+      return http.Response('', 404);
     });
     final api = ApiClient(
       _TestTokenSource(),
@@ -1704,7 +2038,14 @@ void main() {
 
     expect(find.text('Detalji članstva'), findsOneWidget);
     expect(find.text('Otkaži članstvo'), findsNothing);
+    expect(find.text('Otvori teretanu'), findsOneWidget);
     expect(requestCount, 1);
+
+    await tester.tap(find.byKey(const Key('membership-open-gym')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(GymDetailsScreen), findsOneWidget);
+    expect(find.text('Test Gym'), findsWidgets);
   });
 
   testWidgets('payment result refreshes authoritative server state', (

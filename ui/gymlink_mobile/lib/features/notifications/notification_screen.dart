@@ -6,8 +6,10 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
+import '../../core/auth.dart';
 import '../../core/theme.dart';
 import '../chat/chat_screens.dart';
+import '../member/reservation_screen.dart';
 import 'notification_controller.dart';
 
 class NotificationBell extends StatelessWidget {
@@ -280,6 +282,12 @@ class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
       widget.item['targetType'] == 'conversation' &&
       widget.item['targetId'] != null;
 
+  bool get _canOpenCompletedReservation =>
+      context.read<AuthController>().session?.role == 'Member' &&
+      widget.item['category'] == 'reservation.completed' &&
+      widget.item['targetType'] == 'reservation' &&
+      widget.item['targetId'] != null;
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Detalji obavijesti')),
@@ -324,6 +332,22 @@ class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
             ),
             icon: const Icon(Icons.chat_bubble_outline),
             label: const Text('Otvori razgovor'),
+          ),
+        ],
+        if (_canOpenCompletedReservation) ...[
+          const SizedBox(height: 28),
+          FilledButton.icon(
+            key: const Key('notification-open-completed-reservation'),
+            onPressed: () => Navigator.push<void>(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ReservationDetailsScreen(
+                  reservationId: widget.item['targetId'].toString(),
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.event_available_outlined),
+            label: const Text('Otvori termin'),
           ),
         ],
       ],
