@@ -407,11 +407,8 @@ architectureReference/
 GymLink_Anur_Zjakic.docx
 RSII_Upute_za_izradu_seminarskog_rada_2025_26.pdf
 
-# Local Codex skills and generated architecture context
+# Local skills and generated architecture context
 .agents/skills/
-AGENTS.md
+/AGENTS.md
 # Local recommender design documentation
 recommender-dokumentacija.md
-
-AGENTS.md
-AGENTS.md

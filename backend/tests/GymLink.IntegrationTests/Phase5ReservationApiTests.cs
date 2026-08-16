@@ -774,6 +774,7 @@ public sealed class Phase5ReservationApiTests
                 "integration-test-reset-pepper-at-least-32-bytes");
             builder.UseSetting("Seed:Enabled", "true");
             builder.UseSetting("Seed:DefaultPassword", Password);
+            builder.UseSetting("RabbitMq:Enabled", "false");
             builder.ConfigureAppConfiguration((_, configuration) =>
                 configuration.AddInMemoryCollection(new Dictionary<string, string?>
                 {
@@ -787,6 +788,7 @@ public sealed class Phase5ReservationApiTests
                         "integration-test-reset-pepper-at-least-32-bytes",
                     ["Seed:Enabled"] = "true",
                     ["Seed:DefaultPassword"] = Password,
+                    ["RabbitMq:Enabled"] = "false",
                 }));
             builder.ConfigureServices(services =>
                 services.Replace(ServiceDescriptor.Singleton<

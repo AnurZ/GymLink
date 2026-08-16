@@ -48,6 +48,9 @@ public static class DependencyInjection
         services.AddScoped<IApplicationTransaction, ApplicationTransaction>();
         services.AddScoped<IOutboxWriter, OutboxWriter>();
         services.AddScoped<IConversationPairLock, ConversationPairLock>();
+        services.AddScoped<
+            IReservationWorkflowEventRecorder,
+            LoggingReservationWorkflowEventRecorder>();
         return services;
     }
 

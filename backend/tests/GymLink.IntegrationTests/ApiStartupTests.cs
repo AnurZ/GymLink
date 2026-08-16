@@ -194,6 +194,7 @@ public sealed class ApiStartupTests
             "PasswordReset__CodePepper",
             "integration-test-reset-pepper-at-least-32-bytes");
         Environment.SetEnvironmentVariable("Seed__Enabled", "false");
+        Environment.SetEnvironmentVariable("RabbitMq__Enabled", "false");
 
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -201,6 +202,7 @@ public sealed class ApiStartupTests
             builder.UseSetting(
                 "Database:MigrateOnStartup",
                 migrateOnStartup.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            builder.UseSetting("RabbitMq:Enabled", "false");
             if (configureServices is not null)
             {
                 builder.ConfigureServices(configureServices);

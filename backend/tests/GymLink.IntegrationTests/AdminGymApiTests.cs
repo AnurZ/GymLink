@@ -706,6 +706,7 @@ public sealed class AdminGymApiTests
                 "integration-test-reset-pepper-at-least-32-bytes");
             builder.UseSetting("Seed:Enabled", "true");
             builder.UseSetting("Seed:DefaultPassword", Password);
+            builder.UseSetting("RabbitMq:Enabled", "false");
             builder.UseSetting("Geocoding:Enabled", geocodingHandler is null ? "false" : "true");
             builder.UseSetting("Geocoding:BaseUrl", "https://nominatim.test");
             builder.UseSetting("Geocoding:UserAgent", "GymLink.Tests/1.0");
@@ -725,6 +726,7 @@ public sealed class AdminGymApiTests
                         "integration-test-reset-pepper-at-least-32-bytes",
                     ["Seed:Enabled"] = "true",
                     ["Seed:DefaultPassword"] = Password,
+                    ["RabbitMq:Enabled"] = "false",
                     ["Geocoding:Enabled"] = geocodingHandler is null ? "false" : "true",
                     ["Geocoding:BaseUrl"] = "https://nominatim.test",
                     ["Geocoding:UserAgent"] = "GymLink.Tests/1.0",
