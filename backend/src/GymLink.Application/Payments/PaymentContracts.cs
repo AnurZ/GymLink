@@ -4,8 +4,6 @@ namespace GymLink.Application.Payments;
 
 public sealed record CreateMembershipPlanCheckoutRequest(Guid MembershipPlanId);
 
-public sealed record CreateManualMembershipPlanPaymentRequest(Guid MembershipPlanId);
-
 public sealed record CheckoutSessionDto(
     Guid PaymentId,
     string CheckoutUrl,
@@ -88,18 +86,6 @@ public interface IPaymentService
         Guid reservationId,
         CancellationToken cancellationToken);
 
-    Task<PaymentDto> CompleteManualMembershipPlanPaymentAsync(
-        Guid membershipPlanId,
-        CancellationToken cancellationToken);
-
-    Task<PaymentDto> CompleteManualMembershipPaymentAsync(
-        Guid membershipId,
-        CancellationToken cancellationToken);
-
-    Task<PaymentDto> CompleteManualReservationPaymentAsync(
-        Guid reservationId,
-        CancellationToken cancellationToken);
-
     Task<PaymentDto> GetMineAsync(Guid paymentId, CancellationToken cancellationToken);
 
     Task HandleWebhookAsync(
@@ -110,11 +96,6 @@ public interface IPaymentService
     Task<Guid?> ReconcileReturnAsync(
         string? providerSessionId,
         CancellationToken cancellationToken);
-}
-
-public interface IFakePaymentAvailability
-{
-    bool Enabled { get; }
 }
 
 public interface IPaymentReconciliationService

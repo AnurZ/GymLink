@@ -26,7 +26,8 @@ internal sealed class MembershipRequestService(
         CreateMembershipRequest request,
         CancellationToken cancellationToken)
     {
-        if (!Enum.IsDefined(request.PaymentMethod))
+        if (!Enum.IsDefined(request.PaymentMethod) ||
+            request.PaymentMethod == MembershipPaymentMethod.StripeFallback)
         {
             throw new ApplicationRuleException(
                 "unsupported_membership_payment_method",

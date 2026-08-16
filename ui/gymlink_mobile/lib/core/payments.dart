@@ -5,9 +5,9 @@ import 'package:url_launcher/url_launcher.dart';
 import 'api.dart';
 import 'theme.dart';
 
-enum MembershipPaymentMethod { stripe, stripeFallback, payInPerson }
+enum MembershipPaymentMethod { stripe, payInPerson }
 
-enum ReservationPaymentMethod { stripe, payInPerson, manual }
+enum ReservationPaymentMethod { stripe, payInPerson }
 
 Future<MembershipPaymentMethod?> chooseMembershipPaymentMethod(
   BuildContext context, {
@@ -32,21 +32,6 @@ Future<MembershipPaymentMethod?> chooseMembershipPaymentMethod(
           _stripePaymentTile(context, () {
             Navigator.pop(context, MembershipPaymentMethod.stripe);
           }),
-          Card(
-            child: ListTile(
-              key: const Key('membership-payment-manual'),
-              leading: const Icon(Icons.check_circle_outline),
-              title: const Text('Stripe fallback (testno)'),
-              subtitle: const Text(
-                'Dostupno kada je testno plaćanje omogućeno.',
-              ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.pop(
-                context,
-                MembershipPaymentMethod.stripeFallback,
-              ),
-            ),
-          ),
           if (allowPayInPerson)
             Card(
               child: ListTile(
@@ -89,16 +74,6 @@ Future<ReservationPaymentMethod?> chooseReservationPaymentMethod(
           _stripePaymentTile(context, () {
             Navigator.pop(context, ReservationPaymentMethod.stripe);
           }, key: const Key('reservation-payment-stripe')),
-          Card(
-            child: ListTile(
-              key: const Key('reservation-payment-manual'),
-              leading: const Icon(Icons.check_circle_outline),
-              title: const Text('Označi kao plaćeno (lokalno)'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () =>
-                  Navigator.pop(context, ReservationPaymentMethod.manual),
-            ),
-          ),
           Card(
             child: ListTile(
               key: const Key('reservation-payment-in-person'),

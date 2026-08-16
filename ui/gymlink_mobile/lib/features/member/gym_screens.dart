@@ -25,6 +25,7 @@ class _GymDiscoveryScreenState extends State<GymDiscoveryScreen> {
   Object? _error;
   bool _loading = true;
   bool _mapMode = true;
+  String? _selectedGymId;
 
   @override
   void initState() {
@@ -38,11 +39,16 @@ class _GymDiscoveryScreenState extends State<GymDiscoveryScreen> {
       _error = null;
     });
     try {
-      _data = await context.read<ApiClient>().page(
+      final data = await context.read<ApiClient>().page(
         '/api/gyms',
         authenticated: false,
         query: {'query': _search.text.trim()},
       );
+      _data = data;
+      if (_selectedGymId != null &&
+          !data.items.any((gym) => gym['id']?.toString() == _selectedGymId)) {
+        _selectedGymId = null;
+      }
     } catch (error) {
       _error = error;
     } finally {
@@ -119,6 +125,9 @@ class _GymDiscoveryScreenState extends State<GymDiscoveryScreen> {
               : _mapMode
               ? _GymMap(
                   gyms: _data!.items,
+                  selectedGymId: _selectedGymId,
+                  onSelectionChanged: (gymId) =>
+                      setState(() => _selectedGymId = gymId),
                   onOpen: (gym) => Navigator.push(
                     context,
                     MaterialPageRoute<void>(
@@ -154,8 +163,15 @@ class _GymDiscoveryScreenState extends State<GymDiscoveryScreen> {
 }
 
 class _GymMap extends StatefulWidget {
-  const _GymMap({required this.gyms, required this.onOpen});
+  const _GymMap({
+    required this.gyms,
+    required this.selectedGymId,
+    required this.onSelectionChanged,
+    required this.onOpen,
+  });
   final List<Map<String, dynamic>> gyms;
+  final String? selectedGymId;
+  final ValueChanged<String?> onSelectionChanged;
   final ValueChanged<Map<String, dynamic>> onOpen;
 
   @override
@@ -172,6 +188,12 @@ class _GymMapState extends State<_GymMap> {
   List<Map<String, dynamic>> get _validGyms => widget.gyms
       .where((gym) => gym['latitude'] is num && gym['longitude'] is num)
       .toList();
+
+  Map<String, dynamic>? get _selectedGym => widget.selectedGymId == null
+      ? null
+      : widget.gyms
+            .where((gym) => gym['id']?.toString() == widget.selectedGymId)
+            .firstOrNull;
 
   @override
   void didUpdateWidget(covariant _GymMap oldWidget) {
@@ -251,6 +273,119 @@ class _GymMapState extends State<_GymMap> {
     ),
   );
 
+  Widget _selectedGymPreview(BuildContext context, Map<String, dynamic> gym) {
+    final imageUrl = context.read<ApiClient>().mediaUrl(gym['primaryImageUrl']);
+    final price = gym['startingMembershipPrice'];
+    final currency = gym['currency']?.toString();
+    final priceLabel = price == null || currency == null || currency.isEmpty
+        ? 'Cijena članarine nije dostupna'
+        : '$price $currency/mjesec';
+    final address = [
+      gym['address']?.toString(),
+      gym['city']?.toString(),
+    ].where((part) => part != null && part.isNotEmpty).join(', ');
+
+    return Card(
+      key: Key('gym-map-preview-${gym['id']}'),
+      margin: EdgeInsets.zero,
+      elevation: 6,
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: SizedBox.square(
+                    dimension: 72,
+                    child: CachedNetworkImageView(
+                      key: Key('gym-map-preview-image-${gym['id']}'),
+                      imageUrl: imageUrl,
+                      decodeWidth: 144,
+                      decodeHeight: 144,
+                      fallback: const ColoredBox(
+                        color: Color(0xFFE8EDF7),
+                        child: Icon(
+                          Icons.fitness_center,
+                          color: GymLinkColors.blue,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        gym['name']?.toString() ?? 'Teretana',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      if (address.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          address,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                      const SizedBox(height: 7),
+                      Row(
+                        children: [
+                          const Icon(Icons.star, color: Colors.amber, size: 19),
+                          const SizedBox(width: 3),
+                          Text(
+                            gym['averageRating']?.toString() ?? '0',
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const Spacer(),
+                          Flexible(
+                            child: Text(
+                              priceLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.end,
+                              style: TextStyle(
+                                color: price == null
+                                    ? Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant
+                                    : GymLinkColors.blue,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                key: const Key('gym-map-preview-details'),
+                onPressed: () => widget.onOpen(gym),
+                child: const Text('Detalji'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final valid = _validGyms;
@@ -269,6 +404,7 @@ class _GymMapState extends State<_GymMap> {
                 initialCameraFit: valid.isEmpty ? null : _resultCameraFit,
                 minZoom: 6,
                 maxZoom: 19,
+                onTap: (_, _) => widget.onSelectionChanged(null),
               ),
               children: [
                 TileLayer(
@@ -290,7 +426,9 @@ class _GymMapState extends State<_GymMap> {
                             button: true,
                             label: gym['name'].toString(),
                             child: GestureDetector(
-                              onTap: () => widget.onOpen(gym),
+                              onTap: () => widget.onSelectionChanged(
+                                gym['id']?.toString(),
+                              ),
                               child: Container(
                                 padding: const EdgeInsets.all(3),
                                 decoration: BoxDecoration(
@@ -360,8 +498,8 @@ class _GymMapState extends State<_GymMap> {
               ),
             ),
             const Positioned(
-              right: 8,
-              bottom: 6,
+              left: 8,
+              top: 8,
               child: DecoratedBox(
                 decoration: BoxDecoration(color: Colors.white70),
                 child: Padding(
@@ -373,6 +511,13 @@ class _GymMapState extends State<_GymMap> {
                 ),
               ),
             ),
+            if (_selectedGym case final selectedGym?)
+              Positioned(
+                left: 10,
+                right: 10,
+                bottom: 10,
+                child: _selectedGymPreview(context, selectedGym),
+              ),
           ],
         ),
       ),
@@ -602,7 +747,6 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
     final paymentMethod = await chooseMembershipPaymentMethod(context);
     if (paymentMethod == null) return;
     if (!mounted) return;
-    final isFallback = paymentMethod == MembershipPaymentMethod.stripeFallback;
     final isPayInPerson = paymentMethod == MembershipPaymentMethod.payInPerson;
     if (paymentMethod == MembershipPaymentMethod.stripe) {
       if (!await confirmAction(
@@ -623,11 +767,6 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
           '/api/membership-requests',
           body: {'membershipPlanId': plan['id'], 'paymentMethod': 2},
         );
-      } else if (isFallback) {
-        await api.post(
-          '/api/payments/manual/memberships/pay',
-          body: {'membershipPlanId': plan['id']},
-        );
       } else {
         await openHostedCheckout(
           api,
@@ -636,13 +775,11 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
         );
       }
       await _load();
-      if ((isFallback || isPayInPerson) && mounted) {
+      if (isPayInPerson && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
+          const SnackBar(
             content: Text(
-              isPayInPerson
-                  ? 'Zahtjev je poslan. GymAdmin će ga potvrditi nakon plaćanja uživo.'
-                  : 'Testno plaćanje je uspješno evidentirano.',
+              'Zahtjev je poslan. GymAdmin će ga potvrditi nakon plaćanja uživo.',
             ),
           ),
         );
@@ -1034,23 +1171,11 @@ class _BookingScreenState extends State<BookingScreen> {
           '/api/payments/reservations/${reservation['id']}/checkout',
         );
       }
-      if (paymentMethod == ReservationPaymentMethod.manual) {
-        await api.post(
-          '/api/payments/manual/reservations/${reservation['id']}/pay',
-        );
-      }
       if (mounted) {
         context.read<ReservationRefreshController>().refresh();
         if (paymentMethod == ReservationPaymentMethod.payInPerson) {
           await showPayInPersonReservationSuccess(context);
           if (!mounted) return;
-        }
-        if (paymentMethod == ReservationPaymentMethod.manual) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Testno plaćanje je uspješno evidentirano.'),
-            ),
-          );
         }
         if (mounted) Navigator.pop(context, reservation);
       }

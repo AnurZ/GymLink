@@ -200,9 +200,6 @@ public static class DependencyInjection
         IServiceCollection services,
         IConfiguration configuration)
     {
-        services.AddSingleton<IFakePaymentAvailability>(
-            new FakePaymentAvailability(
-                configuration.GetValue<bool>("ALLOW_FAKE_PAYMENTS")));
         services.AddOptions<StripeOptions>()
             .Bind(configuration.GetSection(StripeOptions.SectionName))
             .Validate(

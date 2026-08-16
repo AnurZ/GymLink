@@ -228,32 +228,12 @@ class _MembershipDetailsScreenState extends State<MembershipDetailsScreen> {
 
   Future<void> _pay() async {
     final api = context.read<ApiClient>();
-    final paymentMethod = await chooseMembershipPaymentMethod(
-      context,
-      allowPayInPerson: false,
-    );
-    if (paymentMethod == null) return;
-    if (!mounted) return;
     setState(() => _paying = true);
     try {
-      if (paymentMethod == MembershipPaymentMethod.stripeFallback) {
-        await api.post(
-          '/api/payments/manual/memberships/${widget.membershipId}/pay',
-        );
-        await _load();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Testno plaćanje je uspješno evidentirano.'),
-            ),
-          );
-        }
-      } else {
-        await openHostedCheckout(
-          api,
-          '/api/payments/memberships/${widget.membershipId}/checkout',
-        );
-      }
+      await openHostedCheckout(
+        api,
+        '/api/payments/memberships/${widget.membershipId}/checkout',
+      );
     } on ApiProblem catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(

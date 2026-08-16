@@ -62,11 +62,9 @@ The Android application build for Members and Trainers is located at `artifacts/
 
 Docker Compose uses real Stripe sandbox Checkout by default. Stripe payments use the `sk_test_...` credentials from the private `.env`, open Stripe Checkout in the browser, and appear in the Stripe test dashboard. The standard test card is `4242 4242 4242 4242` with any future expiry date and CVC. For live webhook delivery, run `stripe listen --forward-to http://localhost:62287/api/webhooks/stripe` and place its current `whsec_...` value in `.env`; the success return also verifies the Checkout session directly with Stripe.
 
-Setting `ALLOW_FAKE_PAYMENTS=true` exposes a separate **Označi kao plaćeno** choice in the Android payment menu. That action calls the guarded manual-payment endpoint and changes the server-owned payment and target status without creating a Stripe transaction. It is an explicit evaluator fallback, not an automatic failover and not evidence of a real charge. Set `ALLOW_FAKE_PAYMENTS=false` to reject all manual-payment requests.
-
 ## App Behavior
 
-The Windows application is available only to Central Administrators and Gym Administrators. The Android application is available to Members and Trainers. A Member can purchase a gym membership through Stripe, book a Trainer appointment using Stripe or pay in person, and open a persistent chat after the reservation is confirmed. Trainers manage their availability and appointments, while Gym Administrators manage only their assigned gym. Payment and workflow status shown by the clients is always refreshed from the API.
+The Windows application is available only to Central Administrators and Gym Administrators. The Android application is available to Members and Trainers. A Member can purchase a gym membership or book a Trainer appointment using Stripe or pay in person, and open a persistent chat after the reservation is confirmed. Trainers manage their availability and appointments, while Gym Administrators manage only their assigned gym. Payment and workflow status shown by the clients is always refreshed from the API.
 
 ## RabbitMQ
 

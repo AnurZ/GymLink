@@ -413,7 +413,7 @@ void main() {
     expect(find.text('One or more validation errors occurred.'), findsNothing);
   });
 
-  testWidgets('reservation payment sheet explains all payment methods', (
+  testWidgets('reservation payment sheet offers Stripe and pay in person', (
     tester,
   ) async {
     ReservationPaymentMethod? selected;
@@ -436,9 +436,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Stripe'), findsOneWidget);
-    expect(find.text('Označi kao plaćeno (lokalno)'), findsOneWidget);
     expect(find.text('Plati uživo'), findsOneWidget);
-    expect(find.textContaining('ALLOW_FAKE_PAYMENTS'), findsNothing);
+    expect(find.byKey(const Key('reservation-payment-manual')), findsNothing);
     expect(find.textContaining('vanjski preglednik'), findsOneWidget);
     expect(find.textContaining('automatski ćete se vratiti'), findsOneWidget);
 
@@ -473,8 +472,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Stripe'), findsOneWidget);
-    expect(find.text('Stripe fallback (testno)'), findsOneWidget);
     expect(find.text('Plati uživo'), findsOneWidget);
+    expect(find.byKey(const Key('membership-payment-manual')), findsNothing);
     expect(
       find.text(
         'Nakon što platite članarinu u teretani, administrator će vam odobriti članstvo.',
@@ -1319,6 +1318,10 @@ void main() {
   testWidgets('Mobile gym map controls zoom, recenter, and preserve markers', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(800, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final gymQueries = <String?>[];
     final navigatorObserver = _RecordingNavigatorObserver();
     final client = MockClient((request) async {
@@ -1333,9 +1336,14 @@ void main() {
               {
                 'id': 'gym-sarajevo',
                 'name': 'Gym Sarajevo',
+                'address': 'Zmaja od Bosne 12',
+                'city': 'Sarajevo',
                 'latitude': 43.8563,
                 'longitude': 18.4131,
                 'primaryImageUrl': 'http://invalid.test/gym.jpg',
+                'startingMembershipPrice': 50,
+                'currency': 'KM',
+                'averageRating': 4.8,
               },
               {
                 'id': 'gym-mostar-initial',
@@ -1412,9 +1420,35 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('gym-map-marker-gym-sarajevo')));
     await tester.pump();
+    expect(navigatorObserver.pushCount, 1);
+    expect(
+      find.byKey(const Key('gym-map-preview-gym-sarajevo')),
+      findsOneWidget,
+    );
+    expect(find.text('Zmaja od Bosne 12, Sarajevo'), findsOneWidget);
+    expect(find.text('4.8'), findsOneWidget);
+    expect(find.text('50 KM/mjesec'), findsOneWidget);
+
+    final selectedMap = tester.widget<FlutterMap>(find.byType(FlutterMap));
+    selectedMap.options.onTap!(
+      const TapPosition(Offset.zero, Offset.zero),
+      const LatLng(43.85, 18.41),
+    );
+    await tester.pump();
+    expect(find.byKey(const Key('gym-map-preview-gym-sarajevo')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('gym-map-marker-gym-sarajevo')));
+    await tester.pump();
+    final detailsButton = find.byKey(const Key('gym-map-preview-details'));
+    await tester.ensureVisible(detailsButton);
+    await tester.tap(detailsButton);
+    await tester.pump();
     expect(navigatorObserver.pushCount, 2);
     navigatorObserver.navigator!.pop();
     await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('gym-discovery-map-zoom-in')),
+    );
 
     final map = tester.widget<FlutterMap>(find.byType(FlutterMap));
     final controller = map.mapController!;
@@ -1449,10 +1483,21 @@ void main() {
       isTrue,
     );
 
+    await tester.enterText(
+      find.byKey(const Key('gym-search-field')),
+      'Sarajevo',
+    );
+    await tester.tap(find.byKey(const Key('gym-search-submit')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('gym-map-preview-gym-sarajevo')),
+      findsOneWidget,
+    );
+
     await tester.enterText(find.byKey(const Key('gym-search-field')), 'Mostar');
     await tester.tap(find.byKey(const Key('gym-search-submit')));
     await tester.pumpAndSettle();
-    expect(gymQueries, [null, 'Mostar']);
+    expect(gymQueries, [null, 'Sarajevo', 'Mostar']);
     final updatedMap = tester.widget<FlutterMap>(find.byType(FlutterMap));
     final updatedController = updatedMap.mapController!;
     expect(updatedController.camera.zoom, 13);
@@ -1462,6 +1507,10 @@ void main() {
       find.byKey(const Key('gym-map-marker-gym-mostar'), skipOffstage: false),
       findsOneWidget,
     );
+    expect(find.byKey(const Key('gym-map-preview-gym-sarajevo')), findsNothing);
+    await tester.tap(find.byKey(const Key('gym-map-marker-gym-mostar')));
+    await tester.pump();
+    expect(find.text('Cijena članarine nije dostupna'), findsOneWidget);
 
     await tester.enterText(
       find.byKey(const Key('gym-search-field')),
@@ -1469,7 +1518,7 @@ void main() {
     );
     await tester.tap(find.byKey(const Key('gym-search-submit')));
     await tester.pumpAndSettle();
-    expect(gymQueries, [null, 'Mostar', 'Bez lokacije']);
+    expect(gymQueries, [null, 'Sarajevo', 'Mostar', 'Bez lokacije']);
     final fallbackMap = tester.widget<FlutterMap>(find.byType(FlutterMap));
     expect(fallbackMap.mapController!.camera.zoom, 8);
     expect(

@@ -25,7 +25,6 @@ internal sealed class PaymentService(
     IConversationRealtimeNotifier conversationNotifier,
     IMemberAssignmentActivator memberAssignmentActivator,
     IRecommendationActivityRecorder recommendationActivity,
-    IFakePaymentAvailability fakePayments,
     TimeProvider timeProvider,
     IIdentityAccountManager? identityAccounts = null) : IPaymentService
 {
@@ -42,44 +41,6 @@ internal sealed class PaymentService(
             cancellationToken);
         return await CreateMembershipCheckoutAsync(membershipId, cancellationToken);
     }
-
-    public async Task<PaymentDto> CompleteManualMembershipPlanPaymentAsync(
-        Guid membershipPlanId,
-        CancellationToken cancellationToken)
-    {
-        EnsureFakePaymentsEnabled();
-        var membershipId = await EnsureMembershipForPlanAsync(
-            membershipPlanId,
-            MembershipPaymentMethod.StripeFallback,
-            cancellationToken);
-        return await CompleteManualPaymentAsync(
-            PaymentPurpose.Membership,
-            membershipId,
-            cancellationToken);
-    }
-
-    public async Task<PaymentDto> CompleteManualMembershipPaymentAsync(
-        Guid membershipId,
-        CancellationToken cancellationToken)
-    {
-        EnsureFakePaymentsEnabled();
-        await SetMembershipPaymentMethodAsync(
-            membershipId,
-            MembershipPaymentMethod.StripeFallback,
-            cancellationToken);
-        return await CompleteManualPaymentAsync(
-            PaymentPurpose.Membership,
-            membershipId,
-            cancellationToken);
-    }
-
-    public Task<PaymentDto> CompleteManualReservationPaymentAsync(
-        Guid reservationId,
-        CancellationToken cancellationToken) =>
-        CompleteManualPaymentAsync(
-            PaymentPurpose.TrainerReservation,
-            reservationId,
-            cancellationToken);
 
     private async Task<Guid> EnsureMembershipForPlanAsync(
         Guid membershipPlanId,
@@ -191,9 +152,8 @@ internal sealed class PaymentService(
         Guid membershipId,
         CancellationToken cancellationToken)
     {
-        await SetMembershipPaymentMethodAsync(
+        await SetMembershipPaymentMethodToStripeAsync(
             membershipId,
-            MembershipPaymentMethod.Stripe,
             cancellationToken);
         return await CreateCheckoutAsync(
             PaymentPurpose.Membership,
@@ -216,77 +176,6 @@ internal sealed class PaymentService(
             .SingleOrDefaultAsync(x => x.Id == paymentId && x.UserId == userId, cancellationToken)
             ?? throw PaymentNotFound();
         return Map(payment);
-    }
-
-    private async Task<PaymentDto> CompleteManualPaymentAsync(
-        PaymentPurpose purpose,
-        Guid targetId,
-        CancellationToken cancellationToken)
-    {
-        EnsureFakePaymentsEnabled();
-        ConversationProvisioningResult? provisionedConversation = null;
-        var result = await transaction.ExecuteSerializableAsync(async ct =>
-        {
-            var userId = RequireUser();
-            var existing = await dbContext.Payments.IgnoreQueryFilters()
-                .SingleOrDefaultAsync(
-                    x => x.Purpose == purpose &&
-                         x.TargetId == targetId &&
-                         x.UserId == userId &&
-                         OpenOrSuccessful.Contains(x.Status),
-                    ct);
-            if (existing?.Status == PaymentStatus.Succeeded)
-            {
-                return Map(existing);
-            }
-
-            var quote = await LoadQuoteAsync(purpose, targetId, userId, ct);
-            var payment = existing ?? new Payment(
-                quote.TenantId,
-                purpose,
-                targetId,
-                userId,
-                quote.Amount,
-                quote.Currency,
-                $"manual:{purpose}:{targetId}:{Guid.NewGuid():N}");
-            var now = timeProvider.GetUtcNow().UtcDateTime;
-            var manualReference = $"manual:{payment.Id:N}";
-
-            using (tenantMutationScope.Begin(quote.TenantId))
-            {
-                if (existing is null)
-                {
-                    dbContext.Payments.Add(payment);
-                }
-                if (payment.Status == PaymentStatus.Created)
-                {
-                    payment.StartCheckout(
-                        manualReference,
-                        quote.DeadlineUtc ?? now.AddMinutes(15));
-                }
-
-                payment.Succeed(
-                    manualReference,
-                    manualReference,
-                    payment.Amount,
-                    payment.Currency,
-                    now);
-                provisionedConversation = await ActivateTargetAsync(payment, now, ct);
-                await AddPaidNotificationAsync(payment, now, ct);
-                await dbContext.SaveChangesAsync(ct);
-            }
-
-            return Map(payment);
-        }, cancellationToken);
-
-        if (provisionedConversation is { Created: true })
-        {
-            await conversationNotifier.ConversationAvailableAsync(
-                provisionedConversation,
-                CancellationToken.None);
-        }
-
-        return result;
     }
 
     public async Task HandleWebhookAsync(
@@ -852,9 +741,8 @@ internal sealed class PaymentService(
             ? currentUser.UserId.Value
             : throw new AuthorizationDeniedException();
 
-    private async Task SetMembershipPaymentMethodAsync(
+    private async Task SetMembershipPaymentMethodToStripeAsync(
         Guid membershipId,
-        MembershipPaymentMethod paymentMethod,
         CancellationToken cancellationToken)
     {
         var userId = RequireUser();
@@ -875,20 +763,10 @@ internal sealed class PaymentService(
                 "Only a membership awaiting payment can change payment method.");
         }
 
-        target.Request.PaymentMethod = paymentMethod;
+        target.Request.PaymentMethod = MembershipPaymentMethod.Stripe;
         using (tenantMutationScope.Begin(target.Membership.TenantId))
         {
             await dbContext.SaveChangesAsync(cancellationToken);
-        }
-    }
-
-    private void EnsureFakePaymentsEnabled()
-    {
-        if (!fakePayments.Enabled)
-        {
-            throw new ApplicationRuleException(
-                "fake_payments_disabled",
-                "Manual test payments are disabled.");
         }
     }
 

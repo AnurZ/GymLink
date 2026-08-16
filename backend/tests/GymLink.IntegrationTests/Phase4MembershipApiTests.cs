@@ -81,7 +81,7 @@ public sealed class Phase4MembershipApiTests
     }
 
     [Fact]
-    public async Task Manual_payment_requires_flag_and_coexists_with_Stripe_checkout()
+    public async Task Manual_payment_routes_are_removed_and_legacy_method_cannot_be_selected()
     {
         var databaseName = $"GymLink_ManualPayment_{Guid.NewGuid():N}";
         var connectionString = TestSqlServer.ConnectionString(databaseName);
@@ -92,49 +92,39 @@ public sealed class Phase4MembershipApiTests
                 await migration.Database.MigrateAsync();
             }
 
-            AuthSessionDto member;
-            Guid planId;
-            await using (var disabledFactory = CreateFactory(connectionString))
-            using (var disabledClient = disabledFactory.CreateClient())
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            var member = await RegisterAsync(client);
+            var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
+            Authorize(client, member);
+
+            var legacyMethod = await client.PostAsJsonAsync(
+                "/api/membership-requests",
+                new
+                {
+                    membershipPlanId = planId,
+                    paymentMethod = "StripeFallback",
+                });
+            Assert.Equal(HttpStatusCode.BadRequest, legacyMethod.StatusCode);
+            Assert.Equal(
+                "unsupported_membership_payment_method",
+                await ReadProblemCodeAsync(legacyMethod));
+
+            var removedRoutes = new[]
             {
-                member = await RegisterAsync(disabledClient);
-                planId = await FindPlanAsync(
-                    disabledClient,
-                    "Sportska Akademija Respect");
-                Authorize(disabledClient, member);
-                var disabled = await disabledClient.PostAsJsonAsync(
+                await client.PostAsJsonAsync(
                     "/api/payments/manual/memberships/pay",
-                    new { membershipPlanId = planId });
-                Assert.Equal(HttpStatusCode.BadRequest, disabled.StatusCode);
-                Assert.Equal("fake_payments_disabled", await ReadProblemCodeAsync(disabled));
-            }
-
-            await using var enabledFactory = CreateFactory(
-                connectionString,
-                allowFakePayments: true);
-            using var enabledClient = enabledFactory.CreateClient();
-            Authorize(enabledClient, member);
-
-            var checkout = await enabledClient.PostAsJsonAsync(
-                "/api/payments/memberships/checkout",
-                new { membershipPlanId = planId });
-            checkout.EnsureSuccessStatusCode();
-            var checkoutResult = await checkout.Content
-                .ReadFromJsonAsync<CheckoutSessionDto>();
-            Assert.NotNull(checkoutResult);
-            Assert.StartsWith("https://checkout.test/", checkoutResult.CheckoutUrl);
-
-            var manual = await enabledClient.PostAsJsonAsync(
-                "/api/payments/manual/memberships/pay",
-                new { membershipPlanId = planId });
-            manual.EnsureSuccessStatusCode();
-            var payment = await manual.Content.ReadFromJsonAsync<PaymentDto>();
-            Assert.NotNull(payment);
-            Assert.True(payment.IsPaid);
-
-            var active = Assert.Single((await GetMineAsync(enabledClient)).Items);
-            Assert.Equal(MembershipStatus.Active, active.Status);
-            Assert.True(active.IsPaid);
+                    new { membershipPlanId = planId }),
+                await client.PostAsync(
+                    $"/api/payments/manual/memberships/{Guid.NewGuid()}/pay",
+                    null),
+                await client.PostAsync(
+                    $"/api/payments/manual/reservations/{Guid.NewGuid()}/pay",
+                    null),
+            };
+            Assert.All(
+                removedRoutes,
+                response => Assert.Equal(HttpStatusCode.NotFound, response.StatusCode));
         }
         finally
         {
@@ -715,8 +705,7 @@ public sealed class Phase4MembershipApiTests
     }
 
     private static WebApplicationFactory<Program> CreateFactory(
-        string connectionString,
-        bool allowFakePayments = false) =>
+        string connectionString) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
@@ -731,7 +720,6 @@ public sealed class Phase4MembershipApiTests
                 "integration-test-reset-pepper-at-least-32-bytes");
             builder.UseSetting("Seed:Enabled", "true");
             builder.UseSetting("Seed:DefaultPassword", Password);
-            builder.UseSetting("ALLOW_FAKE_PAYMENTS", allowFakePayments.ToString());
             builder.ConfigureAppConfiguration((_, configuration) =>
             {
                 var values = new Dictionary<string, string?>
@@ -746,7 +734,6 @@ public sealed class Phase4MembershipApiTests
                         "integration-test-reset-pepper-at-least-32-bytes",
                     ["Seed:Enabled"] = "true",
                     ["Seed:DefaultPassword"] = Password,
-                    ["ALLOW_FAKE_PAYMENTS"] = allowFakePayments.ToString(),
                 };
                 configuration.AddInMemoryCollection(values);
             });
