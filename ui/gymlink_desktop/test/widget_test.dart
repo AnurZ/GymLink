@@ -885,6 +885,10 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const Key('gym-manual-city')), findsOneWidget);
+    expect(
+      find.byKey(const Key('gym-manual-city-reference-hint')),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const Key('gym-manual-city')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Sarajevo').last);
@@ -1070,8 +1074,8 @@ void main() {
       expect(find.text('GymAdmin'), findsWidgets);
       expect(
         find.text(
-          'Odabrani korisnik je već dodijeljen drugoj teretani. '
-          'Izaberite drugog korisnika.',
+          'Odabrani račun ima aktivno članstvo ili drugu aktivnu dodjelu '
+          'teretani. Registrujte novi Member račun bez aktivnog članstva.',
         ),
         findsOneWidget,
       );
@@ -1156,12 +1160,196 @@ void main() {
 
     expect(
       find.text(
-        'Odabrani korisnik je već dodijeljen drugoj teretani. Prvo opozovite postojeću ulogu.',
+        'Odabrani račun ima aktivno članstvo ili drugu aktivnu dodjelu '
+        'teretani. Registrujte novi Member račun bez aktivnog članstva.',
       ),
       findsOneWidget,
     );
     expect(find.text('Sačuvani razlog'), findsOneWidget);
     expect(find.byType(AlertDialog), findsOneWidget);
+  });
+
+  testWidgets(
+    'CentralAdmin CRUD overviews use column tables and icon actions',
+    (tester) async {
+      tester.view.physicalSize = const Size(1000, 760);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _CentralCrudApi();
+      Finder horizontalTableScroll() => find.byWidgetPredicate(
+        (widget) =>
+            widget is SingleChildScrollView &&
+            widget.scrollDirection == Axis.horizontal,
+      );
+
+      Future<void> show(Widget screen) => tester.pumpWidget(
+        Provider<ApiClient>.value(
+          value: api,
+          child: MaterialApp(
+            theme: buildGymLinkTheme(),
+            home: Scaffold(body: screen),
+          ),
+        ),
+      );
+
+      await show(const RegistrationManagementScreen());
+      await tester.pumpAndSettle();
+      expect(find.byType(DataTable), findsOneWidget);
+      expect(horizontalTableScroll(), findsOneWidget);
+      for (final heading in [
+        'Teretana',
+        'Lokacija',
+        'Opis',
+        'Status',
+        'Akcije',
+      ]) {
+        expect(find.text(heading), findsOneWidget);
+      }
+      expect(find.byTooltip('Odobri'), findsOneWidget);
+      expect(find.byTooltip('Odbij'), findsOneWidget);
+
+      await show(const UserManagementScreen());
+      await tester.pumpAndSettle();
+      expect(find.byType(DataTable), findsOneWidget);
+      expect(horizontalTableScroll(), findsOneWidget);
+      for (final heading in [
+        'Korisnik',
+        'Email',
+        'Teretana',
+        'Uloga',
+        'Status',
+        'Akcije',
+      ]) {
+        expect(find.text(heading), findsOneWidget);
+      }
+      expect(find.byTooltip('Deaktiviraj račun'), findsOneWidget);
+
+      await show(const ReferenceDataScreen());
+      await tester.pumpAndSettle();
+      expect(find.byType(DataTable), findsOneWidget);
+      expect(horizontalTableScroll(), findsOneWidget);
+      expect(find.text('Slobodni utezi'), findsOneWidget);
+      expect(find.byTooltip('Uredi'), findsOneWidget);
+      expect(find.byTooltip('Deaktiviraj'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('CentralAdmin refresh keeps prior gym and user rows on failure', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1500, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final gymGate = Completer<void>();
+    final gymApi = _CentralCrudApi(
+      failGymRefresh: true,
+      gymRefreshGate: gymGate,
+    );
+    await tester.pumpWidget(_centralHarness(gymApi));
+    await tester.pumpAndSettle();
+    expect(find.text('Nova teretana'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('refresh-central-gyms')));
+    await tester.pump();
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('refresh-central-gyms')))
+          .onPressed,
+      isNull,
+    );
+    gymGate.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Nova teretana'), findsOneWidget);
+    expect(find.textContaining('prethodni podaci'), findsOneWidget);
+
+    final userApi = _CentralCrudApi(failUserRefresh: true);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: userApi,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: UserManagementScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('refresh-central-users')));
+    await tester.pumpAndSettle();
+    expect(find.text('Owner Account'), findsOneWidget);
+    expect(find.textContaining('prethodni podaci'), findsOneWidget);
+  });
+
+  testWidgets('user account action icons stay aligned between rows', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: _UserActionAlignmentApi(),
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: UserManagementScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final memberAction = find.byKey(
+      const Key('toggle-user-active-user-member'),
+    );
+    final gymAdminAction = find.byKey(
+      const Key('toggle-user-active-user-gym-admin'),
+    );
+    expect(memberAction, findsOneWidget);
+    expect(gymAdminAction, findsOneWidget);
+    expect(
+      tester.getCenter(memberAction).dx,
+      tester.getCenter(gymAdminAction).dx,
+    );
+    expect(find.byKey(const Key('revoke-role-user-member')), findsNothing);
+    expect(find.byKey(const Key('revoke-role-user-gym-admin')), findsOneWidget);
+  });
+
+  testWidgets('GymAdmin dashboard refresh preserves summaries on failure', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final gate = Completer<void>();
+    final api = _GymDashboardApi(refreshGate: gate, failRefresh: true);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: GymDashboardScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Aktivni članovi'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('refresh-gym-dashboard')));
+    await tester.pump();
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('refresh-gym-dashboard')))
+          .onPressed,
+      isNull,
+    );
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Aktivni članovi'), findsOneWidget);
+    expect(find.textContaining('prethodni podaci'), findsOneWidget);
   });
 
   testWidgets('stale activation conflict refreshes and shows blockers', (
@@ -1223,8 +1411,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Centralni administrator'), findsNothing);
-    await tester.tap(find.text('Trener').last);
+    await tester.tap(find.text('Administrator teretane').last);
     await tester.pumpAndSettle();
+    expect(find.textContaining('bez aktivnog članstva'), findsOneWidget);
     await tester.tap(find.text('Odustani'));
     await tester.pumpAndSettle();
 
@@ -1240,6 +1429,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Države'), findsNothing);
     expect(find.text('Gradovi'), findsOneWidget);
+    expect(find.text('Oprema'), findsWidgets);
+    expect(find.byType(DataTable), findsOneWidget);
+    await tester.tap(find.text('Gradovi'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('city-reference-manual-address-hint')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('GymAdmin edits recurring shifts instead of manual slots', (
@@ -1312,6 +1509,10 @@ void main() {
     expect(api.promotionBody?['reason'], 'Odobrio GymAdmin');
     expect(api.promotionBody?['trainingTypeIds'], ['type-1']);
     expect(find.text('Dodajte uslugu trenera'), findsOneWidget);
+    expect(
+      find.textContaining('aktivnu uslugu i kreiran raspored'),
+      findsOneWidget,
+    );
     expect(find.text('Dodaj uslugu'), findsWidgets);
     await tester.tap(find.text('Kasnije'));
     await tester.pumpAndSettle();
@@ -1946,6 +2147,151 @@ class _CentralAdminApi extends ApiClient {
       return const {};
     }
     throw StateError('Unexpected post request: $path');
+  }
+}
+
+class _CentralCrudApi extends _CentralAdminApi {
+  _CentralCrudApi({
+    this.failGymRefresh = false,
+    this.failUserRefresh = false,
+    this.gymRefreshGate,
+  });
+
+  final bool failGymRefresh;
+  final bool failUserRefresh;
+  final Completer<void>? gymRefreshGate;
+  int gymLoads = 0;
+  int userLoads = 0;
+
+  @override
+  Future<PagedData> page(
+    String path, {
+    Map<String, Object?> query = const {},
+  }) async {
+    if (path == '/api/admin/gym-registration-requests') {
+      return const PagedData(
+        items: [
+          {
+            'id': 'registration-1',
+            'gymName': 'Teretana u prijavi',
+            'address': 'Prijavna 1',
+            'cityName': 'Sarajevo',
+            'description': 'Opis prijavljene teretane',
+            'status': 1,
+            'createdTenantId': null,
+          },
+        ],
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
+      );
+    }
+    if (path == '/api/admin/gyms') {
+      gymLoads++;
+      if (gymLoads > 1) {
+        await gymRefreshGate?.future;
+        if (failGymRefresh) {
+          throw StateError('gym refresh failed');
+        }
+      }
+    }
+    if (path == '/api/admin/users') {
+      userLoads++;
+      if (userLoads > 1 && failUserRefresh) {
+        throw StateError('user refresh failed');
+      }
+    }
+    return super.page(path, query: query);
+  }
+}
+
+class _UserActionAlignmentApi extends _CentralAdminApi {
+  @override
+  Future<PagedData> page(
+    String path, {
+    Map<String, Object?> query = const {},
+  }) async {
+    if (path == '/api/admin/users') {
+      return const PagedData(
+        items: [
+          {
+            'id': 'user-member',
+            'username': 'member',
+            'email': 'member@gymlink.local',
+            'displayName': 'Member Account',
+            'role': 'Member',
+            'isActive': true,
+          },
+          {
+            'id': 'user-gym-admin',
+            'username': 'gym-admin',
+            'email': 'gym-admin@gymlink.local',
+            'displayName': 'GymAdmin Account',
+            'role': 'GymAdmin',
+            'isActive': true,
+          },
+        ],
+        page: 1,
+        pageSize: 10,
+        totalCount: 2,
+      );
+    }
+    return super.page(path, query: query);
+  }
+}
+
+class _GymDashboardApi extends ApiClient {
+  _GymDashboardApi({this.refreshGate, this.failRefresh = false})
+    : super(_TestTokens());
+
+  final Completer<void>? refreshGate;
+  final bool failRefresh;
+  int loadCycles = 0;
+
+  @override
+  Future<PagedData> page(
+    String path, {
+    Map<String, Object?> query = const {},
+  }) async {
+    if (path == '/api/tenant/membership-requests') loadCycles++;
+    if (loadCycles > 1) {
+      await refreshGate?.future;
+      if (failRefresh) throw StateError('dashboard refresh failed');
+    }
+    return switch (path) {
+      '/api/tenant/membership-requests' => const PagedData(
+        items: [],
+        page: 1,
+        pageSize: 20,
+        totalCount: 2,
+      ),
+      '/api/tenant/memberships' => const PagedData(
+        items: [],
+        page: 1,
+        pageSize: 20,
+        totalCount: 12,
+      ),
+      '/api/tenant/trainers' => const PagedData(
+        items: [],
+        page: 1,
+        pageSize: 20,
+        totalCount: 3,
+      ),
+      '/api/tenant/reservations' => const PagedData(
+        items: [
+          {
+            'memberName': 'Test Member',
+            'trainerName': 'Test Trainer',
+            'startsAtUtc': '2026-08-21T10:00:00Z',
+            'status': 1,
+          },
+        ],
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
+      ),
+      _ => throw StateError('Unexpected page request: $path'),
+    };
   }
 }
 

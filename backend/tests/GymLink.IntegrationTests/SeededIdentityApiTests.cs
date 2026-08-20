@@ -25,6 +25,97 @@ public sealed class SeededIdentityApiTests
     private const string SigningKey = "integration-test-signing-key-at-least-32-bytes";
 
     [Fact]
+    public async Task Manually_replaced_preferences_regenerate_and_influence_recommendations()
+    {
+        var databaseName = $"GymLink_ManualPreferences_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+
+        try
+        {
+            await using (var migrationContext = CreateContext(connectionString))
+            {
+                await migrationContext.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            var member = await LoginAsync(client, "mobile1");
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", member.AccessToken);
+
+            var clearResponse = await client.PutAsJsonAsync(
+                "/api/me/preferences",
+                new { items = Array.Empty<object>() });
+            clearResponse.EnsureSuccessStatusCode();
+            var baseline = await client.GetFromJsonAsync<RecommendationFeedDto>(
+                "/api/me/recommendations?limit=20");
+            Assert.NotNull(baseline);
+
+            var baselineGym = baseline.Items
+                .Where(x => x.TargetType == RecommendationTargetType.Gym)
+                .OrderBy(x => x.Score)
+                .ThenBy(x => x.TargetId)
+                .First();
+            var baselineGymOrder = baseline.Items
+                .Where(x => x.TargetType == RecommendationTargetType.Gym)
+                .ToList();
+            var baselineRank = baselineGymOrder.FindIndex(
+                x => x.TargetId == baselineGym.TargetId);
+            Guid cityId;
+            Guid trainingTypeId;
+            await using (var context = CreateContext(connectionString))
+            {
+                var matchingReference = await (
+                        from gym in context.Gyms.IgnoreQueryFilters().AsNoTracking()
+                        join link in context.GymTrainingTypes.IgnoreQueryFilters().AsNoTracking()
+                            on gym.Id equals link.GymId
+                        where gym.Id == baselineGym.TargetId
+                        orderby link.TrainingTypeId
+                        select new { gym.CityId, link.TrainingTypeId })
+                    .FirstAsync();
+                cityId = matchingReference.CityId;
+                trainingTypeId = matchingReference.TrainingTypeId;
+            }
+
+            var replaceResponse = await client.PutAsJsonAsync(
+                "/api/me/preferences",
+                new
+                {
+                    items = new[]
+                    {
+                        new { cityId, trainingTypeId },
+                    },
+                });
+            replaceResponse.EnsureSuccessStatusCode();
+            var savedPreferences = await replaceResponse.Content
+                .ReadFromJsonAsync<IReadOnlyList<PreferenceDto>>();
+            var savedPreference = Assert.Single(savedPreferences!);
+            Assert.Equal(1.0m, savedPreference.Weight);
+
+            var personalized = await client.GetFromJsonAsync<RecommendationFeedDto>(
+                "/api/me/recommendations?limit=20");
+            Assert.NotNull(personalized);
+            var personalizedGym = Assert.Single(
+                personalized.Items,
+                x => x.TargetType == RecommendationTargetType.Gym &&
+                     x.TargetId == baselineGym.TargetId);
+            Assert.True(personalizedGym.Score > baselineGym.Score);
+            Assert.Contains("preferiranom tipu treninga", personalizedGym.Reason);
+            var personalizedRank = personalized.Items
+                .Where(x => x.TargetType == RecommendationTargetType.Gym)
+                .ToList()
+                .FindIndex(x => x.TargetId == baselineGym.TargetId);
+            Assert.True(personalizedRank < baselineRank);
+            Assert.True(personalized.GeneratedAtUtc > baseline.GeneratedAtUtc);
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
     public async Task CentralAdmin_user_search_handles_seeded_members_with_multiple_active_gym_assignments()
     {
         var databaseName = $"GymLink_AdminUsers_{Guid.NewGuid():N}";

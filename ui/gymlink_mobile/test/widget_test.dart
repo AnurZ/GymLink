@@ -2044,6 +2044,72 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('gym details show a locked map at the API coordinates', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client = MockClient((request) async {
+      final body = switch (request.url.path) {
+        '/api/gyms/gym-map' => {
+          'id': 'gym-map',
+          'name': 'Map Gym',
+          'description': 'Teretana sa lokacijom.',
+          'address': 'Zmaja od Bosne 12',
+          'city': 'Sarajevo',
+          'latitude': 43.8563,
+          'longitude': 18.4131,
+          'averageRating': 4.8,
+          'reviewCount': 12,
+          'imageUrls': <String>[],
+        },
+        '/api/gyms/gym-map/membership-plans' => <Object>[],
+        '/api/gyms/gym-map/trainers' => <Object>[],
+        '/api/gyms/gym-map/reviews' => _page(<Object>[]),
+        '/api/me/memberships' => _page(<Object>[]),
+        '/api/me/membership-requests' => _page(<Object>[]),
+        _ => throw StateError('Unexpected request: ${request.url}'),
+      };
+      return _jsonResponse(body);
+    });
+    final api = ApiClient(
+      _TestTokenSource(),
+      httpClient: client,
+      baseUrlOverride: 'http://test.local',
+    );
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const GymDetailsScreen(gymId: 'gym-map'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final locationMap = find.byKey(const Key('gym-details-location-map'));
+    await tester.scrollUntilVisible(locationMap, 250);
+    await tester.pump();
+
+    expect(find.text('Lokacija'), findsOneWidget);
+    expect(locationMap, findsOneWidget);
+    expect(
+      find.byKey(const Key('gym-details-location-marker')),
+      findsOneWidget,
+    );
+    final flutterMap = tester.widget<FlutterMap>(
+      find.descendant(of: locationMap, matching: find.byType(FlutterMap)),
+    );
+    expect(flutterMap.options.initialCenter, const LatLng(43.8563, 18.4131));
+    expect(flutterMap.options.initialZoom, 15);
+    expect(flutterMap.options.interactionOptions.flags, InteractiveFlag.none);
+    expect(tester.getSize(locationMap).height, 220);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('membership details hide membership cancellation action', (
     tester,
   ) async {

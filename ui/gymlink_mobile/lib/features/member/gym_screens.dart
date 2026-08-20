@@ -917,6 +917,12 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
                     ),
                   ),
                 ),
+                _sectionTitle('Lokacija'),
+                _GymLocationPreview(
+                  latitude: _gym!['latitude'],
+                  longitude: _gym!['longitude'],
+                  label: '${_gym!['address']}, ${_gym!['city']}',
+                ),
                 _sectionTitle('Treneri i termini'),
                 if (_trainers.isEmpty)
                   const Text('Trenutno nema aktivnih trenera.')
@@ -1007,6 +1013,117 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
       ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
     ),
   );
+}
+
+class _GymLocationPreview extends StatelessWidget {
+  const _GymLocationPreview({
+    required this.latitude,
+    required this.longitude,
+    required this.label,
+  });
+
+  final Object? latitude;
+  final Object? longitude;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final latitudeValue = latitude is num
+        ? (latitude! as num).toDouble()
+        : null;
+    final longitudeValue = longitude is num
+        ? (longitude! as num).toDouble()
+        : null;
+    final hasValidCoordinates =
+        latitudeValue != null &&
+        longitudeValue != null &&
+        latitudeValue >= -90 &&
+        latitudeValue <= 90 &&
+        longitudeValue >= -180 &&
+        longitudeValue <= 180;
+    if (!hasValidCoordinates) {
+      return Card(
+        child: ListTile(
+          leading: const Icon(Icons.location_off_outlined),
+          title: Text(label),
+          subtitle: const Text('Lokacija trenutno nije dostupna na mapi.'),
+        ),
+      );
+    }
+
+    final point = LatLng(latitudeValue, longitudeValue);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Semantics(
+        label: 'Lokacija teretane: $label',
+        image: true,
+        child: SizedBox(
+          key: const Key('gym-details-location-map'),
+          height: 220,
+          child: Stack(
+            children: [
+              FlutterMap(
+                options: MapOptions(
+                  initialCenter: point,
+                  initialZoom: 15,
+                  minZoom: 15,
+                  maxZoom: 15,
+                  interactionOptions: const InteractionOptions(
+                    flags: InteractiveFlag.none,
+                  ),
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate:
+                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'ba.gymlink.gymlink_mobile',
+                  ),
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        key: const Key('gym-details-location-marker'),
+                        point: point,
+                        width: 48,
+                        height: 48,
+                        child: const DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(blurRadius: 8, color: Colors.black26),
+                            ],
+                          ),
+                          child: Icon(
+                            Icons.location_on,
+                            color: GymLinkColors.blue,
+                            size: 34,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const Positioned(
+                left: 8,
+                top: 8,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(color: Colors.white70),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    child: Text(
+                      '© OpenStreetMap contributors',
+                      style: TextStyle(fontSize: 10),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class BookingScreen extends StatefulWidget {

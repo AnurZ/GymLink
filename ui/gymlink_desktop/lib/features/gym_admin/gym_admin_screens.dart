@@ -37,6 +37,7 @@ class GymDashboardScreen extends StatefulWidget {
 
 class _GymDashboardScreenState extends State<GymDashboardScreen> {
   bool _loading = true;
+  bool _refreshing = false;
   Object? _error;
   Map<String, int> _counts = const {};
   List<Map<String, dynamic>> _upcoming = const [];
@@ -47,10 +48,14 @@ class _GymDashboardScreenState extends State<GymDashboardScreen> {
     _load();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool preserveData = false}) async {
     setState(() {
-      _loading = true;
-      _error = null;
+      if (preserveData && _counts.isNotEmpty) {
+        _refreshing = true;
+      } else {
+        _loading = true;
+        _error = null;
+      }
     });
     try {
       final api = context.read<ApiClient>();
@@ -71,9 +76,24 @@ class _GymDashboardScreenState extends State<GymDashboardScreen> {
       };
       _upcoming = results[3].items.take(5).toList();
     } catch (error) {
-      _error = error;
+      if (preserveData && _counts.isNotEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Osvježavanje nije uspjelo. Prikazani su prethodni podaci.',
+            ),
+          ),
+        );
+      } else {
+        _error = error;
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
     }
   }
 
@@ -84,6 +104,23 @@ class _GymDashboardScreenState extends State<GymDashboardScreen> {
     onRetry: _load,
     child: ListView(
       children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton.tonalIcon(
+            key: const Key('refresh-gym-dashboard'),
+            onPressed: _loading || _refreshing
+                ? null
+                : () => _load(preserveData: true),
+            icon: _refreshing
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
+            label: const Text('Osvježi'),
+          ),
+        ),
+        const SizedBox(height: 14),
         Wrap(
           spacing: 16,
           runSpacing: 16,
@@ -800,7 +837,8 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
         title: const Text('Dodajte uslugu trenera'),
         content: Text(
           '${created['displayName'] ?? 'Novi trener'} je uspješno dodat. '
-          'Bez aktivne usluge korisnici ne mogu rezervisati njegove termine.',
+          'Da bi korisnici mogli pronaći slobodne termine i rezervisati ih, '
+          'trener mora imati aktivnu uslugu i kreiran raspored.',
         ),
         actions: [
           TextButton(

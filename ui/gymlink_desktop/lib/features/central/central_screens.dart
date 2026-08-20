@@ -10,6 +10,10 @@ import '../../core/api.dart';
 import '../../shared/widgets.dart';
 
 const _registrationStatuses = ['Draft', 'Submitted', 'Approved', 'Rejected'];
+const _gymAdminEligibilityHint =
+    'Registrujte novi aktivni korisnički račun kroz mobilnu aplikaciju. '
+    'Račun mora imati ulogu člana, bez aktivnog članstva i bez druge aktivne '
+    'dodjele teretani.';
 
 class CentralAdminRefresh extends ChangeNotifier {
   void dataChanged() => notifyListeners();
@@ -253,70 +257,133 @@ class _RegistrationManagementScreenState
           child: _items.isEmpty
               ? const EmptyState('Nema registracija za izabrani status.')
               : Card(
-                  child: ListView.separated(
-                    itemCount: _items.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (_, index) {
-                      final item = _items[index];
-                      final status = (item['status'] as num?)?.toInt() ?? -1;
-                      return ListTile(
-                        title: Text(item['gymName'].toString()),
-                        subtitle: Text(
-                          '${item['address']}, ${item['cityName']}\n${item['description']}',
-                        ),
-                        isThreeLine: true,
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            StatusPill(
-                              enumLabel(item['status'], _registrationStatuses),
-                            ),
-                            if (status == 1) ...[
-                              IconButton(
-                                tooltip: 'Odobri',
-                                onPressed: () => _decide(item, true),
-                                icon: const Icon(
-                                  Icons.check_circle_outline,
-                                  color: Colors.green,
+                  child: SingleChildScrollView(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        horizontalMargin: 16,
+                        columnSpacing: 28,
+                        dataRowMinHeight: 62,
+                        dataRowMaxHeight: 74,
+                        columns: const [
+                          DataColumn(label: Text('Teretana')),
+                          DataColumn(label: Text('Lokacija')),
+                          DataColumn(label: Text('Opis')),
+                          DataColumn(label: Text('Status')),
+                          DataColumn(label: Text('Akcije')),
+                        ],
+                        rows: _items.map((item) {
+                          final status =
+                              (item['status'] as num?)?.toInt() ?? -1;
+                          final location =
+                              '${item['address']}, ${item['cityName']}';
+                          final description = item['description'].toString();
+                          return DataRow(
+                            cells: [
+                              DataCell(
+                                SizedBox(
+                                  width: 190,
+                                  child: Text(
+                                    item['gymName'].toString(),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
                                 ),
                               ),
-                              IconButton(
-                                tooltip: 'Odbij',
-                                onPressed: () => _decide(item, false),
-                                icon: const Icon(
-                                  Icons.cancel_outlined,
-                                  color: Colors.red,
+                              DataCell(
+                                Tooltip(
+                                  message: location,
+                                  child: SizedBox(
+                                    width: 240,
+                                    child: Text(
+                                      location,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              DataCell(
+                                Tooltip(
+                                  message: description,
+                                  child: SizedBox(
+                                    width: 300,
+                                    child: Text(
+                                      description,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              DataCell(
+                                StatusPill(
+                                  enumLabel(
+                                    item['status'],
+                                    _registrationStatuses,
+                                  ),
+                                ),
+                              ),
+                              DataCell(
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (status == 1) ...[
+                                      IconButton(
+                                        tooltip: 'Odobri',
+                                        onPressed: () => _decide(item, true),
+                                        icon: const Icon(
+                                          Icons.check_circle_outline,
+                                          color: Colors.green,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Odbij',
+                                        onPressed: () => _decide(item, false),
+                                        icon: const Icon(
+                                          Icons.cancel_outlined,
+                                          color: Colors.red,
+                                        ),
+                                      ),
+                                    ],
+                                    if (item['createdTenantId'] != null)
+                                      PopupMenuButton<String>(
+                                        tooltip: 'Promijeni status teretane',
+                                        icon: const Icon(
+                                          Icons.sync_alt_outlined,
+                                        ),
+                                        onSelected: (action) =>
+                                            _tenantAction(item, action),
+                                        itemBuilder: (_) => const [
+                                          PopupMenuItem(
+                                            value: 'activate',
+                                            child: Text('Aktiviraj'),
+                                          ),
+                                          PopupMenuItem(
+                                            value: 'suspend',
+                                            child: Text('Suspenduj'),
+                                          ),
+                                          PopupMenuItem(
+                                            value: 'deactivate',
+                                            child: Text('Deaktiviraj'),
+                                          ),
+                                          PopupMenuItem(
+                                            value: 'reactivate',
+                                            child: Text('Ponovo aktiviraj'),
+                                          ),
+                                        ],
+                                      ),
+                                  ],
                                 ),
                               ),
                             ],
-                            if (item['createdTenantId'] != null)
-                              PopupMenuButton<String>(
-                                tooltip: 'Status teretane',
-                                onSelected: (action) =>
-                                    _tenantAction(item, action),
-                                itemBuilder: (_) => const [
-                                  PopupMenuItem(
-                                    value: 'activate',
-                                    child: Text('Aktiviraj'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'suspend',
-                                    child: Text('Suspenduj'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'deactivate',
-                                    child: Text('Deaktiviraj'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'reactivate',
-                                    child: Text('Ponovo aktiviraj'),
-                                  ),
-                                ],
-                              ),
-                          ],
-                        ),
-                      );
-                    },
+                          );
+                        }).toList(),
+                      ),
+                    ),
                   ),
                 ),
         ),
@@ -337,6 +404,7 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
   final _search = TextEditingController();
   List<Map<String, dynamic>> _items = const [];
   bool _loading = true;
+  bool _refreshing = false;
   Object? _error;
   int? _status;
   int _page = 1;
@@ -354,9 +422,16 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
     super.dispose();
   }
 
-  Future<bool> _load({bool preserveDataOnError = false}) async {
+  Future<bool> _load({
+    bool preserveDataOnError = false,
+    bool reportRefreshFailure = false,
+  }) async {
     setState(() {
-      _loading = true;
+      if (preserveDataOnError && _items.isNotEmpty) {
+        _refreshing = true;
+      } else {
+        _loading = true;
+      }
       if (!preserveDataOnError) _error = null;
     });
     try {
@@ -375,10 +450,25 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
       _error = null;
       return true;
     } catch (error) {
-      if (!preserveDataOnError) _error = error;
+      if (!preserveDataOnError || _items.isEmpty) {
+        _error = error;
+      } else if (mounted && reportRefreshFailure) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Osvježavanje nije uspjelo. Prikazani su prethodni podaci.',
+            ),
+          ),
+        );
+      }
       return false;
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
     }
   }
 
@@ -525,6 +615,23 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
             ),
           ),
           const Spacer(),
+          FilledButton.tonalIcon(
+            key: const Key('refresh-central-gyms'),
+            onPressed: _loading || _refreshing
+                ? null
+                : () => _load(
+                    preserveDataOnError: true,
+                    reportRefreshFailure: true,
+                  ),
+            icon: _refreshing
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
+            label: const Text('Osvježi'),
+          ),
+          const SizedBox(width: 10),
           FilledButton.icon(
             onPressed: _create,
             icon: const Icon(Icons.add),
@@ -1163,8 +1270,8 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
         setState(() {
           _error = switch (error.code) {
             'gym_admin_already_assigned' =>
-              'Odabrani korisnik je već dodijeljen drugoj teretani. '
-                  'Izaberite drugog korisnika.',
+              'Odabrani račun ima aktivno članstvo ili drugu aktivnu dodjelu '
+                  'teretani. Registrujte novi Member račun bez aktivnog članstva.',
             'gym_admin_candidate_invalid' =>
               'Odabrani korisnik više nije dostupan za GymAdmin ulogu. '
                   'Izaberite drugog korisnika.',
@@ -1284,9 +1391,7 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
       const SizedBox(height: 12),
       const Text('GymAdmin', style: TextStyle(fontWeight: FontWeight.w800)),
       const SizedBox(height: 6),
-      const Text(
-        'Odaberite aktivnog Member korisnika. Promocija opoziva njegove aktivne sesije.',
-      ),
+      const Text(_gymAdminEligibilityHint),
       const SizedBox(height: 12),
       _adminSelector(),
     ],
@@ -1422,6 +1527,27 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
       ),
       if (_manualLocationMode) ...[
         const SizedBox(height: 4),
+        const Card(
+          key: Key('gym-manual-city-reference-hint'),
+          color: Color(0xFFF3F7FF),
+          child: Padding(
+            padding: EdgeInsets.all(10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline, size: 18),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Lista gradova dolazi iz referentnih podataka. Ako grad '
+                    'nedostaje, prvo ga dodajte u tabu Gradovi.',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
         DropdownMenu<String>(
           key: const Key('gym-manual-city'),
           expandedInsets: EdgeInsets.zero,
@@ -2070,7 +2196,8 @@ class _GymAdminAssignmentDialogState extends State<_GymAdminAssignmentDialog> {
             'tenant_gym_admin_exists' =>
               'Ova teretana već ima aktivnog GymAdmina.',
             'gym_admin_already_assigned' =>
-              'Odabrani korisnik je već dodijeljen drugoj teretani. Prvo opozovite postojeću ulogu.',
+              'Odabrani račun ima aktivno članstvo ili drugu aktivnu dodjelu '
+                  'teretani. Registrujte novi Member račun bez aktivnog članstva.',
             _ => error.message,
           };
         });
@@ -2096,6 +2223,21 @@ class _GymAdminAssignmentDialogState extends State<_GymAdminAssignmentDialog> {
               style: Theme.of(
                 context,
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 10),
+            const Card(
+              color: Color(0xFFF3F7FF),
+              child: Padding(
+                padding: EdgeInsets.all(12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.info_outline, size: 20),
+                    SizedBox(width: 8),
+                    Expanded(child: Text(_gymAdminEligibilityHint)),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 14),
             TextFormField(
@@ -2190,6 +2332,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   final _search = TextEditingController();
   List<Map<String, dynamic>> _items = const [];
   bool _loading = true;
+  bool _refreshing = false;
   Object? _error;
 
   @override
@@ -2204,8 +2347,14 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  Future<void> _load({bool preserveData = false}) async {
+    setState(() {
+      if (preserveData && _items.isNotEmpty) {
+        _refreshing = true;
+      } else {
+        _loading = true;
+      }
+    });
     try {
       _items = (await context.read<ApiClient>().page(
         '/api/admin/users',
@@ -2213,9 +2362,24 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
       )).items;
       _error = null;
     } catch (error) {
-      _error = error;
+      if (preserveData && _items.isNotEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Osvježavanje nije uspjelo. Prikazani su prethodni podaci.',
+            ),
+          ),
+        );
+      } else {
+        _error = error;
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
     }
   }
 
@@ -2272,6 +2436,20 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
             ),
           ),
           const Spacer(),
+          FilledButton.tonalIcon(
+            key: const Key('refresh-central-users'),
+            onPressed: _loading || _refreshing
+                ? null
+                : () => _load(preserveData: true),
+            icon: _refreshing
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
+            label: const Text('Osvježi'),
+          ),
+          const SizedBox(width: 10),
           FilledButton.icon(
             onPressed: _assign,
             icon: const Icon(Icons.admin_panel_settings_outlined),
@@ -2288,48 +2466,92 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           child: _items.isEmpty
               ? const EmptyState('Nema korisnika za zadanu pretragu.')
               : Card(
-                  child: ListView.separated(
-                    itemCount: _items.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (_, index) {
-                      final item = _items[index];
-                      return ListTile(
-                        title: Text(item['displayName'].toString()),
-                        subtitle: Text(
-                          '${item['email']} · ${item['assignment']?['name'] ?? 'Bez dodijeljene teretane'}',
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            StatusPill(item['role'].toString()),
-                            const SizedBox(width: 8),
-                            StatusPill(
-                              item['isActive'] == true ? 'Active' : 'Inactive',
-                            ),
-                            PopupMenuButton<String>(
-                              onSelected: (action) => _userAction(item, action),
-                              itemBuilder: (_) => [
-                                if (item['role'] != 'Member')
-                                  const PopupMenuItem(
-                                    value: 'roles/revoke',
-                                    child: Text('Opozovi ulogu'),
-                                  ),
-                                PopupMenuItem(
-                                  value: item['isActive'] == true
-                                      ? 'deactivate'
-                                      : 'reactivate',
-                                  child: Text(
-                                    item['isActive'] == true
-                                        ? 'Deaktiviraj račun'
-                                        : 'Reaktiviraj račun',
+                  child: SingleChildScrollView(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        horizontalMargin: 16,
+                        columnSpacing: 30,
+                        dataRowMinHeight: 58,
+                        dataRowMaxHeight: 68,
+                        columns: const [
+                          DataColumn(label: Text('Korisnik')),
+                          DataColumn(label: Text('Email')),
+                          DataColumn(label: Text('Teretana')),
+                          DataColumn(label: Text('Uloga')),
+                          DataColumn(label: Text('Status')),
+                          DataColumn(label: Text('Akcije')),
+                        ],
+                        rows: _items.map((item) {
+                          final active = item['isActive'] == true;
+                          return DataRow(
+                            cells: [
+                              DataCell(
+                                Text(
+                                  item['displayName'].toString(),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
                                   ),
                                 ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      );
-                    },
+                              ),
+                              DataCell(Text(item['email'].toString())),
+                              DataCell(
+                                Text(
+                                  item['assignment']?['name']?.toString() ??
+                                      'Bez dodijeljene teretane',
+                                ),
+                              ),
+                              DataCell(StatusPill(item['role'].toString())),
+                              DataCell(
+                                StatusPill(active ? 'Active' : 'Inactive'),
+                              ),
+                              DataCell(
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SizedBox(
+                                      width: 48,
+                                      child: item['role'] != 'Member'
+                                          ? IconButton(
+                                              key: Key(
+                                                'revoke-role-${item['id']}',
+                                              ),
+                                              tooltip: 'Opozovi ulogu',
+                                              onPressed: () => _userAction(
+                                                item,
+                                                'roles/revoke',
+                                              ),
+                                              icon: const Icon(
+                                                Icons.remove_moderator_outlined,
+                                              ),
+                                            )
+                                          : null,
+                                    ),
+                                    IconButton(
+                                      key: Key(
+                                        'toggle-user-active-${item['id']}',
+                                      ),
+                                      tooltip: active
+                                          ? 'Deaktiviraj račun'
+                                          : 'Reaktiviraj račun',
+                                      onPressed: () => _userAction(
+                                        item,
+                                        active ? 'deactivate' : 'reactivate',
+                                      ),
+                                      icon: Icon(
+                                        active
+                                            ? Icons.block_outlined
+                                            : Icons.check_circle_outline,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          );
+                        }).toList(),
+                      ),
+                    ),
                   ),
                 ),
         ),
@@ -2360,9 +2582,9 @@ class _ReferenceDataScreenState extends State<ReferenceDataScreen>
       TabBar(
         controller: _tabs,
         tabs: const [
-          Tab(text: 'Gradovi'),
           Tab(text: 'Oprema'),
           Tab(text: 'Tipovi treninga'),
+          Tab(text: 'Gradovi'),
         ],
       ),
       const SizedBox(height: 14),
@@ -2370,9 +2592,9 @@ class _ReferenceDataScreenState extends State<ReferenceDataScreen>
         child: TabBarView(
           controller: _tabs,
           children: const [
-            _ReferenceSection(kind: _ReferenceKind.city),
             _ReferenceSection(kind: _ReferenceKind.equipment),
             _ReferenceSection(kind: _ReferenceKind.trainingType),
+            _ReferenceSection(kind: _ReferenceKind.city),
           ],
         ),
       ),
@@ -2502,6 +2724,28 @@ class _ReferenceSectionState extends State<_ReferenceSection> {
   @override
   Widget build(BuildContext context) => Column(
     children: [
+      if (widget.kind == _ReferenceKind.city) ...[
+        const Card(
+          key: Key('city-reference-manual-address-hint'),
+          color: Color(0xFFF3F7FF),
+          child: Padding(
+            padding: EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Gradovi se koriste pri ručnom unosu adrese teretane kada '
+                    'lokaciju nije moguće automatski pronaći.',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+      ],
       Row(
         children: [
           SizedBox(
@@ -2534,40 +2778,79 @@ class _ReferenceSectionState extends State<_ReferenceSection> {
           child: _items.isEmpty
               ? const EmptyState('Nema referentnih podataka.')
               : Card(
-                  child: ListView.separated(
-                    itemCount: _items.length,
-                    separatorBuilder: (_, _) => const Divider(height: 1),
-                    itemBuilder: (_, index) {
-                      final item = _items[index];
-                      return ListTile(
-                        title: Text(item['name'].toString()),
-                        subtitle: Text(
-                          item['code']?.toString() ??
+                  child: SingleChildScrollView(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        horizontalMargin: 16,
+                        columnSpacing: 34,
+                        dataRowMinHeight: 56,
+                        dataRowMaxHeight: 66,
+                        columns: [
+                          DataColumn(label: Text(widget.kind.label)),
+                          DataColumn(
+                            label: Text(
+                              widget.kind == _ReferenceKind.city
+                                  ? 'Država'
+                                  : 'Opis',
+                            ),
+                          ),
+                          const DataColumn(label: Text('Status')),
+                          const DataColumn(label: Text('Akcije')),
+                        ],
+                        rows: _items.map((item) {
+                          final active = item['isActive'] == true;
+                          final detail =
+                              item['code']?.toString() ??
                               item['countryName']?.toString() ??
                               item['description']?.toString() ??
-                              '',
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            StatusPill(
-                              item['isActive'] == true ? 'Active' : 'Inactive',
-                            ),
-                            IconButton(
-                              tooltip: 'Uredi',
-                              onPressed: () => _edit(item),
-                              icon: const Icon(Icons.edit_outlined),
-                            ),
-                            if (item['isActive'] == true)
-                              IconButton(
-                                tooltip: 'Deaktiviraj',
-                                onPressed: () => _deactivate(item),
-                                icon: const Icon(Icons.block),
+                              '';
+                          return DataRow(
+                            cells: [
+                              DataCell(
+                                Text(
+                                  item['name'].toString(),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
                               ),
-                          ],
-                        ),
-                      );
-                    },
+                              DataCell(
+                                SizedBox(
+                                  width: 320,
+                                  child: Text(
+                                    detail,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                              DataCell(
+                                StatusPill(active ? 'Active' : 'Inactive'),
+                              ),
+                              DataCell(
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      tooltip: 'Uredi',
+                                      onPressed: () => _edit(item),
+                                      icon: const Icon(Icons.edit_outlined),
+                                    ),
+                                    if (active)
+                                      IconButton(
+                                        tooltip: 'Deaktiviraj',
+                                        onPressed: () => _deactivate(item),
+                                        icon: const Icon(Icons.block_outlined),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          );
+                        }).toList(),
+                      ),
+                    ),
                   ),
                 ),
         ),
@@ -2621,7 +2904,15 @@ class _RoleDialogState extends State<_RoleDialog> {
       if (mounted) {
         setState(() {
           _serverProblem = error;
-          _formError = error.fieldErrors.isEmpty ? error.message : null;
+          _formError = error.fieldErrors.isEmpty
+              ? switch (error.code) {
+                  'gym_admin_already_assigned' =>
+                    'Odabrani račun ima aktivno članstvo ili drugu aktivnu '
+                        'dodjelu teretani. Registrujte novi Member račun bez '
+                        'aktivnog članstva.',
+                  _ => error.message,
+                }
+              : null;
         });
         _formKey.currentState!.validate();
       }
@@ -2707,6 +2998,23 @@ class _RoleDialogState extends State<_RoleDialog> {
                   validator: (value) => value == null
                       ? 'Odaberite teretanu.'
                       : _serverProblem?.fieldError('TenantId'),
+                ),
+              ],
+              if (_role == 'GymAdmin') ...[
+                const SizedBox(height: 10),
+                const Card(
+                  color: Color(0xFFF3F7FF),
+                  child: Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline, size: 20),
+                        SizedBox(width: 8),
+                        Expanded(child: Text(_gymAdminEligibilityHint)),
+                      ],
+                    ),
+                  ),
                 ),
               ],
               const SizedBox(height: 10),
