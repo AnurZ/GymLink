@@ -491,19 +491,23 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
     }
   }
 
-  Future<void> _assignGymAdmin(Map<String, dynamic> item) async {
-    final assigned = await showDialog<bool>(
+  Future<void> _manageGymAdmin(Map<String, dynamic> item) async {
+    final result = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _GymAdminAssignmentDialog(gym: item),
+      builder: (_) => _GymAdminManagementDialog(
+        gym: item,
+        onChanged: () async {
+          await _load(preserveDataOnError: true, reportRefreshFailure: true);
+          if (mounted) context.read<CentralAdminRefresh>().dataChanged();
+        },
+      ),
     );
-    if (assigned != true || !mounted) return;
-    await _load();
-    if (!mounted) return;
-    context.read<CentralAdminRefresh>().dataChanged();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('GymAdmin je uspješno dodijeljen.')),
-    );
+    if (result == 'assigned' && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('GymAdmin je uspješno dodijeljen.')),
+      );
+    }
   }
 
   Future<void> _tenantAction(Map<String, dynamic> item, String action) async {
@@ -665,11 +669,6 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
                         ],
                         rows: _items.map((item) {
                           final status = (item['status'] as num?)?.toInt() ?? 0;
-                          final adminCount =
-                              (item['activeGymAdminCount'] as num?)?.toInt() ??
-                              0;
-                          final canAssignAdmin =
-                              (status == 0 || status == 1) && adminCount == 0;
                           final canActivate = item['canActivate'] == true;
                           final readiness = _readinessText(
                             item['missingActivationRequirements'],
@@ -717,15 +716,16 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
                                   child: Row(
                                     mainAxisAlignment: MainAxisAlignment.end,
                                     children: [
-                                      if (canAssignAdmin)
-                                        IconButton(
-                                          tooltip: 'Dodijeli GymAdmina',
-                                          onPressed: () =>
-                                              _assignGymAdmin(item),
-                                          icon: const Icon(
-                                            Icons.person_add_alt_1_outlined,
-                                          ),
+                                      IconButton(
+                                        key: Key(
+                                          'manage-gym-admin-${item['id']}',
                                         ),
+                                        tooltip: 'Upravljaj GymAdminom',
+                                        onPressed: () => _manageGymAdmin(item),
+                                        icon: const Icon(
+                                          Icons.manage_accounts_outlined,
+                                        ),
+                                      ),
                                       if (status == 0)
                                         Tooltip(
                                           message: canActivate
@@ -2078,17 +2078,18 @@ String _activationRequirementLabel(String code) => switch (code) {
   _ => code,
 };
 
-class _GymAdminAssignmentDialog extends StatefulWidget {
-  const _GymAdminAssignmentDialog({required this.gym});
+class _GymAdminManagementDialog extends StatefulWidget {
+  const _GymAdminManagementDialog({required this.gym, required this.onChanged});
 
   final Map<String, dynamic> gym;
+  final Future<void> Function() onChanged;
 
   @override
-  State<_GymAdminAssignmentDialog> createState() =>
-      _GymAdminAssignmentDialogState();
+  State<_GymAdminManagementDialog> createState() =>
+      _GymAdminManagementDialogState();
 }
 
-class _GymAdminAssignmentDialogState extends State<_GymAdminAssignmentDialog> {
+class _GymAdminManagementDialogState extends State<_GymAdminManagementDialog> {
   final _formKey = GlobalKey<FormState>();
   final _search = TextEditingController();
   final _reason = TextEditingController();
@@ -2098,6 +2099,28 @@ class _GymAdminAssignmentDialogState extends State<_GymAdminAssignmentDialog> {
   bool _loading = false;
   bool _busy = false;
   String? _error;
+  String? _notice;
+  Map<String, dynamic>? _activeGymAdmin;
+  bool _administratorRemoved = false;
+
+  bool get _canAssign {
+    final status = (widget.gym['status'] as num?)?.toInt();
+    return status == 0 || status == 1;
+  }
+
+  bool get _hasUnresolvedAdministrator =>
+      !_administratorRemoved &&
+      _activeGymAdmin == null &&
+      ((widget.gym['activeGymAdminCount'] as num?)?.toInt() ?? 0) > 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final administrator = widget.gym['activeGymAdmin'];
+    _activeGymAdmin = administrator is Map
+        ? Map<String, dynamic>.from(administrator)
+        : null;
+  }
 
   @override
   void dispose() {
@@ -2182,13 +2205,14 @@ class _GymAdminAssignmentDialogState extends State<_GymAdminAssignmentDialog> {
       await context.read<ApiClient>().post(
         '/api/admin/users/roles/assign',
         body: {
-          'identifier': _selected!['email'],
+          'identifier': _selected!['id'],
           'role': 'GymAdmin',
           'tenantId': widget.gym['tenantId'],
           'reason': _reason.text.trim(),
         },
       );
-      if (mounted) Navigator.pop(context, true);
+      await widget.onChanged();
+      if (mounted) Navigator.pop(context, 'assigned');
     } on ApiProblem catch (error) {
       if (mounted) {
         setState(() {
@@ -2207,13 +2231,143 @@ class _GymAdminAssignmentDialogState extends State<_GymAdminAssignmentDialog> {
     }
   }
 
+  Future<void> _remove() async {
+    final administrator = _activeGymAdmin;
+    if (administrator == null) return;
+    final confirmed = await confirmAction(
+      context,
+      title: 'Ukloni GymAdmina',
+      message:
+          '${administrator['displayName']} će izgubiti administratorski '
+          'pristup teretani ${widget.gym['name']}, postati Member i biti '
+          'odjavljen iz aktivnih sesija.',
+      action: 'Nastavi',
+    );
+    if (!confirmed || !mounted) return;
+    final removed = await submitReasonedAction(
+      context,
+      title: 'Razlog uklanjanja GymAdmina',
+      onSubmit: (reason) async {
+        await context.read<ApiClient>().post(
+          '/api/admin/users/roles/revoke',
+          body: {'identifier': administrator['id'], 'reason': reason},
+        );
+      },
+    );
+    if (!removed || !mounted) return;
+    setState(() {
+      _activeGymAdmin = null;
+      _administratorRemoved = true;
+      _selected = null;
+      _search.clear();
+      _reason.clear();
+      _candidates = const [];
+      _error = null;
+      _notice = 'GymAdmin je uklonjen. Sada možete dodijeliti novi račun.';
+    });
+    await widget.onChanged();
+  }
+
+  Widget _assignmentForm() => Form(
+    key: _formKey,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_notice != null) ...[
+          Text(_notice!, style: const TextStyle(color: Colors.green)),
+          const SizedBox(height: 10),
+        ],
+        const Card(
+          color: Color(0xFFF3F7FF),
+          child: Padding(
+            padding: EdgeInsets.all(12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline, size: 20),
+                SizedBox(width: 8),
+                Expanded(child: Text(_gymAdminEligibilityHint)),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        TextFormField(
+          key: const Key('gym-admin-search'),
+          controller: _search,
+          onChanged: _searchChanged,
+          decoration: InputDecoration(
+            labelText: 'Registrovani korisnik',
+            hintText: 'Ime, korisničko ime ili email...',
+            prefixIcon: const Icon(Icons.person_search_outlined),
+            suffixIcon: _loading
+                ? const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : null,
+          ),
+          validator: (_) => _selected == null
+              ? 'Izaberite aktivnog korisnika iz liste.'
+              : null,
+        ),
+        if (_candidates.isNotEmpty)
+          Container(
+            constraints: const BoxConstraints(maxHeight: 220),
+            margin: const EdgeInsets.only(top: 4),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(color: Colors.black12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _candidates.length,
+                itemBuilder: (_, index) {
+                  final candidate = _candidates[index];
+                  return ListTile(
+                    dense: true,
+                    title: Text(candidate['displayName'].toString()),
+                    subtitle: Text(candidate['email'].toString()),
+                    onTap: () => _select(candidate),
+                  );
+                },
+              ),
+            ),
+          ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _reason,
+          minLines: 2,
+          maxLines: 3,
+          maxLength: 200,
+          decoration: const InputDecoration(labelText: 'Razlog dodjele'),
+          validator: (value) {
+            final length = value?.trim().length ?? 0;
+            if (length < 2) return 'Unesite razlog dodjele.';
+            if (length > 200) return 'Najviše 200 znakova.';
+            return null;
+          },
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 12),
+          Text(_error!, style: const TextStyle(color: Colors.red)),
+        ],
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Dodijeli GymAdmina'),
+    title: const Text('Upravljaj GymAdminom'),
     content: SizedBox(
       width: 560,
-      child: Form(
-        key: _formKey,
+      child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2225,99 +2379,78 @@ class _GymAdminAssignmentDialogState extends State<_GymAdminAssignmentDialog> {
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 10),
-            const Card(
-              color: Color(0xFFF3F7FF),
-              child: Padding(
-                padding: EdgeInsets.all(12),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.info_outline, size: 20),
-                    SizedBox(width: 8),
-                    Expanded(child: Text(_gymAdminEligibilityHint)),
-                  ],
+            if (_activeGymAdmin case final administrator?) ...[
+              DropdownButtonFormField<String>(
+                key: const Key('current-gym-admin-dropdown'),
+                initialValue: administrator['id'].toString(),
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Trenutni GymAdmin',
+                ),
+                items: [
+                  DropdownMenuItem(
+                    value: administrator['id'].toString(),
+                    child: Text(administrator['displayName'].toString()),
+                  ),
+                ],
+                onChanged: null,
+              ),
+              const SizedBox(height: 8),
+              Text(administrator['email'].toString()),
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: StatusPill(
+                  administrator['isActive'] == true ? 'Aktivan' : 'Neaktivan',
                 ),
               ),
-            ),
-            const SizedBox(height: 14),
-            TextFormField(
-              controller: _search,
-              onChanged: _searchChanged,
-              decoration: InputDecoration(
-                labelText: 'Registrovani korisnik',
-                hintText: 'Ime, korisničko ime ili email...',
-                prefixIcon: const Icon(Icons.person_search_outlined),
-                suffixIcon: _loading
-                    ? const Padding(
-                        padding: EdgeInsets.all(14),
-                        child: SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : null,
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                key: const Key('remove-gym-admin'),
+                onPressed: _busy ? null : _remove,
+                icon: const Icon(Icons.remove_moderator_outlined),
+                label: const Text('Ukloni GymAdmina'),
               ),
-              validator: (_) => _selected == null
-                  ? 'Izaberite aktivnog korisnika iz liste.'
-                  : null,
-            ),
-            if (_candidates.isNotEmpty)
-              Container(
-                constraints: const BoxConstraints(maxHeight: 220),
-                margin: const EdgeInsets.only(top: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border.all(color: Colors.black12),
-                  borderRadius: BorderRadius.circular(10),
+            ] else if (_hasUnresolvedAdministrator)
+              const Card(
+                color: Color(0xFFFFF5E5),
+                child: Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Text(
+                    'Teretana ima dodijeljenog GymAdmina, ali pokrenuti API '
+                    'ne vraća njegove podatke. Ponovo pokrenite API pa '
+                    'osvježite listu; dodjela novog admina je blokirana da se '
+                    'ne bi napravio konflikt.',
+                  ),
                 ),
-                child: Material(
-                  color: Colors.transparent,
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: _candidates.length,
-                    itemBuilder: (_, index) {
-                      final candidate = _candidates[index];
-                      return ListTile(
-                        dense: true,
-                        title: Text(candidate['displayName'].toString()),
-                        subtitle: Text(candidate['email'].toString()),
-                        onTap: () => _select(candidate),
-                      );
-                    },
+              )
+            else if (_canAssign)
+              _assignmentForm()
+            else
+              const Card(
+                color: Color(0xFFFFF5E5),
+                child: Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Text(
+                    'Ova teretana nema aktivnog GymAdmina. Dodjela je moguća '
+                    'samo dok teretana čeka aktivaciju ili je aktivna.',
                   ),
                 ),
               ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _reason,
-              minLines: 2,
-              maxLines: 3,
-              maxLength: 200,
-              decoration: const InputDecoration(labelText: 'Razlog dodjele'),
-              validator: (value) {
-                final length = value?.trim().length ?? 0;
-                if (length < 2) return 'Unesite razlog dodjele.';
-                if (length > 200) return 'Najviše 200 znakova.';
-                return null;
-              },
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 12),
-              Text(_error!, style: const TextStyle(color: Colors.red)),
-            ],
           ],
         ),
       ),
     ),
     actions: [
       TextButton(
-        onPressed: _busy ? null : () => Navigator.pop(context, false),
-        child: const Text('Odustani'),
+        onPressed: _busy ? null : () => Navigator.pop(context),
+        child: const Text('Zatvori'),
       ),
-      FilledButton(
-        onPressed: _busy ? null : _submit,
-        child: Text(_busy ? 'Dodjela...' : 'Dodijeli'),
-      ),
+      if (_activeGymAdmin == null && !_hasUnresolvedAdministrator && _canAssign)
+        FilledButton(
+          onPressed: _busy ? null : _submit,
+          child: Text(_busy ? 'Dodjela...' : 'Dodijeli'),
+        ),
     ],
   );
 }

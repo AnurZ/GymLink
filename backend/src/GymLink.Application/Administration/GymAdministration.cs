@@ -74,10 +74,17 @@ public sealed record AdminGymDto(
     TenantStatus Status,
     bool IsPubliclyVisible,
     int ActiveGymAdminCount,
+    AdminGymAdministratorDto? ActiveGymAdmin,
     bool CanActivate,
     IReadOnlyList<string> MissingActivationRequirements,
     int MemberCount,
     DateTime CreatedAtUtc);
+
+public sealed record AdminGymAdministratorDto(
+    Guid Id,
+    string DisplayName,
+    string Email,
+    bool IsActive);
 
 public interface IGymAdministrationService
 {
@@ -92,6 +99,7 @@ public interface IGymAdministrationService
 
 internal sealed class GymAdministrationService(
     IApplicationDbContext dbContext,
+    IIdentityAccountManager accounts,
     IApplicationTransaction transaction,
     ICurrentUser currentUser,
     ITenantMutationScope tenantMutationScope,
@@ -121,10 +129,19 @@ internal sealed class GymAdministrationService(
                 Gym = gym,
                 Tenant = tenant,
                 CityName = city.Name,
-                HasGymAdmin = dbContext.UserGymAssignments.IgnoreQueryFilters().Any(assignment =>
-                    assignment.TenantId == gym.TenantId &&
-                    assignment.Role == RoleNames.GymAdmin &&
-                    assignment.Status == AssignmentStatus.Active),
+                ActiveGymAdmin = (
+                    from assignment in dbContext.UserGymAssignments.IgnoreQueryFilters()
+                    join profile in dbContext.UserProfiles.IgnoreQueryFilters()
+                        on assignment.UserId equals profile.Id
+                    where assignment.TenantId == gym.TenantId &&
+                          assignment.Role == RoleNames.GymAdmin &&
+                          assignment.Status == AssignmentStatus.Active
+                    select new
+                    {
+                        Id = assignment.UserId,
+                        profile.DisplayName,
+                        profile.IsActive,
+                    }).SingleOrDefault(),
                 HasHours = dbContext.GymWorkingHours.IgnoreQueryFilters().Any(hours =>
                     hours.TenantId == gym.TenantId && !hours.IsClosed),
                 HasEquipment = dbContext.GymEquipment.IgnoreQueryFilters().Any(equipment =>
@@ -150,15 +167,29 @@ internal sealed class GymAdministrationService(
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync(cancellationToken);
+        var adminEmails = await accounts.GetEmailsAsync(
+            page.Where(x => x.ActiveGymAdmin is not null)
+                .Select(x => x.ActiveGymAdmin!.Id)
+                .Distinct()
+                .ToArray(),
+            cancellationToken);
         var items = page.Select(x =>
         {
+            var hasGymAdmin = x.ActiveGymAdmin is not null;
             var readiness = TenantActivationReadinessEvaluator.Evaluate(
                 !string.IsNullOrWhiteSpace(x.Gym.Description),
                 x.HasHours,
                 x.HasEquipment,
                 x.HasTrainingType,
                 x.HasPlan,
-                x.HasGymAdmin);
+                hasGymAdmin);
+            var activeGymAdmin = x.ActiveGymAdmin is null
+                ? null
+                : new AdminGymAdministratorDto(
+                    x.ActiveGymAdmin.Id,
+                    x.ActiveGymAdmin.DisplayName,
+                    adminEmails[x.ActiveGymAdmin.Id],
+                    x.ActiveGymAdmin.IsActive);
             return new AdminGymDto(
                 x.Gym.Id,
                 x.Gym.TenantId,
@@ -172,7 +203,8 @@ internal sealed class GymAdministrationService(
                 x.Gym.PhoneNumber,
                 x.Tenant.Status,
                 x.Gym.IsPubliclyVisible,
-                x.HasGymAdmin ? 1 : 0,
+                hasGymAdmin ? 1 : 0,
+                activeGymAdmin,
                 readiness.CanActivate,
                 readiness.MissingRequirements,
                 x.MemberCount,
@@ -362,6 +394,30 @@ internal sealed class GymAdministrationService(
                 select new { Gym = gym, Tenant = tenant, CityName = city.Name })
             .SingleAsync(cancellationToken);
         var readiness = await readinessService.GetAsync(core.Gym.TenantId, cancellationToken);
+        var activeGymAdmin = await (
+                from assignment in dbContext.UserGymAssignments.IgnoreQueryFilters().AsNoTracking()
+                join profile in dbContext.UserProfiles.IgnoreQueryFilters().AsNoTracking()
+                    on assignment.UserId equals profile.Id
+                where assignment.TenantId == core.Gym.TenantId &&
+                      assignment.Role == RoleNames.GymAdmin &&
+                      assignment.Status == AssignmentStatus.Active
+                select new
+                {
+                    Id = assignment.UserId,
+                    profile.DisplayName,
+                    profile.IsActive,
+                })
+            .SingleOrDefaultAsync(cancellationToken);
+        AdminGymAdministratorDto? administrator = null;
+        if (activeGymAdmin is not null)
+        {
+            var emails = await accounts.GetEmailsAsync([activeGymAdmin.Id], cancellationToken);
+            administrator = new(
+                activeGymAdmin.Id,
+                activeGymAdmin.DisplayName,
+                emails[activeGymAdmin.Id],
+                activeGymAdmin.IsActive);
+        }
         var nowUtc = timeProvider.GetUtcNow().UtcDateTime;
         var memberCount = await dbContext.Memberships.IgnoreQueryFilters().AsNoTracking().CountAsync(
             membership => membership.TenantId == core.Gym.TenantId &&
@@ -385,7 +441,8 @@ internal sealed class GymAdministrationService(
             core.Gym.PhoneNumber,
             core.Tenant.Status,
             core.Gym.IsPubliclyVisible,
-            readiness.MissingRequirements.Contains(ActivationRequirementCodes.GymAdmin) ? 0 : 1,
+            administrator is null ? 0 : 1,
+            administrator,
             readiness.CanActivate,
             readiness.MissingRequirements,
             memberCount,

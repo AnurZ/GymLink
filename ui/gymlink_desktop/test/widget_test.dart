@@ -1101,7 +1101,7 @@ void main() {
     await tester.pumpWidget(_centralHarness(api));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Dodijeli GymAdmina'));
+    await tester.tap(find.byTooltip('Upravljaj GymAdminom'));
     await tester.pumpAndSettle();
 
     await tester.enterText(
@@ -1122,9 +1122,9 @@ void main() {
 
     expect(api.assignmentBody?['role'], 'GymAdmin');
     expect(api.assignmentBody?['tenantId'], 'tenant-1');
-    expect(api.assignmentBody?['identifier'], 'owner@gymlink.local');
+    expect(api.assignmentBody?['identifier'], 'user-owner');
 
-    expect(find.byTooltip('Dodijeli GymAdmina'), findsNothing);
+    expect(find.byTooltip('Upravljaj GymAdminom'), findsOneWidget);
   });
 
   testWidgets('GymAdmin conflict remains inline and preserves dialog values', (
@@ -1140,7 +1140,7 @@ void main() {
     await tester.pumpWidget(_centralHarness(api));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Dodijeli GymAdmina'));
+    await tester.tap(find.byTooltip('Upravljaj GymAdminom'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.widgetWithText(TextFormField, 'Registrovani korisnik'),
@@ -1167,6 +1167,124 @@ void main() {
     );
     expect(find.text('Sačuvani razlog'), findsOneWidget);
     expect(find.byType(AlertDialog), findsOneWidget);
+  });
+
+  testWidgets(
+    'gym row shows the active admin and removes before assigning another',
+    (tester) async {
+      tester.view.physicalSize = const Size(1600, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _CentralAdminApi(initiallyAssigned: true);
+      await tester.pumpWidget(_centralHarness(api));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Upravljaj GymAdminom'));
+      await tester.pumpAndSettle();
+
+      final currentAdmin = tester.widget<DropdownButtonFormField<String>>(
+        find.byKey(const Key('current-gym-admin-dropdown')),
+      );
+      expect(currentAdmin.initialValue, 'user-owner');
+      expect(find.text('Owner Account'), findsOneWidget);
+      expect(find.text('owner@gymlink.local'), findsOneWidget);
+      expect(find.text('Aktivan'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('remove-gym-admin')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('postati Member'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Nastavi'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Razlog'),
+        'Promjena odgovorne osobe',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Potvrdi'));
+      await tester.pumpAndSettle();
+
+      expect(api.revokeBody?['identifier'], 'user-owner');
+      expect(api.revokeBody?['reason'], 'Promjena odgovorne osobe');
+      expect(find.byKey(const Key('current-gym-admin-dropdown')), findsNothing);
+      expect(find.byKey(const Key('gym-admin-search')), findsOneWidget);
+      expect(
+        find.text('GymAdmin je uklonjen. Sada možete dodijeliti novi račun.'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('GymAdmin removal error preserves the entered reason', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _CentralAdminApi(
+      initiallyAssigned: true,
+      revokeConflictCode: 'role_change_failed',
+    );
+    await tester.pumpWidget(_centralHarness(api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Upravljaj GymAdminom'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('remove-gym-admin')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Nastavi'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Razlog'),
+      'Sačuvani razlog opoziva',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Potvrdi'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Opoziv nije uspio.'), findsOneWidget);
+    expect(find.text('Sačuvani razlog opoziva'), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNWidgets(2));
+  });
+
+  testWidgets('inactive gym explains why a missing admin cannot be assigned', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _CentralAdminApi(gymStatus: 2);
+    await tester.pumpWidget(_centralHarness(api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Upravljaj GymAdminom'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Dodjela je moguća samo'), findsOneWidget);
+    expect(find.byKey(const Key('gym-admin-search')), findsNothing);
+    expect(find.widgetWithText(FilledButton, 'Dodijeli'), findsNothing);
+  });
+
+  testWidgets('stale gym response blocks a conflicting admin assignment', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _CentralAdminApi(
+      initiallyAssigned: true,
+      omitActiveAdminSummary: true,
+    );
+    await tester.pumpWidget(_centralHarness(api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Upravljaj GymAdminom'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Ponovo pokrenite API'), findsOneWidget);
+    expect(find.byKey(const Key('gym-admin-search')), findsNothing);
+    expect(find.widgetWithText(FilledButton, 'Dodijeli'), findsNothing);
   });
 
   testWidgets(
@@ -1920,17 +2038,26 @@ class _GymGalleryApi extends ApiClient {
 class _CentralAdminApi extends ApiClient {
   _CentralAdminApi({
     this.assignmentConflictCode,
+    this.revokeConflictCode,
     this.activationConflictCode,
     this.creationConflictCode,
+    this.initiallyAssigned = false,
+    this.omitActiveAdminSummary = false,
+    this.gymStatus = 0,
     this.successfulActivationWithRefreshFailure = false,
     this.reverseUnavailable = false,
     this.gymTotalCount = 1,
     this.address = 'Testna 1, Sarajevo',
-  }) : super(_TestTokens());
+  }) : _assigned = initiallyAssigned,
+       super(_TestTokens());
 
   final String? assignmentConflictCode;
+  final String? revokeConflictCode;
   final String? activationConflictCode;
   final String? creationConflictCode;
+  final bool initiallyAssigned;
+  final bool omitActiveAdminSummary;
+  final int gymStatus;
   final bool successfulActivationWithRefreshFailure;
   final bool reverseUnavailable;
   final int gymTotalCount;
@@ -1939,8 +2066,9 @@ class _CentralAdminApi extends ApiClient {
   Map<String, Object?>? lastLocationQuery;
   Map<String, Object?>? lastReverseQuery;
   Map<String, dynamic>? assignmentBody;
+  Map<String, dynamic>? revokeBody;
   Map<String, dynamic>? creationBody;
-  bool _assigned = false;
+  bool _assigned;
   int activationAttempts = 0;
 
   @override
@@ -1973,9 +2101,17 @@ class _CentralAdminApi extends ApiClient {
                 ? address.substring(0, address.length - 10)
                 : address,
             'cityName': address.endsWith(', Sarajevo') ? 'Sarajevo' : '',
-            'status': 0,
+            'status': gymStatus,
             'memberCount': 12,
             'activeGymAdminCount': hasAdmin ? 1 : 0,
+            'activeGymAdmin': hasAdmin && !omitActiveAdminSummary
+                ? const {
+                    'id': 'user-owner',
+                    'displayName': 'Owner Account',
+                    'email': 'owner@gymlink.local',
+                    'isActive': true,
+                  }
+                : null,
             'canActivate':
                 activationReady ||
                 _assigned ||
@@ -2144,6 +2280,18 @@ class _CentralAdminApi extends ApiClient {
         );
       }
       _assigned = true;
+      return const {};
+    }
+    if (path == '/api/admin/users/roles/revoke') {
+      revokeBody = Map<String, dynamic>.from(body! as Map);
+      if (revokeConflictCode != null) {
+        throw ApiProblem(
+          status: 409,
+          code: revokeConflictCode!,
+          message: 'Opoziv nije uspio.',
+        );
+      }
+      _assigned = false;
       return const {};
     }
     throw StateError('Unexpected post request: $path');

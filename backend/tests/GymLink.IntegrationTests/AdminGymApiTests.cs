@@ -118,6 +118,11 @@ public sealed class AdminGymApiTests
             Assert.Equal(TenantStatus.PendingActivation, gym.Status);
             Assert.False(gym.IsPubliclyVisible);
             Assert.Equal(1, gym.ActiveGymAdminCount);
+            Assert.NotNull(gym.ActiveGymAdmin);
+            Assert.Equal(member.User.Id, gym.ActiveGymAdmin.Id);
+            Assert.Equal("Role Test Member", gym.ActiveGymAdmin.DisplayName);
+            Assert.Equal(member.User.Email, gym.ActiveGymAdmin.Email);
+            Assert.True(gym.ActiveGymAdmin.IsActive);
             Assert.True(gym.CanActivate);
             Assert.Empty(gym.MissingActivationRequirements);
             Assert.Equal(0, gym.MemberCount);
@@ -127,6 +132,7 @@ public sealed class AdminGymApiTests
             var searchedGym = Assert.Single(search!.Items);
             Assert.Equal(gym.Id, searchedGym.Id);
             Assert.Equal(gym.TenantId, searchedGym.TenantId);
+            Assert.Equal(member.User.Id, searchedGym.ActiveGymAdmin?.Id);
 
             var secondCreate = await client.PostAsJsonAsync(
                 "/api/admin/gyms",
@@ -185,6 +191,29 @@ public sealed class AdminGymApiTests
                 HttpStatusCode.OK,
                 (await client.GetAsync("/health")).StatusCode);
 
+            _ = await LoginAsync(client, member.User.Email);
+            Authorize(client, centralAdmin);
+            var revoke = await client.PostAsJsonAsync(
+                "/api/admin/users/roles/revoke",
+                new
+                {
+                    identifier = member.User.Id,
+                    reason = "Replace the assigned gym administrator.",
+                });
+            revoke.EnsureSuccessStatusCode();
+            var revokedAccount = await revoke.Content.ReadFromJsonAsync<AdminUserDto>();
+            Assert.NotNull(revokedAccount);
+            Assert.Equal(RoleNames.Member, revokedAccount.Role);
+            Assert.Null(revokedAccount.Assignment);
+
+            var afterRevoke = await client.GetFromJsonAsync<PagedResult<AdminGymDto>>(
+                "/api/admin/gyms?query=Stabilization&page=1&pageSize=10");
+            var gymWithoutAdmin = Assert.Single(
+                afterRevoke!.Items,
+                item => item.Id == gym.Id);
+            Assert.Equal(0, gymWithoutAdmin.ActiveGymAdminCount);
+            Assert.Null(gymWithoutAdmin.ActiveGymAdmin);
+
             await using var verification = CreateContext(connectionString);
             var persistedGym = await verification.Gyms.IgnoreQueryFilters()
                 .SingleAsync(x => x.Id == gym.Id);
@@ -198,19 +227,25 @@ public sealed class AdminGymApiTests
                      x.Action == "gym.created" &&
                      x.TargetType == nameof(Gym)));
             Assert.Equal(
-                1,
+                0,
                 await verification.UserGymAssignments.IgnoreQueryFilters().CountAsync(
                     x => x.TenantId == gym.TenantId &&
                          x.Role == RoleNames.GymAdmin &&
                          x.Status == AssignmentStatus.Active));
-            Assert.Equal(
-                "Assigned during activation-ready gym creation.",
-                await verification.UserGymAssignments.IgnoreQueryFilters()
-                    .Where(x => x.TenantId == gym.TenantId &&
-                                x.Role == RoleNames.GymAdmin &&
-                                x.Status == AssignmentStatus.Active)
-                    .Select(x => x.Reason)
-                    .SingleAsync());
+            var endedAssignment = await verification.UserGymAssignments.IgnoreQueryFilters()
+                .SingleAsync(x => x.TenantId == gym.TenantId &&
+                                  x.UserId == member.User.Id &&
+                                  x.Role == RoleNames.GymAdmin);
+            Assert.Equal(AssignmentStatus.Ended, endedAssignment.Status);
+            Assert.Equal("Replace the assigned gym administrator.", endedAssignment.Reason);
+            Assert.True(await verification.RefreshTokenSessions.IgnoreQueryFilters().AnyAsync(
+                x => x.UserId == member.User.Id &&
+                     x.RevokedAtUtc != null &&
+                     x.RevocationReason == "role_revoked"));
+            Assert.True(await verification.SecurityAuditRecords.AnyAsync(
+                x => x.TargetUserId == member.User.Id &&
+                     x.Action == "user.role_revoked" &&
+                     x.Reason == "Replace the assigned gym administrator."));
             Assert.True(await verification.UserGymAssignments.IgnoreQueryFilters().AnyAsync(
                 x => x.TenantId == secondGym.TenantId &&
                      x.Role == RoleNames.GymAdmin &&
