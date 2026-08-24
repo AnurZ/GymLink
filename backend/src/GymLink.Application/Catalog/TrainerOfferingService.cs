@@ -57,10 +57,12 @@ public sealed class TrainerOfferingService(
             .ToPagedResultAsync(request, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<TrainerOfferingDto>> GetPublicByTrainerAsync(
+    public async Task<PagedResult<TrainerOfferingDto>> GetPublicByTrainerAsync(
         Guid trainerId,
+        PagedRequest request,
         CancellationToken cancellationToken)
     {
+        request.Validate();
         var trainer = await dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
             .SingleOrDefaultAsync(x => x.Id == trainerId && x.IsActive, cancellationToken)
             ?? throw new NotFoundException("trainer_not_found", "The trainer was not found.");
@@ -73,22 +75,28 @@ public sealed class TrainerOfferingService(
             throw new NotFoundException("trainer_not_found", "The trainer was not found.");
         }
 
-        var results = await (
+        var query =
                 from offering in dbContext.TrainerServiceOfferings.IgnoreQueryFilters().AsNoTracking()
                 join trainingType in dbContext.TrainingTypes.AsNoTracking()
                     on offering.TrainingTypeId equals trainingType.Id
                 where offering.TrainerProfileId == trainerId && offering.IsActive
-                orderby offering.Name
-                select new TrainerOfferingDto(
-                    offering.Id,
-                    offering.TrainerProfileId,
-                    offering.TrainingTypeId,
-                    trainingType.Name,
-                    offering.Name,
-                    offering.DurationMinutes,
-                    offering.Price,
-                    offering.Currency,
-                    offering.IsActive))
+                select new { Offering = offering, TrainingTypeName = trainingType.Name };
+        var totalCount = await query.LongCountAsync(cancellationToken);
+        var results = await query
+            .OrderBy(x => x.Offering.Name)
+            .ThenBy(x => x.Offering.Id)
+            .Skip((request.Page - 1) * request.PageSize)
+            .Take(request.PageSize)
+            .Select(x => new TrainerOfferingDto(
+                x.Offering.Id,
+                x.Offering.TrainerProfileId,
+                x.Offering.TrainingTypeId,
+                x.TrainingTypeName,
+                x.Offering.Name,
+                x.Offering.DurationMinutes,
+                x.Offering.Price,
+                x.Offering.Currency,
+                x.Offering.IsActive))
             .ToListAsync(cancellationToken);
         await recommendationActivity.RecordReadAsync(
             ActivityEventType.TrainerView,
@@ -96,7 +104,11 @@ public sealed class TrainerOfferingService(
             RecommendationTargetType.Trainer,
             trainer.Id,
             cancellationToken);
-        return results;
+        return new PagedResult<TrainerOfferingDto>(
+            results,
+            request.Page,
+            request.PageSize,
+            totalCount);
     }
 
     public async Task<TrainerOfferingDto> CreateAsync(

@@ -131,11 +131,14 @@ public sealed class TrainerCatalogService(
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
             .ToListAsync(cancellationToken);
+        var candidateAccounts = await accounts.FindByIdsAsync(
+            rows.Select(row => row.MemberUserId).ToArray(),
+            cancellationToken);
         var items = new List<TrainerCandidateDto>(rows.Count);
         foreach (var row in rows)
         {
-            var account = await accounts.FindByIdAsync(row.MemberUserId, cancellationToken);
-            if (account?.Role == RoleNames.Member)
+            if (candidateAccounts.TryGetValue(row.MemberUserId, out var account) &&
+                account.Role == RoleNames.Member)
             {
                 items.Add(new TrainerCandidateDto(
                     row.MemberUserId,
@@ -153,10 +156,12 @@ public sealed class TrainerCatalogService(
             totalCount);
     }
 
-    public async Task<IReadOnlyList<TrainerDto>> GetPublicByGymAsync(
+    public async Task<PagedResult<TrainerDto>> GetPublicByGymAsync(
         Guid gymId,
+        PagedRequest request,
         CancellationToken cancellationToken)
     {
+        request.Validate();
         var gym = await (
                 from candidate in dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
                 join tenant in dbContext.Tenants.AsNoTracking() on candidate.TenantId equals tenant.Id
@@ -166,11 +171,10 @@ public sealed class TrainerCatalogService(
                 select new { candidate.TenantId })
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw new NotFoundException("gym_not_found", "The gym was not found.");
-        var rows = await (
+        var query =
                 from trainer in dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
                 join user in dbContext.UserProfiles.AsNoTracking() on trainer.UserId equals user.Id
                 where trainer.TenantId == gym.TenantId && trainer.IsActive && user.IsActive
-                orderby user.DisplayName
                 select new
                 {
                     trainer.Id,
@@ -182,13 +186,19 @@ public sealed class TrainerCatalogService(
                     trainer.AverageRating,
                     trainer.ReviewCount,
                     trainer.ImageUrl,
-                })
+                };
+        var totalCount = await query.LongCountAsync(cancellationToken);
+        var rows = await query
+            .OrderBy(x => x.DisplayName)
+            .ThenBy(x => x.Id)
+            .Skip((request.Page - 1) * request.PageSize)
+            .Take(request.PageSize)
             .ToListAsync(cancellationToken);
         var specializations = await LoadSpecializationsAsync(
             rows.Select(x => x.Id),
             true,
             cancellationToken);
-        return rows.Select(x => new TrainerDto(
+        var items = rows.Select(x => new TrainerDto(
                 x.Id,
                 x.UserId,
                 x.DisplayName,
@@ -201,6 +211,7 @@ public sealed class TrainerCatalogService(
                 x.ImageUrl,
                 null))
             .ToList();
+        return new PagedResult<TrainerDto>(items, request.Page, request.PageSize, totalCount);
     }
 
     public async Task<TrainerDto> CreateAsync(

@@ -48,19 +48,19 @@ public sealed class Phase5ReservationApiTests
             var trainerSession = await LoginAsync(setupClient, "respecttrainer1");
 
             var gymId = await FindGymAsync(setupClient, "Sportska Akademija Respect");
-            var plans = await setupClient.GetFromJsonAsync<IReadOnlyList<MembershipPlanDto>>(
+            var plans = await setupClient.GetFromJsonAsync<PagedResult<MembershipPlanDto>>(
                 $"/api/gyms/{gymId}/membership-plans");
-            var trainers = await setupClient.GetFromJsonAsync<IReadOnlyList<TrainerDto>>(
+            var trainers = await setupClient.GetFromJsonAsync<PagedResult<TrainerDto>>(
                 $"/api/gyms/{gymId}/trainers");
             Assert.NotNull(plans);
             Assert.NotNull(trainers);
-            var trainer = Assert.Single(trainers, x => x.DisplayName == "Emir Hadžić");
-            var offerings = await setupClient.GetFromJsonAsync<IReadOnlyList<TrainerOfferingDto>>(
+            var trainer = Assert.Single(trainers.Items, x => x.DisplayName == "Emir Hadžić");
+            var offerings = await setupClient.GetFromJsonAsync<PagedResult<TrainerOfferingDto>>(
                 $"/api/trainers/{trainer.Id}/offerings");
             var offering = Assert.Single(
-                offerings!,
+                offerings!.Items,
                 x => x.Name == "Personalni trening 60 min");
-            var plan = Assert.Single(plans, x => x.Name == "Mjesečna članarina");
+            var plan = Assert.Single(plans.Items, x => x.Name == "Mjesečna članarina");
 
             await ActivateMembershipAsync(setupClient, member, admin, plan.Id);
             await ActivateMembershipAsync(setupClient, secondMember, admin, plan.Id);

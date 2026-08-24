@@ -42,10 +42,12 @@ public sealed class MembershipPlanService(
             .ToPagedResultAsync(request, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<MembershipPlanDto>> GetPublicByGymAsync(
+    public async Task<PagedResult<MembershipPlanDto>> GetPublicByGymAsync(
         Guid gymId,
+        PagedRequest request,
         CancellationToken cancellationToken)
     {
+        request.Validate();
         var isVisible = await (
                 from gym in dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
                 join tenant in dbContext.Tenants.AsNoTracking() on gym.TenantId equals tenant.Id
@@ -59,10 +61,14 @@ public sealed class MembershipPlanService(
             throw new NotFoundException("gym_not_found", "The gym was not found.");
         }
 
-        return await dbContext.MembershipPlans.IgnoreQueryFilters().AsNoTracking()
-            .Where(x => x.GymId == gymId && x.IsActive)
-            .OrderBy(x => x.Price)
+        var query = dbContext.MembershipPlans.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.GymId == gymId && x.IsActive);
+        var totalCount = await query.LongCountAsync(cancellationToken);
+        var items = await query.OrderBy(x => x.Price)
             .ThenBy(x => x.Name)
+            .ThenBy(x => x.Id)
+            .Skip((request.Page - 1) * request.PageSize)
+            .Take(request.PageSize)
             .Select(x => new MembershipPlanDto(
                 x.Id,
                 x.GymId,
@@ -72,6 +78,7 @@ public sealed class MembershipPlanService(
                 x.Currency,
                 x.IsActive))
             .ToListAsync(cancellationToken);
+        return new PagedResult<MembershipPlanDto>(items, request.Page, request.PageSize, totalCount);
     }
 
     public async Task<MembershipPlanDto> CreateAsync(

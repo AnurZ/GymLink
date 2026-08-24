@@ -103,11 +103,7 @@ internal sealed class UserAdministrationService(
             (request.Page - 1) * request.PageSize,
             request.PageSize,
             cancellationToken);
-        var results = new List<AdminUserDto>(items.Count);
-        foreach (var account in items)
-        {
-            results.Add(await BuildAsync(account, cancellationToken));
-        }
+        var results = await BuildManyAsync(items, cancellationToken);
 
         return new(results, request.Page, request.PageSize, totalCount);
     }
@@ -354,6 +350,56 @@ internal sealed class UserAdministrationService(
             account.Role,
             profile.IsActive,
             assignment);
+    }
+
+    private async Task<IReadOnlyList<AdminUserDto>> BuildManyAsync(
+        IReadOnlyList<IdentityAccount> accounts,
+        CancellationToken cancellationToken)
+    {
+        if (accounts.Count == 0)
+        {
+            return [];
+        }
+
+        var userIds = accounts.Select(account => account.Id).ToArray();
+        var profiles = await dbContext.UserProfiles.AsNoTracking()
+            .Where(profile => userIds.Contains(profile.Id))
+            .ToDictionaryAsync(profile => profile.Id, cancellationToken);
+        var staffUserIds = accounts
+            .Where(account => account.Role is RoleNames.GymAdmin or RoleNames.Trainer)
+            .Select(account => account.Id)
+            .ToArray();
+        var assignments = staffUserIds.Length == 0
+            ? new Dictionary<(Guid UserId, string Role), TenantSessionDto>()
+            : await (
+                    from item in dbContext.UserGymAssignments.IgnoreQueryFilters().AsNoTracking()
+                    join tenant in dbContext.Tenants.AsNoTracking() on item.TenantId equals tenant.Id
+                    where staffUserIds.Contains(item.UserId) &&
+                          item.Status == AssignmentStatus.Active
+                    select new
+                    {
+                        item.UserId,
+                        item.Role,
+                        Assignment = new TenantSessionDto(item.TenantId, tenant.Name, item.Role),
+                    })
+                .ToDictionaryAsync(
+                    item => new ValueTuple<Guid, string>(item.UserId, item.Role),
+                    item => item.Assignment,
+                    cancellationToken);
+        return accounts.Select(account =>
+        {
+            var profile = profiles[account.Id];
+            assignments.TryGetValue((account.Id, account.Role), out var assignment);
+            return new AdminUserDto(
+                account.Id,
+                account.Username,
+                account.Email,
+                profile.DisplayName,
+                profile.PhoneNumber,
+                account.Role,
+                profile.IsActive,
+                assignment);
+        }).ToList();
     }
 
     private async Task<IdentityAccount> FindRequiredAsync(

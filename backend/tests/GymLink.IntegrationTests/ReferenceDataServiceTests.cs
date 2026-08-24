@@ -2,6 +2,7 @@ using AutoMapper;
 using GymLink.Application;
 using GymLink.Application.Common;
 using GymLink.Application.ReferenceData;
+using GymLink.Domain.ReferenceData;
 using GymLink.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -33,6 +34,11 @@ public sealed class ReferenceDataServiceTests
             var country = await service.CreateCountryAsync(
                 new CreateCountryRequest { Code = " bih ", Name = " Bosnia and Herzegovina " },
                 CancellationToken.None);
+            context.Equipment.AddRange(Enumerable.Range(0, 101).Select(index => new Equipment
+            {
+                Name = $"Equipment {index:D3}",
+            }));
+            await context.SaveChangesAsync();
             var initialLookups = await service.GetActiveLookupsAsync(CancellationToken.None);
             var city = await service.CreateCityAsync(
                 new CreateCityRequest { CountryId = country.Id, Name = " Sarajevo " },
@@ -43,6 +49,9 @@ public sealed class ReferenceDataServiceTests
                 CancellationToken.None);
 
             Assert.Equal("BIH", country.Code);
+            Assert.Equal(PagedRequest.MaximumPageSize, initialLookups.Equipment.Count);
+            Assert.Equal("Equipment 000", initialLookups.Equipment[0].Name);
+            Assert.Equal("Equipment 099", initialLookups.Equipment[^1].Name);
             Assert.Empty(initialLookups.Cities);
             Assert.Single(refreshedLookups.Cities);
             Assert.Equal(city.Id, refreshedLookups.Cities[0].Id);

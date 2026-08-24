@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Json;
 using GymLink.Application.Administration;
+using GymLink.Application.Catalog;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.Recommendations;
@@ -16,6 +17,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace GymLink.IntegrationTests;
 
@@ -141,6 +143,188 @@ public sealed class SeededIdentityApiTests
             Assert.Equal(RoleNames.Member, member.Role);
             Assert.Null(member.Assignment);
             Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
+    public async Task User_and_trainer_candidate_searches_use_constant_query_counts()
+    {
+        var databaseName = $"GymLink_QueryCounts_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+        var queryCounter = new QueryCountingDbCommandInterceptor();
+
+        try
+        {
+            await using (var migrationContext = CreateContext(connectionString))
+            {
+                await migrationContext.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString, queryCounter);
+            using var client = factory.CreateClient();
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+
+            var centralAdmin = await LoginAsync(client, "centraladmin");
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", centralAdmin.AccessToken);
+            _ = await client.GetAsync("/api/admin/users?page=1&pageSize=1");
+            var oneUserQueries = await CountQueriesAsync(
+                client,
+                queryCounter,
+                "/api/admin/users?page=1&pageSize=1");
+            queryCounter.Reset();
+            var manyUsersResponse = await client.GetAsync("/api/admin/users?page=1&pageSize=20");
+            manyUsersResponse.EnsureSuccessStatusCode();
+            var manyUsers = await manyUsersResponse.Content
+                .ReadFromJsonAsync<PagedResult<AdminUserDto>>();
+            Assert.NotNull(manyUsers);
+            Assert.True(manyUsers.Items.Count > 1);
+            var manyUserQueries = queryCounter.Count;
+            Assert.Equal(oneUserQueries, manyUserQueries);
+
+            string gymAdminUsername;
+            await using (var context = CreateContext(connectionString))
+            {
+                var now = DateTime.UtcNow;
+                var tenantId = await context.Memberships.IgnoreQueryFilters()
+                    .Where(membership =>
+                        membership.Status == MembershipStatus.Active &&
+                        membership.EndsAtUtc > now)
+                    .GroupBy(membership => membership.TenantId)
+                    .Where(group => group.Count() > 1)
+                    .OrderByDescending(group => group.Count())
+                    .Select(group => group.Key)
+                    .FirstAsync();
+                var gymAdminId = await context.UserGymAssignments.IgnoreQueryFilters()
+                    .Where(assignment =>
+                        assignment.TenantId == tenantId &&
+                        assignment.Role == RoleNames.GymAdmin &&
+                        assignment.Status == AssignmentStatus.Active)
+                    .Select(assignment => assignment.UserId)
+                    .SingleAsync();
+                gymAdminUsername = await context.Users
+                    .Where(user => user.Id == gymAdminId)
+                    .Select(user => user.UserName!)
+                    .SingleAsync();
+            }
+
+            var gymAdmin = await LoginAsync(client, gymAdminUsername);
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", gymAdmin.AccessToken);
+            _ = await client.GetAsync("/api/tenant/trainer-candidates?page=1&pageSize=1");
+            var oneCandidateQueries = await CountQueriesAsync(
+                client,
+                queryCounter,
+                "/api/tenant/trainer-candidates?page=1&pageSize=1");
+            queryCounter.Reset();
+            var manyCandidatesResponse = await client.GetAsync(
+                "/api/tenant/trainer-candidates?page=1&pageSize=20");
+            manyCandidatesResponse.EnsureSuccessStatusCode();
+            var manyCandidates = await manyCandidatesResponse.Content
+                .ReadFromJsonAsync<PagedResult<TrainerCandidateDto>>();
+            Assert.NotNull(manyCandidates);
+            Assert.True(manyCandidates.Items.Count > 1);
+            var manyCandidateQueries = queryCounter.Count;
+            Assert.Equal(oneCandidateQueries, manyCandidateQueries);
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Public_catalog_and_personal_registration_lists_are_bounded_and_deterministic()
+    {
+        var databaseName = $"GymLink_BoundedCatalog_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+
+        try
+        {
+            await using (var migrationContext = CreateContext(connectionString))
+            {
+                await migrationContext.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+
+            var gyms = await client.GetFromJsonAsync<PagedResult<JsonElement>>(
+                "/api/gyms?query=Sportska%20Akademija%20Respect&page=1&pageSize=1");
+            var gymId = Assert.Single(gyms!.Items).GetProperty("id").GetGuid();
+            var defaultTrainers = await client.GetFromJsonAsync<PagedResult<TrainerDto>>(
+                $"/api/gyms/{gymId}/trainers");
+            Assert.NotNull(defaultTrainers);
+            Assert.Equal(1, defaultTrainers.Page);
+            Assert.Equal(20, defaultTrainers.PageSize);
+            Assert.Equal(2, defaultTrainers.TotalCount);
+            Assert.Equal(1, defaultTrainers.TotalPages);
+
+            var firstTrainerPage = await client.GetFromJsonAsync<PagedResult<TrainerDto>>(
+                $"/api/gyms/{gymId}/trainers?page=1&pageSize=1");
+            var secondTrainerPage = await client.GetFromJsonAsync<PagedResult<TrainerDto>>(
+                $"/api/gyms/{gymId}/trainers?page=2&pageSize=1");
+            var firstTrainer = Assert.Single(firstTrainerPage!.Items);
+            var secondTrainer = Assert.Single(secondTrainerPage!.Items);
+            Assert.True(string.CompareOrdinal(firstTrainer.DisplayName, secondTrainer.DisplayName) < 0);
+            Assert.Equal(firstTrainerPage.TotalCount, secondTrainerPage.TotalCount);
+
+            var plans = await client.GetFromJsonAsync<PagedResult<JsonElement>>(
+                $"/api/gyms/{gymId}/membership-plans?page=1&pageSize=100");
+            Assert.NotNull(plans);
+            Assert.Equal(100, plans.PageSize);
+            Assert.Equal(plans.TotalCount, (long)plans.Items.Count);
+            var offerings = await client.GetFromJsonAsync<PagedResult<JsonElement>>(
+                $"/api/trainers/{firstTrainer.Id}/offerings?page=1&pageSize=100");
+            Assert.NotNull(offerings);
+            Assert.Equal(100, offerings.PageSize);
+            Assert.Equal(offerings.TotalCount, (long)offerings.Items.Count);
+            Assert.Equal(
+                HttpStatusCode.BadRequest,
+                (await client.GetAsync(
+                    $"/api/gyms/{gymId}/trainers?page=1&pageSize=101")).StatusCode);
+
+            var member = await LoginAsync(client, "mobile1");
+            await using (var context = CreateContext(connectionString))
+            {
+                var cityId = await context.Cities.AsNoTracking()
+                    .Where(city => city.IsActive)
+                    .OrderBy(city => city.Name)
+                    .Select(city => city.Id)
+                    .FirstAsync();
+                var submittedAt = DateTime.UtcNow.AddDays(-3);
+                context.GymRegistrationRequests.AddRange(
+                    Registration(member.User.Id, cityId, "Alpha", GymRegistrationStatus.Rejected, submittedAt),
+                    Registration(member.User.Id, cityId, "Beta", GymRegistrationStatus.Approved, submittedAt.AddDays(1)),
+                    Registration(member.User.Id, cityId, "Gamma", GymRegistrationStatus.Submitted, submittedAt.AddDays(2)));
+                await context.SaveChangesAsync();
+            }
+
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", member.AccessToken);
+            var defaultRegistrations = await client.GetFromJsonAsync<PagedResult<JsonElement>>(
+                "/api/gym-registration-requests/mine");
+            Assert.NotNull(defaultRegistrations);
+            Assert.Equal(1, defaultRegistrations.Page);
+            Assert.Equal(20, defaultRegistrations.PageSize);
+            Assert.Equal(3, defaultRegistrations.TotalCount);
+            Assert.Equal("Gamma", defaultRegistrations.Items[0].GetProperty("gymName").GetString());
+            var secondRegistrationPage = await client.GetFromJsonAsync<PagedResult<JsonElement>>(
+                "/api/gym-registration-requests/mine?page=2&pageSize=1");
+            Assert.Equal("Beta", Assert.Single(secondRegistrationPage!.Items)
+                .GetProperty("gymName").GetString());
+            var rejectedRegistrations = await client.GetFromJsonAsync<PagedResult<JsonElement>>(
+                "/api/gym-registration-requests/mine?status=Rejected&page=1&pageSize=20");
+            Assert.Equal(1, rejectedRegistrations!.TotalCount);
+            Assert.Equal("Alpha", Assert.Single(rejectedRegistrations.Items)
+                .GetProperty("gymName").GetString());
         }
         finally
         {
@@ -716,7 +900,41 @@ public sealed class SeededIdentityApiTests
         }
     }
 
-    private static WebApplicationFactory<Program> CreateFactory(string connectionString) =>
+    private static async Task<int> CountQueriesAsync(
+        HttpClient client,
+        QueryCountingDbCommandInterceptor queryCounter,
+        string path)
+    {
+        queryCounter.Reset();
+        var response = await client.GetAsync(path);
+        response.EnsureSuccessStatusCode();
+        return queryCounter.Count;
+    }
+
+    private static GymRegistrationRequest Registration(
+        Guid applicantUserId,
+        Guid cityId,
+        string gymName,
+        GymRegistrationStatus status,
+        DateTime submittedAtUtc) => new()
+        {
+            ApplicantUserId = applicantUserId,
+            ProposedGymName = gymName,
+            ProposedDescription = $"Description for {gymName}",
+            ProposedAddress = $"{gymName} address",
+            CityId = cityId,
+            Latitude = 43.8563m,
+            Longitude = 18.4131m,
+            Status = status,
+            SubmittedAtUtc = submittedAtUtc,
+            DecisionReason = status is GymRegistrationStatus.Approved or GymRegistrationStatus.Rejected
+                ? "Reviewed for pagination test"
+                : null,
+        };
+
+    private static WebApplicationFactory<Program> CreateFactory(
+        string connectionString,
+        QueryCountingDbCommandInterceptor? queryCounter = null) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Development");
@@ -747,6 +965,12 @@ public sealed class SeededIdentityApiTests
                     ["Seed:DefaultPassword"] = Password,
                     ["RabbitMq:Enabled"] = "false",
                 }));
+            if (queryCounter is not null)
+            {
+                builder.ConfigureServices(services =>
+                    services.AddDbContext<GymLinkDbContext>((_, options) =>
+                        options.AddInterceptors(queryCounter)));
+            }
         });
 
     private static GymLinkDbContext CreateContext(string connectionString)

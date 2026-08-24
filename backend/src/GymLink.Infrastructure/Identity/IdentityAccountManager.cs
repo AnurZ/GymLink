@@ -29,6 +29,43 @@ internal sealed class IdentityAccountManager(
         return user is null ? null : await ToAccountAsync(user);
     }
 
+    public async Task<IReadOnlyDictionary<Guid, IdentityAccount>> FindByIdsAsync(
+        IReadOnlyCollection<Guid> userIds,
+        CancellationToken cancellationToken)
+    {
+        if (userIds.Count == 0)
+        {
+            return new Dictionary<Guid, IdentityAccount>();
+        }
+
+        var rows = await (
+                from user in userManager.Users.AsNoTracking()
+                join userRole in dbContext.UserRoles.AsNoTracking() on user.Id equals userRole.UserId
+                join role in dbContext.Roles.AsNoTracking() on userRole.RoleId equals role.Id
+                where userIds.Contains(user.Id) &&
+                      user.UserName != null &&
+                      user.Email != null &&
+                      role.Name != null
+                select new
+                {
+                    user.Id,
+                    Username = user.UserName!,
+                    Email = user.Email!,
+                    Role = role.Name!,
+                })
+            .ToListAsync(cancellationToken);
+        return rows
+            .GroupBy(x => x.Id)
+            .Where(group => group.Count() == 1)
+            .ToDictionary(
+                group => group.Key,
+                group =>
+                {
+                    var row = group.Single();
+                    return new IdentityAccount(row.Id, row.Username, row.Email, row.Role);
+                });
+    }
+
     public async Task<IReadOnlyDictionary<Guid, string>> GetEmailsAsync(
         IReadOnlyCollection<Guid> userIds,
         CancellationToken cancellationToken)
@@ -205,15 +242,11 @@ internal sealed class IdentityAccountManager(
             .Skip(skip)
             .Take(take)
             .ToListAsync(cancellationToken);
-        var results = new List<IdentityAccount>(page.Count);
-        foreach (var user in page)
-        {
-            var account = await ToAccountAsync(user);
-            if (account is not null)
-            {
-                results.Add(account);
-            }
-        }
+        var accounts = await FindByIdsAsync(page.Select(x => x.Id).ToArray(), cancellationToken);
+        var results = page
+            .Where(user => accounts.ContainsKey(user.Id))
+            .Select(user => accounts[user.Id])
+            .ToList();
 
         return (results, total);
     }

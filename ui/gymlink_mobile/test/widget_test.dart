@@ -697,7 +697,7 @@ void main() {
             'reviewCount': 2,
             'imageUrls': <String>[],
           },
-          '/api/gyms/gym-1/membership-plans' => [
+          '/api/gyms/gym-1/membership-plans' => _page([
             {
               'id': 'plan-1',
               'name': 'Mjesečna',
@@ -705,8 +705,8 @@ void main() {
               'price': 50,
               'currency': 'BAM',
             },
-          ],
-          '/api/gyms/gym-1/trainers' => <Object>[],
+          ]),
+          '/api/gyms/gym-1/trainers' => _page(<Object>[]),
           '/api/gyms/gym-1/reviews' => _page(<Object>[]),
           '/api/me/memberships' => _page(<Object>[]),
           '/api/me/membership-requests' => _page(
@@ -791,16 +791,20 @@ void main() {
     final client = MockClient((request) async {
       if (request.method == 'GET' &&
           request.url.path == '/api/trainers/trainer-1/offerings') {
-        return _jsonResponse([
-          {
-            'id': 'offering-1',
-            'name': 'Individualni trening',
-            'durationMinutes': 60,
-            'price': 30,
-            'currency': 'BAM',
-            'isActive': true,
-          },
-        ]);
+        expect(request.url.queryParameters['page'], '1');
+        expect(request.url.queryParameters['pageSize'], '100');
+        return _jsonResponse(
+          _page([
+            {
+              'id': 'offering-1',
+              'name': 'Individualni trening',
+              'durationMinutes': 60,
+              'price': 30,
+              'currency': 'BAM',
+              'isActive': true,
+            },
+          ]),
+        );
       }
       if (request.method == 'GET' &&
           request.url.path == '/api/trainers/trainer-1/availability-calendar') {
@@ -1976,7 +1980,7 @@ void main() {
             '/uploads/gym-images/inside.webp',
           ],
         },
-        '/api/gyms/gym-1/membership-plans' => [
+        '/api/gyms/gym-1/membership-plans' => _page([
           {
             'id': 'plan-1',
             'name': 'Mjesečna',
@@ -1984,8 +1988,8 @@ void main() {
             'price': 50,
             'currency': 'BAM',
           },
-        ],
-        '/api/gyms/gym-1/trainers' => <Object>[],
+        ]),
+        '/api/gyms/gym-1/trainers' => _page(<Object>[]),
         '/api/gyms/gym-1/reviews' => _page(<Object>[]),
         '/api/me/memberships' => _page([
           {
@@ -2065,8 +2069,8 @@ void main() {
           'reviewCount': 12,
           'imageUrls': <String>[],
         },
-        '/api/gyms/gym-map/membership-plans' => <Object>[],
-        '/api/gyms/gym-map/trainers' => <Object>[],
+        '/api/gyms/gym-map/membership-plans' => _page(<Object>[]),
+        '/api/gyms/gym-map/trainers' => _page(<Object>[]),
         '/api/gyms/gym-map/reviews' => _page(<Object>[]),
         '/api/me/memberships' => _page(<Object>[]),
         '/api/me/membership-requests' => _page(<Object>[]),
@@ -2150,7 +2154,7 @@ void main() {
       }
       if (request.url.path == '/api/gyms/gym-1/membership-plans' ||
           request.url.path == '/api/gyms/gym-1/trainers') {
-        return _jsonResponse(<Object>[]);
+        return _jsonResponse(_page(const <Object>[]));
       }
       if (request.url.path == '/api/gyms/gym-1/reviews' ||
           request.url.path == '/api/me/memberships' ||

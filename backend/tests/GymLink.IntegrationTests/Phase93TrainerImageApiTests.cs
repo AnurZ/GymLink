@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GymLink.Application.Catalog;
+using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.TrainerImages;
 using GymLink.Infrastructure.Persistence;
@@ -77,10 +78,10 @@ public sealed class Phase93TrainerImageApiTests
             Assert.Equal(maximumJpeg.LongLength, storedImage.Content.Headers.ContentLength);
 
             var gymId = await FindGymAsync(client, "Sportska Akademija Respect");
-            var publicTrainers = await client.GetFromJsonAsync<IReadOnlyList<TrainerDto>>(
+            var publicTrainers = await client.GetFromJsonAsync<PagedResult<TrainerDto>>(
                 $"/api/gyms/{gymId}/trainers");
             var publicTrainer = Assert.Single(
-                publicTrainers!,
+                publicTrainers!.Items,
                 x => x.DisplayName == "Emir Hadžić");
             Assert.Equal(uploaded.ImageUrl, publicTrainer.ImageUrl);
             Assert.Null(publicTrainer.ManagementImage);

@@ -447,12 +447,13 @@ class _ChatDetailScreenState extends State<ChatDetailScreen>
     }
     setState(() => _openingTrainerProfile = true);
     try {
-      final trainers = await context.read<ApiClient>().list(
+      final trainers = await context.read<ApiClient>().page(
         '/api/gyms/${conversation.gymId}/trainers',
+        query: const {'page': 1, 'pageSize': 100},
         authenticated: false,
       );
       Map<String, dynamic>? trainer;
-      for (final candidate in trainers) {
+      for (final candidate in trainers.items) {
         if (candidate['userId']?.toString() == conversation.counterpartUserId) {
           trainer = candidate;
           break;

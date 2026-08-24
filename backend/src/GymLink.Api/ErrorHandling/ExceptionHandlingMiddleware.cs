@@ -72,6 +72,10 @@ internal sealed class ExceptionHandlingMiddleware(
                 StatusCodes.Status400BadRequest,
                 "invalid_request",
                 badRequest.Message),
+            ArgumentOutOfRangeException outOfRange => (
+                StatusCodes.Status400BadRequest,
+                "invalid_request",
+                outOfRange.Message),
             DbUpdateConcurrencyException => (
                 StatusCodes.Status409Conflict,
                 "concurrency_conflict",

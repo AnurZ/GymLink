@@ -91,32 +91,41 @@ internal sealed class GymRegistrationService(
         return await GetProjectedAsync(entity.Id, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<GymRegistrationDto>> ListMineAsync(
+    public Task<PagedResult<GymRegistrationDto>> ListMineAsync(
+        RegistrationSearchRequest request,
         CancellationToken cancellationToken)
     {
         var userId = RequireUser();
-        return await (
-                from request in dbContext.GymRegistrationRequests.AsNoTracking()
-                join city in dbContext.Cities.AsNoTracking() on request.CityId equals city.Id
-                where request.ApplicantUserId == userId
-                orderby request.SubmittedAtUtc descending, request.Id
-                select new GymRegistrationDto(
-                    request.Id,
-                    request.ApplicantUserId,
-                    request.ProposedGymName,
-                    request.ProposedDescription,
-                    request.ProposedAddress,
-                    request.CityId,
-                    city.Name,
-                    request.Latitude,
-                    request.Longitude,
-                    request.PhoneNumber,
-                    request.Status,
-                    request.SubmittedAtUtc,
-                    request.DecidedAtUtc,
-                    request.DecisionReason,
-                    request.CreatedTenantId))
-            .ToListAsync(cancellationToken);
+        var query =
+                from registration in dbContext.GymRegistrationRequests.AsNoTracking()
+                join city in dbContext.Cities.AsNoTracking() on registration.CityId equals city.Id
+                where registration.ApplicantUserId == userId
+                select new { Registration = registration, CityName = city.Name };
+        if (request.Status.HasValue)
+        {
+            query = query.Where(x => x.Registration.Status == request.Status.Value);
+        }
+
+        return query
+            .OrderByDescending(x => x.Registration.SubmittedAtUtc)
+            .ThenBy(x => x.Registration.Id)
+            .Select(x => new GymRegistrationDto(
+                    x.Registration.Id,
+                    x.Registration.ApplicantUserId,
+                    x.Registration.ProposedGymName,
+                    x.Registration.ProposedDescription,
+                    x.Registration.ProposedAddress,
+                    x.Registration.CityId,
+                    x.CityName,
+                    x.Registration.Latitude,
+                    x.Registration.Longitude,
+                    x.Registration.PhoneNumber,
+                    x.Registration.Status,
+                    x.Registration.SubmittedAtUtc,
+                    x.Registration.DecidedAtUtc,
+                    x.Registration.DecisionReason,
+                    x.Registration.CreatedTenantId))
+            .ToPagedResultAsync(request, cancellationToken);
     }
 
     public Task<PagedResult<GymRegistrationDto>> SearchAsync(

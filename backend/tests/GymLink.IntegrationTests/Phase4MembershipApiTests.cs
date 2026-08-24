@@ -623,7 +623,7 @@ public sealed class Phase4MembershipApiTests
         var gymId = gyms.RootElement.GetProperty("items")[0].GetProperty("id").GetGuid();
         using var plans = JsonDocument.Parse(
             await client.GetStringAsync($"/api/gyms/{gymId}/membership-plans"));
-        return plans.RootElement[0].GetProperty("id").GetGuid();
+        return plans.RootElement.GetProperty("items")[0].GetProperty("id").GetGuid();
     }
 
     private static async Task<AuthSessionDto> LoginAsync(HttpClient client, string identifier)

@@ -21,9 +21,10 @@ public sealed class GymRegistrationController(
     }
 
     [HttpGet("mine")]
-    public async Task<ActionResult<IReadOnlyList<GymRegistrationDto>>> Mine(
+    public async Task<IActionResult> Mine(
+        [FromQuery] RegistrationSearchRequest request,
         CancellationToken cancellationToken) =>
-        Ok(await registrationService.ListMineAsync(cancellationToken));
+        Ok(await registrationService.ListMineAsync(request, cancellationToken));
 }
 
 [ApiController]

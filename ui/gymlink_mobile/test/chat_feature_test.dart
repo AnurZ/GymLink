@@ -375,12 +375,14 @@ void main() {
     final repository = _FakeChatRepository(conversations: [conversation]);
     final realtime = _FakeChatRealtime();
     final controller = ChatController(repository, realtime, AuthController());
+    final catalogRequests = <Uri>[];
     final api = ApiClient(
       AuthController(),
       baseUrlOverride: 'http://test.local',
       httpClient: MockClient((request) async {
+        catalogRequests.add(request.url);
         final Object body = switch (request.url.path) {
-          '/api/gyms/gym/trainers' => [
+          '/api/gyms/gym/trainers' => _paged([
             {
               'id': 'trainer-profile-id',
               'userId': 'counterpart-trainer-profile',
@@ -391,8 +393,8 @@ void main() {
               'reviewCount': 12,
               'imageUrl': null,
             },
-          ],
-          '/api/trainers/trainer-profile-id/offerings' => <Object>[],
+          ]),
+          '/api/trainers/trainer-profile-id/offerings' => _paged(<Object>[]),
           _ => <Object>[],
         };
         return http.Response(
@@ -426,6 +428,18 @@ void main() {
     expect(find.byType(BookingScreen), findsOneWidget);
     expect(find.text('Trener Test'), findsOneWidget);
     expect(find.text('Biografija trenera'), findsOneWidget);
+    expect(
+      catalogRequests,
+      everyElement(
+        isA<Uri>()
+            .having((uri) => uri.queryParameters['page'], 'page', '1')
+            .having(
+              (uri) => uri.queryParameters['pageSize'],
+              'pageSize',
+              '100',
+            ),
+      ),
+    );
   });
 
   testWidgets('trainer cannot open a member profile from chat', (tester) async {
@@ -620,6 +634,13 @@ void main() {
     expect(find.byKey(const Key('unread-shell-conversation')), findsOneWidget);
   });
 }
+
+Map<String, Object> _paged(List<Object> items) => {
+  'items': items,
+  'page': 1,
+  'pageSize': 100,
+  'totalCount': items.length,
+};
 
 Future<_FakeChatRealtime> _pumpShell(
   WidgetTester tester,

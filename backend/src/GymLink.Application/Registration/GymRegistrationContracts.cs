@@ -60,7 +60,9 @@ public interface IGymRegistrationService
     Task<GymRegistrationDto> SubmitAsync(
         SubmitGymRegistrationRequest request,
         CancellationToken cancellationToken);
-    Task<IReadOnlyList<GymRegistrationDto>> ListMineAsync(CancellationToken cancellationToken);
+    Task<PagedResult<GymRegistrationDto>> ListMineAsync(
+        RegistrationSearchRequest request,
+        CancellationToken cancellationToken);
     Task<PagedResult<GymRegistrationDto>> SearchAsync(
         RegistrationSearchRequest request,
         CancellationToken cancellationToken);

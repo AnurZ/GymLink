@@ -17,8 +17,8 @@ RUN dotnet publish backend/src/GymLink.Api/GymLink.Api.csproj \
     --output /app/publish \
     /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0.4-alpine3.23 AS runtime
-RUN apk add --no-cache curl icu-libs tzdata
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.11-alpine3.23 AS runtime
+RUN apk upgrade --no-cache && apk add --no-cache curl icu-libs tzdata
 ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false \
     TZ=Europe/Sarajevo
 WORKDIR /app

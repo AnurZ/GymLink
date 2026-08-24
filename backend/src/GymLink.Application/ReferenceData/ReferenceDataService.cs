@@ -269,25 +269,32 @@ public sealed class ReferenceDataService(
                 var countries = await dbContext.Countries.AsNoTracking()
                     .Where(x => x.IsActive)
                     .OrderBy(x => x.Name)
+                    .ThenBy(x => x.Id)
                     .Select(x => new CountryDto(x.Id, x.Code, x.Name, x.IsActive))
+                    .Take(PagedRequest.MaximumPageSize)
                     .ToListAsync(cancellationToken);
                 var cities = await (
                         from city in dbContext.Cities.AsNoTracking()
                         join country in dbContext.Countries.AsNoTracking()
                             on city.CountryId equals country.Id
                         where city.IsActive && country.IsActive
-                        orderby country.Name, city.Name
+                        orderby country.Name, city.Name, city.Id
                         select new CityDto(city.Id, city.CountryId, country.Name, city.Name, city.IsActive))
+                    .Take(PagedRequest.MaximumPageSize)
                     .ToListAsync(cancellationToken);
                 var equipment = await dbContext.Equipment.AsNoTracking()
                     .Where(x => x.IsActive)
                     .OrderBy(x => x.Name)
+                    .ThenBy(x => x.Id)
                     .Select(x => new EquipmentDto(x.Id, x.Name, x.IsActive))
+                    .Take(PagedRequest.MaximumPageSize)
                     .ToListAsync(cancellationToken);
                 var trainingTypes = await dbContext.TrainingTypes.AsNoTracking()
                     .Where(x => x.IsActive)
                     .OrderBy(x => x.Name)
+                    .ThenBy(x => x.Id)
                     .Select(x => new TrainingTypeDto(x.Id, x.Name, x.Description, x.IsActive))
+                    .Take(PagedRequest.MaximumPageSize)
                     .ToListAsync(cancellationToken);
                 return new ReferenceLookupsDto(countries, cities, equipment, trainingTypes);
             });

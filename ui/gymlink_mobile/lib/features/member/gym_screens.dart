@@ -714,11 +714,16 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
       final api = context.read<ApiClient>();
       final results = await Future.wait([
         api.get('/api/gyms/${widget.gymId}', authenticated: false),
-        api.list(
+        api.page(
           '/api/gyms/${widget.gymId}/membership-plans',
+          query: const {'page': 1, 'pageSize': 100},
           authenticated: false,
         ),
-        api.list('/api/gyms/${widget.gymId}/trainers', authenticated: false),
+        api.page(
+          '/api/gyms/${widget.gymId}/trainers',
+          query: const {'page': 1, 'pageSize': 100},
+          authenticated: false,
+        ),
         api.page('/api/gyms/${widget.gymId}/reviews', authenticated: false),
         api.page(
           '/api/me/memberships',
@@ -730,8 +735,8 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
         ),
       ]);
       _gym = Map<String, dynamic>.from(results[0]! as Map);
-      _plans = results[1] as List<Map<String, dynamic>>;
-      _trainers = results[2] as List<Map<String, dynamic>>;
+      _plans = (results[1] as PagedData).items;
+      _trainers = (results[2] as PagedData).items;
       _reviews = (results[3] as PagedData).items;
       _currentMembership = (results[4] as PagedData).items.firstOrNull;
       _pendingRequest = (results[5] as PagedData).items.firstOrNull;
@@ -1184,11 +1189,14 @@ class _BookingScreenState extends State<BookingScreen> {
     });
     try {
       final api = context.read<ApiClient>();
-      final offerings = await api.list(
+      final offerings = await api.page(
         '/api/trainers/${widget.trainer['id']}/offerings',
+        query: const {'page': 1, 'pageSize': 100},
         authenticated: false,
       );
-      _offerings = offerings.where((item) => item['isActive'] == true).toList();
+      _offerings = offerings.items
+          .where((item) => item['isActive'] == true)
+          .toList();
       if (!_offerings.any((item) => item['id']?.toString() == _offeringId)) {
         _offeringId = _offerings.firstOrNull?['id']?.toString();
       }
