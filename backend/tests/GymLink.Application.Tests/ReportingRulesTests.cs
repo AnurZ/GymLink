@@ -68,11 +68,13 @@ public sealed class ReportingRulesTests
     [InlineData(2, 0, 100)]
     [InlineData(3, 2, 50)]
     [InlineData(2, 3, -33.3)]
-    public void Member_change_uses_previous_month_end_baseline(
+    public void Membership_period_change_uses_previous_month_end_baseline(
         int current,
         int previous,
         decimal expected) =>
-        Assert.Equal(expected, ReportingService.CalculateMemberChange(current, previous));
+        Assert.Equal(
+            expected,
+            ReportingService.CalculateMembershipPeriodChange(current, previous));
 
     [Fact]
     public void Report_row_limit_accepts_5000_and_rejects_5001()

@@ -87,14 +87,20 @@ public sealed class Phase11ReportingApiTests
             Assert.True(
                 summaryResponse.IsSuccessStatusCode,
                 await summaryResponse.Content.ReadAsStringAsync());
-            var summary = await summaryResponse.Content
-                .ReadFromJsonAsync<TenantStatisticsSummary>();
+            var summaryJson = await summaryResponse.Content.ReadAsStringAsync();
+            Assert.DoesNotContain("memberChangePercentage", summaryJson);
+            var summary = System.Text.Json.JsonSerializer.Deserialize<TenantStatisticsSummary>(
+                summaryJson,
+                WebJsonOptions);
             Assert.NotNull(summary);
             Assert.Equal(new DateOnly(2026, 3, 1), summary.Window.WindowStart);
             Assert.Equal(new DateOnly(2026, 8, 31), summary.Window.WindowEnd);
             Assert.Equal("Europe/Sarajevo", summary.Window.TimeZone);
             Assert.Equal(ReportingNow.UtcDateTime, summary.Window.GeneratedAtUtc);
             Assert.Equal(2, summary.ActiveMemberCount);
+            Assert.Equal(2, summary.MembershipPeriodCount);
+            Assert.Equal(1, summary.PreviousMonthEndMembershipPeriodCount);
+            Assert.Equal(100m, summary.MembershipPeriodChangePercentage);
             Assert.Equal(8, summary.ReservationCount);
 
             var months = await client.GetFromJsonAsync<TenantMonthlyStatistics>(
@@ -124,6 +130,50 @@ public sealed class Phase11ReportingApiTests
                 "/api/tenant/reports/reservations.pdf",
                 "gymlink-rezervacije-2026-08-31.pdf",
                 8);
+
+            await TransitionFirstMembershipAsync(
+                connectionString,
+                arenaAdmin.User.Tenant.Id,
+                membership => membership.Suspend(
+                    arenaAdmin.User.Id,
+                    ReportingNow.UtcDateTime.AddHours(-2),
+                    "Reporting status fixture"));
+            await AssertMembershipSummaryAsync(client, 1, 2, 1, 100m);
+
+            await TransitionFirstMembershipAsync(
+                connectionString,
+                arenaAdmin.User.Tenant.Id,
+                membership => membership.Reactivate(
+                    arenaAdmin.User.Id,
+                    ReportingNow.UtcDateTime.AddHours(-1),
+                    "Reporting status fixture"));
+            await AssertMembershipSummaryAsync(client, 2, 2, 1, 100m);
+
+            await TransitionFirstMembershipAsync(
+                connectionString,
+                arenaAdmin.User.Tenant.Id,
+                membership => membership.CancelByStaff(
+                    arenaAdmin.User.Id,
+                    ReportingNow.UtcDateTime.AddMinutes(-30),
+                    "Reporting status fixture"));
+            await AssertMembershipSummaryAsync(client, 1, 2, 1, 100m);
+
+            await SetFirstMembershipStatusAsync(
+                connectionString,
+                arenaAdmin.User.Tenant.Id,
+                MembershipStatus.Expired);
+            await AssertMembershipSummaryAsync(client, 1, 2, 1, 100m);
+
+            await AddOverlappingReplacementMembershipAsync(
+                connectionString,
+                arenaAdmin.User.Tenant.Id,
+                arenaAdmin.User.Id);
+            await AssertMembershipSummaryAsync(client, 2, 2, 1, 100m);
+
+            await ApplyPeriodBoundaryFixtureAsync(
+                connectionString,
+                arenaAdmin.User.Tenant.Id);
+            await AssertMembershipSummaryAsync(client, 1, 1, 1, 0m);
 
             var central = await LoginAsync(client, "centraladmin");
             Authorize(client, central);
@@ -185,6 +235,123 @@ public sealed class Phase11ReportingApiTests
         var bytes = await response.Content.ReadAsByteArrayAsync();
         Assert.True(bytes.Length > 1000);
         Assert.Equal("%PDF"u8.ToArray(), bytes[..4]);
+    }
+
+    private static async Task AssertMembershipSummaryAsync(
+        HttpClient client,
+        int activeMemberCount,
+        int membershipPeriodCount,
+        int previousMonthEndMembershipPeriodCount,
+        decimal membershipPeriodChangePercentage)
+    {
+        var summary = await client.GetFromJsonAsync<TenantStatisticsSummary>(
+            "/api/tenant/statistics/summary");
+        Assert.NotNull(summary);
+        Assert.Equal(activeMemberCount, summary.ActiveMemberCount);
+        Assert.Equal(membershipPeriodCount, summary.MembershipPeriodCount);
+        Assert.Equal(
+            previousMonthEndMembershipPeriodCount,
+            summary.PreviousMonthEndMembershipPeriodCount);
+        Assert.Equal(
+            membershipPeriodChangePercentage,
+            summary.MembershipPeriodChangePercentage);
+    }
+
+    private static async Task TransitionFirstMembershipAsync(
+        string connectionString,
+        Guid tenantId,
+        Action<Membership> transition)
+    {
+        await using var context = CreateContext(connectionString);
+        var membership = await context.Memberships.IgnoreQueryFilters()
+            .Where(x => x.TenantId == tenantId)
+            .OrderBy(x => x.Id)
+            .FirstAsync();
+        transition(membership);
+        await context.SaveChangesAsync();
+    }
+
+    private static async Task SetFirstMembershipStatusAsync(
+        string connectionString,
+        Guid tenantId,
+        MembershipStatus status)
+    {
+        await using var context = CreateContext(connectionString);
+        var membership = await context.Memberships.IgnoreQueryFilters()
+            .Where(x => x.TenantId == tenantId)
+            .OrderBy(x => x.Id)
+            .FirstAsync();
+        context.Entry(membership)
+            .Property(nameof(Membership.Status))
+            .CurrentValue = status;
+        await context.SaveChangesAsync();
+    }
+
+    private static async Task AddOverlappingReplacementMembershipAsync(
+        string connectionString,
+        Guid tenantId,
+        Guid actorUserId)
+    {
+        await using var context = CreateContext(connectionString);
+        var previous = await context.Memberships.IgnoreQueryFilters()
+            .Where(x => x.TenantId == tenantId && x.Status == MembershipStatus.Expired)
+            .OrderBy(x => x.Id)
+            .FirstAsync();
+        var activatedAtUtc = ReportingNow.UtcDateTime.AddDays(-1);
+        var request = new MembershipRequest
+        {
+            TenantId = previous.TenantId,
+            MemberUserId = previous.MemberUserId,
+            GymId = previous.GymId,
+            MembershipPlanId = previous.MembershipPlanId,
+            PaymentMethod = MembershipPaymentMethod.PayInPerson,
+            RequestedAtUtc = activatedAtUtc.AddMinutes(-1),
+        };
+        request.Approve(actorUserId, activatedAtUtc);
+        var replacement = new Membership(
+            previous.TenantId,
+            previous.MemberUserId,
+            previous.GymId,
+            previous.MembershipPlanId,
+            request.Id,
+            previous.PlanName,
+            previous.DurationDays,
+            previous.Price,
+            previous.Currency,
+            actorUserId,
+            activatedAtUtc);
+        context.MembershipRequests.Add(request);
+        context.Memberships.Add(replacement);
+        await context.SaveChangesAsync();
+    }
+
+    private static async Task ApplyPeriodBoundaryFixtureAsync(
+        string connectionString,
+        Guid tenantId)
+    {
+        await using var context = CreateContext(connectionString);
+        var expiredMemberUserId = await context.Memberships.IgnoreQueryFilters()
+            .Where(x => x.TenantId == tenantId && x.Status == MembershipStatus.Expired)
+            .Select(x => x.MemberUserId)
+            .SingleAsync();
+        var activeMemberships = await context.Memberships.IgnoreQueryFilters()
+            .Where(x => x.TenantId == tenantId && x.Status == MembershipStatus.Active)
+            .ToListAsync();
+        Assert.Equal(2, activeMemberships.Count);
+        var startsAtBoundary = activeMemberships.Single(
+            x => x.MemberUserId == expiredMemberUserId);
+        var endsAtBoundary = activeMemberships.Single(
+            x => x.MemberUserId != expiredMemberUserId);
+        context.Entry(startsAtBoundary)
+            .Property(nameof(Membership.StartsAtUtc))
+            .CurrentValue = ReportingNow.UtcDateTime;
+        context.Entry(startsAtBoundary)
+            .Property(nameof(Membership.EndsAtUtc))
+            .CurrentValue = ReportingNow.UtcDateTime.AddDays(startsAtBoundary.DurationDays);
+        context.Entry(endsAtBoundary)
+            .Property(nameof(Membership.EndsAtUtc))
+            .CurrentValue = ReportingNow.UtcDateTime;
+        await context.SaveChangesAsync();
     }
 
     private static async Task ApplyMonthBoundaryFixtureAsync(

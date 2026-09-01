@@ -24,11 +24,22 @@ internal sealed class ReportingService(
     {
         RequireTenant();
         var range = CreateRange();
-        var activeMembers = await ActiveMembershipsAt(range.NowUtc)
+        var activeMembers = await CurrentActiveMemberships(range.NowUtc)
+            .Select(x => x.MemberUserId)
+            .Distinct()
             .CountAsync(cancellationToken);
-        var priorActiveMembers = await ActiveMembershipsAt(range.PreviousMonthEndUtc)
+        var membershipPeriodCount = await MembershipPeriodsAt(range.NowUtc)
+            .Select(x => x.MemberUserId)
+            .Distinct()
             .CountAsync(cancellationToken);
-        var memberChange = CalculateMemberChange(activeMembers, priorActiveMembers);
+        var previousMonthEndMembershipPeriodCount = await MembershipPeriodsAt(
+                range.PreviousMonthEndUtc)
+            .Select(x => x.MemberUserId)
+            .Distinct()
+            .CountAsync(cancellationToken);
+        var membershipPeriodChange = CalculateMembershipPeriodChange(
+            membershipPeriodCount,
+            previousMonthEndMembershipPeriodCount);
         var reservationCount = await dbContext.AppointmentReservations.AsNoTracking()
             .CountAsync(
                 x => x.StartsAtUtc >= range.StartUtc && x.StartsAtUtc < range.EndUtc,
@@ -45,7 +56,9 @@ internal sealed class ReportingService(
         return new TenantStatisticsSummary(
             range.Contract,
             activeMembers,
-            memberChange,
+            membershipPeriodCount,
+            previousMonthEndMembershipPeriodCount,
+            membershipPeriodChange,
             reservationCount,
             reservationsToday,
             decimal.Round(averageRating, 2, MidpointRounding.AwayFromZero));
@@ -71,7 +84,7 @@ internal sealed class ReportingService(
     {
         RequireTenant();
         var range = CreateRange();
-        var groups = await ActiveMembershipsAt(range.NowUtc)
+        var groups = await CurrentActiveMemberships(range.NowUtc)
             .GroupBy(x => new { x.MembershipPlanId, x.PlanName })
             .Select(x => new { x.Key.MembershipPlanId, x.Key.PlanName, Count = x.Count() })
             .OrderByDescending(x => x.Count)
@@ -209,14 +222,18 @@ internal sealed class ReportingService(
             rows.Count);
     }
 
-    private IQueryable<GymLink.Domain.Memberships.Membership> ActiveMembershipsAt(
+    private IQueryable<GymLink.Domain.Memberships.Membership> CurrentActiveMemberships(
+        DateTime nowUtc) =>
+        dbContext.Memberships.AsNoTracking().Where(x =>
+            x.Status == MembershipStatus.Active &&
+            x.StartsAtUtc.HasValue && x.StartsAtUtc <= nowUtc &&
+            x.EndsAtUtc.HasValue && x.EndsAtUtc > nowUtc);
+
+    private IQueryable<GymLink.Domain.Memberships.Membership> MembershipPeriodsAt(
         DateTime instantUtc) =>
         dbContext.Memberships.AsNoTracking().Where(x =>
             x.StartsAtUtc.HasValue && x.StartsAtUtc <= instantUtc &&
-            x.EndsAtUtc.HasValue && x.EndsAtUtc > instantUtc &&
-            (x.Status == MembershipStatus.Active ||
-             (x.Status != MembershipStatus.PendingPayment &&
-              (!x.StatusChangedAtUtc.HasValue || x.StatusChangedAtUtc > instantUtc))));
+            x.EndsAtUtc.HasValue && x.EndsAtUtc > instantUtc);
 
     private async Task AuditAsync(
         string action,
@@ -257,7 +274,9 @@ internal sealed class ReportingService(
         }
     }
 
-    internal static decimal CalculateMemberChange(int currentCount, int previousCount) =>
+    internal static decimal CalculateMembershipPeriodChange(
+        int currentCount,
+        int previousCount) =>
         previousCount == 0
             ? currentCount == 0 ? 0m : 100m
             : decimal.Round(

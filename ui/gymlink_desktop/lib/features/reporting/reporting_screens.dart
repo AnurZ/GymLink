@@ -477,16 +477,20 @@ class _SummaryCards extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final value = data ?? const {};
-    final change = (value['memberChangePercentage'] as num?)?.toDouble() ?? 0;
+    final membershipPeriodCount = value['membershipPeriodCount'] ?? 0;
+    final change =
+        (value['membershipPeriodChangePercentage'] as num?)?.toDouble() ?? 0;
     return Wrap(
       spacing: 16,
       runSpacing: 16,
       children: [
         _MetricCard(
-          title: 'Broj članova',
+          title: 'Broj aktivnih članova',
           value: '${value['activeMemberCount'] ?? 0}',
           detail:
-              '${change >= 0 ? '+' : ''}${change.toStringAsFixed(1)}% ovaj mjesec',
+              'Periodi članstva: $membershipPeriodCount '
+              '(${change >= 0 ? '+' : ''}${change.toStringAsFixed(1)}% '
+              'prema kraju prethodnog mjeseca)',
           icon: Icons.people_outline,
           color: Colors.blue,
         ),

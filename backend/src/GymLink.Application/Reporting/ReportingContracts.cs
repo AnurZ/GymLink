@@ -11,7 +11,9 @@ public sealed record ReportingWindow(
 public sealed record TenantStatisticsSummary(
     ReportingWindow Window,
     int ActiveMemberCount,
-    decimal MemberChangePercentage,
+    int MembershipPeriodCount,
+    int PreviousMonthEndMembershipPeriodCount,
+    decimal MembershipPeriodChangePercentage,
     int ReservationCount,
     int ReservationsToday,
     decimal AverageTrainerRating);

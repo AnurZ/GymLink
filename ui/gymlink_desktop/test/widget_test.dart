@@ -112,8 +112,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Izvještaji i statistika'), findsOneWidget);
-      expect(find.text('Broj članova'), findsOneWidget);
+      expect(find.text('Broj aktivnih članova'), findsOneWidget);
       expect(find.text('142'), findsWidgets);
+      expect(
+        find.text(
+          'Periodi članstva: 150 (+20.0% prema kraju prethodnog mjeseca)',
+        ),
+        findsOneWidget,
+      );
       expect(find.text('Broj članova po mjesecima'), findsOneWidget);
       expect(find.text('Tipovi članstva'), findsOneWidget);
       expect(statisticsPalette, const [
@@ -191,6 +197,51 @@ void main() {
         '/api/tenant/reports/memberships.pdf',
         '/api/tenant/reports/reservations.pdf',
       ]);
+    },
+  );
+
+  testWidgets(
+    'membership period detail presents signed and zero-baseline changes',
+    (tester) async {
+      tester.view.physicalSize = const Size(1500, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      for (final scenario in [
+        (
+          api: _ReportingApi(
+            membershipPeriodCount: 80,
+            previousMonthEndMembershipPeriodCount: 100,
+            membershipPeriodChangePercentage: -20,
+          ),
+          detail:
+              'Periodi članstva: 80 (-20.0% prema kraju prethodnog mjeseca)',
+        ),
+        (
+          api: _ReportingApi(
+            membershipPeriodCount: 3,
+            previousMonthEndMembershipPeriodCount: 0,
+            membershipPeriodChangePercentage: 100,
+          ),
+          detail:
+              'Periodi članstva: 3 (+100.0% prema kraju prethodnog mjeseca)',
+        ),
+      ]) {
+        await tester.pumpWidget(
+          Provider<ApiClient>.value(
+            value: scenario.api,
+            child: MaterialApp(
+              theme: buildGymLinkTheme(),
+              home: const Scaffold(body: GymAdminReportsScreen()),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text(scenario.detail), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      }
     },
   );
 
@@ -346,6 +397,10 @@ void main() {
   testWidgets('statistics chart failure keeps successful summary cards', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(1500, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final api = _ReportingApi(failMonths: true);
     await tester.pumpWidget(
       Provider<ApiClient>.value(
@@ -1878,11 +1933,19 @@ class _TestTokens implements AuthTokenSource {
 }
 
 class _ReportingApi extends ApiClient {
-  _ReportingApi({this.failMonths = false, this.emptyCharts = false})
-    : super(_TestTokens());
+  _ReportingApi({
+    this.failMonths = false,
+    this.emptyCharts = false,
+    this.membershipPeriodCount = 150,
+    this.previousMonthEndMembershipPeriodCount = 125,
+    this.membershipPeriodChangePercentage = 20,
+  }) : super(_TestTokens());
 
   final bool failMonths;
   final bool emptyCharts;
+  final int membershipPeriodCount;
+  final int previousMonthEndMembershipPeriodCount;
+  final num membershipPeriodChangePercentage;
   final List<String> downloadedPaths = [];
   final List<String> requestedPaths = [];
   static const report = DownloadedFile(
@@ -1902,7 +1965,10 @@ class _ReportingApi extends ApiClient {
     if (path == '/api/tenant/statistics/summary') {
       return {
         'activeMemberCount': 142,
-        'memberChangePercentage': 12,
+        'membershipPeriodCount': membershipPeriodCount,
+        'previousMonthEndMembershipPeriodCount':
+            previousMonthEndMembershipPeriodCount,
+        'membershipPeriodChangePercentage': membershipPeriodChangePercentage,
         'reservationCount': 89,
         'reservationsToday': 8,
         'averageTrainerRating': 4.7,
@@ -2751,11 +2817,9 @@ class _GymAdminMembershipRequestsApi extends ApiClient {
 }
 
 class _GymAdminTrainerApi extends ApiClient {
-  _GymAdminTrainerApi({
-    bool hasTrainer = false,
-    this.lifecycleProblem,
-  }) : _promoted = hasTrainer,
-       super(_TestTokens());
+  _GymAdminTrainerApi({bool hasTrainer = false, this.lifecycleProblem})
+    : _promoted = hasTrainer,
+      super(_TestTokens());
 
   Map<String, dynamic>? promotionBody;
   final ApiProblem? lifecycleProblem;
