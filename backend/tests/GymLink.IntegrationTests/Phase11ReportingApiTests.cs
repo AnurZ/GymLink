@@ -4,13 +4,17 @@ using System.Net.Http.Json;
 using GymLink.Application.Identity;
 using GymLink.Application.Reporting;
 using GymLink.Domain.Enums;
+using GymLink.Domain.Memberships;
+using GymLink.Domain.Reservations;
 using GymLink.Infrastructure.Persistence;
 using GymLink.Infrastructure.Reporting;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace GymLink.IntegrationTests;
 
@@ -18,6 +22,8 @@ public sealed class Phase11ReportingApiTests
 {
     private const string Password = "Test123!";
     private const string SigningKey = "integration-test-signing-key-at-least-32-bytes";
+    private static readonly DateTimeOffset ReportingNow =
+        new(2026, 8, 15, 12, 0, 0, TimeSpan.Zero);
     private static readonly System.Text.Json.JsonSerializerOptions WebJsonOptions = new(
         System.Text.Json.JsonSerializerDefaults.Web);
 
@@ -71,6 +77,9 @@ public sealed class Phase11ReportingApiTests
 
             var arenaAdmin = await LoginAsync(client, "admin.arena");
             Authorize(client, arenaAdmin);
+            await ApplyMonthBoundaryFixtureAsync(
+                connectionString,
+                arenaAdmin.User.Tenant!.Id);
             Assert.Equal(
                 HttpStatusCode.Forbidden,
                 (await client.GetAsync("/api/admin/statistics/summary")).StatusCode);
@@ -84,10 +93,7 @@ public sealed class Phase11ReportingApiTests
             Assert.Equal(new DateOnly(2026, 3, 1), summary.Window.WindowStart);
             Assert.Equal(new DateOnly(2026, 8, 31), summary.Window.WindowEnd);
             Assert.Equal("Europe/Sarajevo", summary.Window.TimeZone);
-            Assert.InRange(
-                summary.Window.GeneratedAtUtc,
-                DateTime.UtcNow.AddMinutes(-1),
-                DateTime.UtcNow.AddMinutes(1));
+            Assert.Equal(ReportingNow.UtcDateTime, summary.Window.GeneratedAtUtc);
             Assert.Equal(2, summary.ActiveMemberCount);
             Assert.Equal(8, summary.ReservationCount);
 
@@ -96,8 +102,11 @@ public sealed class Phase11ReportingApiTests
             Assert.NotNull(months);
             Assert.Equal(6, months.Items.Count);
             Assert.Equal([3, 4, 5, 6, 7, 8], months.Items.Select(x => x.Month).ToArray());
-            Assert.Equal(2, months.Items.Single(x => x.Month == 7).Count);
-            Assert.All(months.Items.Where(x => x.Month != 7), x => Assert.Equal(0, x.Count));
+            Assert.Equal(1, months.Items.Single(x => x.Month == 7).Count);
+            Assert.Equal(1, months.Items.Single(x => x.Month == 8).Count);
+            Assert.All(
+                months.Items.Where(x => x.Month is not 7 and not 8),
+                x => Assert.Equal(0, x.Count));
 
             var distribution = await client.GetFromJsonAsync<MembershipPlanDistribution>(
                 "/api/tenant/statistics/membership-plan-distribution");
@@ -136,6 +145,12 @@ public sealed class Phase11ReportingApiTests
             Assert.NotNull(trends);
             Assert.Equal(6, trends.ReservationsByMonth.Count);
             Assert.Equal(30, trends.ReservationsByMonth.Sum(x => x.Count));
+            Assert.Equal(
+                1,
+                trends.ReservationsByMonth.Single(x => x.Month == 7).Count);
+            Assert.Equal(
+                29,
+                trends.ReservationsByMonth.Single(x => x.Month == 8).Count);
 
             await using var verification = CreateContext(connectionString);
             Assert.True(await verification.SecurityAuditRecords.AnyAsync(
@@ -170,6 +185,65 @@ public sealed class Phase11ReportingApiTests
         var bytes = await response.Content.ReadAsByteArrayAsync();
         Assert.True(bytes.Length > 1000);
         Assert.Equal("%PDF"u8.ToArray(), bytes[..4]);
+    }
+
+    private static async Task ApplyMonthBoundaryFixtureAsync(
+        string connectionString,
+        Guid arenaTenantId)
+    {
+        await using var context = CreateContext(connectionString);
+        var memberships = await context.Memberships.IgnoreQueryFilters()
+            .Where(x => x.TenantId == arenaTenantId)
+            .OrderBy(x => x.Id)
+            .Take(2)
+            .ToListAsync();
+        Assert.Equal(2, memberships.Count);
+        SetMembershipPeriod(
+            context,
+            memberships[0],
+            new DateTime(2026, 7, 31, 21, 59, 59, DateTimeKind.Utc));
+        SetMembershipPeriod(
+            context,
+            memberships[1],
+            new DateTime(2026, 7, 31, 22, 30, 0, DateTimeKind.Utc));
+
+        var reservations = await context.AppointmentReservations.IgnoreQueryFilters()
+            .OrderBy(x => x.StartsAtUtc)
+            .Take(4)
+            .ToListAsync();
+        Assert.Equal(4, reservations.Count);
+        var boundaryStarts = new[]
+        {
+            new DateTime(2026, 7, 31, 21, 59, 59, DateTimeKind.Utc),
+            new DateTime(2026, 7, 31, 22, 0, 0, DateTimeKind.Utc),
+            new DateTime(2026, 7, 31, 22, 0, 1, DateTimeKind.Utc),
+            new DateTime(2026, 7, 31, 22, 30, 0, DateTimeKind.Utc),
+        };
+        for (var index = 0; index < reservations.Count; index++)
+        {
+            var reservation = reservations[index];
+            context.Entry(reservation)
+                .Property(nameof(AppointmentReservation.StartsAtUtc))
+                .CurrentValue = boundaryStarts[index];
+            context.Entry(reservation)
+                .Property(nameof(AppointmentReservation.EndsAtUtc))
+                .CurrentValue = boundaryStarts[index].AddMinutes(reservation.DurationMinutes);
+        }
+
+        await context.SaveChangesAsync();
+    }
+
+    private static void SetMembershipPeriod(
+        GymLinkDbContext context,
+        Membership membership,
+        DateTime startsAtUtc)
+    {
+        context.Entry(membership)
+            .Property(nameof(Membership.StartsAtUtc))
+            .CurrentValue = startsAtUtc;
+        context.Entry(membership)
+            .Property(nameof(Membership.EndsAtUtc))
+            .CurrentValue = startsAtUtc.AddDays(membership.DurationDays);
     }
 
     private static async Task<AuthSessionDto> LoginAsync(HttpClient client, string identifier)
@@ -218,6 +292,18 @@ public sealed class Phase11ReportingApiTests
                     ["Seed:DefaultPassword"] = Password,
                     ["RabbitMq:Enabled"] = "false",
                 }));
+            builder.ConfigureServices(services =>
+            {
+                var timeProvider = new FixedTimeProvider(ReportingNow);
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton<TimeProvider>(timeProvider);
+                services.PostConfigure<JwtBearerOptions>(
+                    JwtBearerDefaults.AuthenticationScheme,
+                    options => options.TokenValidationParameters.LifetimeValidator =
+                        (notBefore, expires, _, _) =>
+                            (!notBefore.HasValue || notBefore <= ReportingNow.UtcDateTime) &&
+                            expires.HasValue && expires >= ReportingNow.UtcDateTime);
+            });
         });
 
     private static GymLinkDbContext CreateContext(string connectionString)
@@ -226,5 +312,10 @@ public sealed class Phase11ReportingApiTests
             .UseSqlServer(connectionString)
             .Options;
         return new GymLinkDbContext(options, new TestTenantContext(null));
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
     }
 }

@@ -56,12 +56,14 @@ internal sealed class ReportingService(
     {
         RequireTenant();
         var range = CreateRange();
-        var raw = await dbContext.Memberships.AsNoTracking()
-            .Where(x => x.StartsAtUtc >= range.StartUtc && x.StartsAtUtc < range.EndUtc)
-            .GroupBy(x => new { x.StartsAtUtc!.Value.Year, x.StartsAtUtc.Value.Month })
-            .Select(x => new MonthlyCount(x.Key.Year, x.Key.Month, x.Count()))
-            .ToListAsync(cancellationToken);
-        return new TenantMonthlyStatistics(range.Contract, FillMonths(range, raw));
+        var startsAtUtc = dbContext.Memberships.AsNoTracking()
+            .Where(x => x.StartsAtUtc.HasValue)
+            .Select(x => x.StartsAtUtc!.Value);
+        var counts = await CountByMonthAsync(
+            startsAtUtc,
+            range.Months,
+            cancellationToken);
+        return new TenantMonthlyStatistics(range.Contract, counts);
     }
 
     public async Task<MembershipPlanDistribution> GetTenantPlanDistributionAsync(
@@ -121,14 +123,15 @@ internal sealed class ReportingService(
     {
         RequireUser();
         var range = CreateRange();
-        var raw = await dbContext.AppointmentReservations.AsNoTracking()
+        var startsAtUtc = dbContext.AppointmentReservations.AsNoTracking()
             .IgnoreQueryFilters()
-            .Where(x => x.StartsAtUtc >= range.StartUtc && x.StartsAtUtc < range.EndUtc)
-            .GroupBy(x => new { x.StartsAtUtc.Year, x.StartsAtUtc.Month })
-            .Select(x => new MonthlyCount(x.Key.Year, x.Key.Month, x.Count()))
-            .ToListAsync(cancellationToken);
+            .Select(x => x.StartsAtUtc);
+        var counts = await CountByMonthAsync(
+            startsAtUtc,
+            range.Months,
+            cancellationToken);
         await AuditAsync("statistics.system_viewed", null, range, cancellationToken);
-        return new SystemStatisticsTrends(range.Contract, FillMonths(range, raw));
+        return new SystemStatisticsTrends(range.Contract, counts);
     }
 
     public async Task<GeneratedReport> GenerateMembershipReportAsync(
@@ -270,20 +273,20 @@ internal sealed class ReportingService(
         var localNow = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, timeZone);
         var currentMonth = new DateOnly(localNow.Year, localNow.Month, 1);
         var windowStart = currentMonth.AddMonths(-5);
-        var windowEndExclusive = currentMonth.AddMonths(1);
+        var months = CreateMonthIntervals(windowStart, 6, timeZone);
+        var windowEndExclusive = months[^1].LocalMonth.AddMonths(1);
         var today = DateOnly.FromDateTime(localNow);
-        var startUtc = ToUtc(windowStart, timeZone);
-        var endUtc = ToUtc(windowEndExclusive, timeZone);
         var todayStartUtc = ToUtc(today, timeZone);
         var tomorrowStartUtc = ToUtc(today.AddDays(1), timeZone);
         var previousMonthEndUtc = ToUtc(currentMonth, timeZone).AddTicks(-1);
         return new ReportRange(
             nowUtc,
-            startUtc,
-            endUtc,
+            months[0].StartUtc,
+            months[^1].EndUtc,
             todayStartUtc,
             tomorrowStartUtc,
             previousMonthEndUtc,
+            months,
             new ReportingWindow(
                 windowStart,
                 windowEndExclusive.AddDays(-1),
@@ -296,17 +299,53 @@ internal sealed class ReportingService(
             DateTime.SpecifyKind(date.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified),
             timeZone);
 
-    private static MonthlyCount[] FillMonths(
-        ReportRange range,
-        IReadOnlyCollection<MonthlyCount> raw)
+    internal static MonthInterval[] CreateMonthIntervals(
+        DateOnly windowStart,
+        int count,
+        TimeZoneInfo timeZone)
     {
-        var lookup = raw.ToDictionary(x => (x.Year, x.Month), x => x.Count);
-        return Enumerable.Range(0, 6)
-            .Select(offset => range.Contract.WindowStart.AddMonths(offset))
-            .Select(month => new MonthlyCount(
-                month.Year,
-                month.Month,
-                lookup.GetValueOrDefault((month.Year, month.Month))))
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
+        return Enumerable.Range(0, count)
+            .Select(windowStart.AddMonths)
+            .Select(month => new MonthInterval(
+                month,
+                ToUtc(month, timeZone),
+                ToUtc(month.AddMonths(1), timeZone)))
+            .ToArray();
+    }
+
+    private static async Task<MonthlyCount[]> CountByMonthAsync(
+        IQueryable<DateTime> timestamps,
+        IReadOnlyList<MonthInterval> months,
+        CancellationToken cancellationToken)
+    {
+        if (months.Count != 6)
+        {
+            throw new ArgumentException("Exactly six reporting months are required.", nameof(months));
+        }
+
+        var startUtc = months[0].StartUtc;
+        var endUtc = months[^1].EndUtc;
+        var firstEndUtc = months[0].EndUtc;
+        var secondEndUtc = months[1].EndUtc;
+        var thirdEndUtc = months[2].EndUtc;
+        var fourthEndUtc = months[3].EndUtc;
+        var fifthEndUtc = months[4].EndUtc;
+        var raw = await timestamps
+            .Where(timestamp => timestamp >= startUtc && timestamp < endUtc)
+            .GroupBy(timestamp =>
+                timestamp < firstEndUtc ? 0 :
+                timestamp < secondEndUtc ? 1 :
+                timestamp < thirdEndUtc ? 2 :
+                timestamp < fourthEndUtc ? 3 :
+                timestamp < fifthEndUtc ? 4 : 5)
+            .Select(group => new { Index = group.Key, Count = group.Count() })
+            .ToListAsync(cancellationToken);
+        var lookup = raw.ToDictionary(x => x.Index, x => x.Count);
+        return months.Select((month, index) => new MonthlyCount(
+                month.LocalMonth.Year,
+                month.LocalMonth.Month,
+                lookup.GetValueOrDefault(index)))
             .ToArray();
     }
 
@@ -317,5 +356,11 @@ internal sealed class ReportingService(
         DateTime TodayStartUtc,
         DateTime TomorrowStartUtc,
         DateTime PreviousMonthEndUtc,
+        IReadOnlyList<MonthInterval> Months,
         ReportingWindow Contract);
 }
+
+internal sealed record MonthInterval(
+    DateOnly LocalMonth,
+    DateTime StartUtc,
+    DateTime EndUtc);
