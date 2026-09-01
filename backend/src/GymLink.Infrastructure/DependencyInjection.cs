@@ -30,7 +30,7 @@ namespace GymLink.Infrastructure;
 
 public static class DependencyInjection
 {
-    public static IServiceCollection AddGymLinkPaymentWorkerInfrastructure(
+    public static IServiceCollection AddGymLinkWorkerInfrastructure(
         this IServiceCollection services,
         IConfiguration configuration)
     {
@@ -48,6 +48,9 @@ public static class DependencyInjection
         services.AddScoped<IApplicationTransaction, ApplicationTransaction>();
         services.AddScoped<IOutboxWriter, OutboxWriter>();
         services.AddScoped<IConversationPairLock, ConversationPairLock>();
+        services.AddScoped<
+            IMembershipWorkflowEventRecorder,
+            LoggingMembershipWorkflowEventRecorder>();
         services.AddScoped<
             IReservationWorkflowEventRecorder,
             LoggingReservationWorkflowEventRecorder>();

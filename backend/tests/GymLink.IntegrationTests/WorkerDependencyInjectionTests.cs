@@ -1,5 +1,6 @@
 using GymLink.Application;
 using GymLink.Application.Abstractions;
+using GymLink.Application.Memberships;
 using GymLink.Application.Payments;
 using GymLink.Infrastructure;
 using Microsoft.Extensions.Configuration;
@@ -10,7 +11,7 @@ namespace GymLink.IntegrationTests;
 public sealed class WorkerDependencyInjectionTests
 {
     [Fact]
-    public void Payment_worker_resolves_the_reconciliation_service()
+    public void Worker_resolves_payment_and_membership_reconciliation_services()
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -29,8 +30,8 @@ public sealed class WorkerDependencyInjectionTests
             provider.GetRequiredService<WorkerTestContext>());
         services.AddSingleton<IRequestMetadata>(provider =>
             provider.GetRequiredService<WorkerTestContext>());
-        services.AddGymLinkPaymentWorkerApplication();
-        services.AddGymLinkPaymentWorkerInfrastructure(configuration);
+        services.AddGymLinkWorkerApplication();
+        services.AddGymLinkWorkerInfrastructure(configuration);
 
         using var provider = services.BuildServiceProvider(new ServiceProviderOptions
         {
@@ -41,6 +42,8 @@ public sealed class WorkerDependencyInjectionTests
 
         Assert.NotNull(scope.ServiceProvider.GetRequiredService<
             IPaymentReconciliationService>());
+        Assert.NotNull(scope.ServiceProvider.GetRequiredService<
+            IMembershipExpiryService>());
     }
 
     private sealed class WorkerTestContext :

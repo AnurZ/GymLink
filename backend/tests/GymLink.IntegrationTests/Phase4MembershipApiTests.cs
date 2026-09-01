@@ -754,6 +754,158 @@ public sealed class Phase4MembershipApiTests
         }
     }
 
+    [Fact]
+    public async Task Expired_active_membership_is_not_current_and_lazy_renewal_releases_unique_index()
+    {
+        var databaseName = $"GymLink_MembershipExpiryLazy_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+        try
+        {
+            await using (var migration = CreateContext(connectionString))
+            {
+                await migration.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            var member = await RegisterAsync(client, "Lazy Expiry Member");
+            var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
+            Authorize(client, member);
+            (await client.PostAsJsonAsync(
+                "/api/payments/memberships/checkout",
+                new { membershipPlanId = planId })).EnsureSuccessStatusCode();
+            await PayPendingMembershipAsync(client, member);
+            var expiredId = Assert.Single((await GetMineAsync(client)).Items).Id;
+            await BackdateMembershipAsync(connectionString, expiredId);
+
+            var current = await client.GetFromJsonAsync<PagedResult<MembershipDto>>(
+                "/api/me/memberships?currentOnly=true&page=1&pageSize=10");
+            Assert.NotNull(current);
+            Assert.Empty(current.Items);
+
+            var renewal = await client.PostAsJsonAsync(
+                "/api/payments/memberships/checkout",
+                new { membershipPlanId = planId });
+            renewal.EnsureSuccessStatusCode();
+
+            await using var verification = CreateContext(connectionString);
+            var persistedExpired = await verification.Memberships.IgnoreQueryFilters()
+                .SingleAsync(entity => entity.Id == expiredId);
+            Assert.Equal(MembershipStatus.Expired, persistedExpired.Status);
+            Assert.Null(persistedExpired.StatusChangedByUserId);
+            Assert.NotNull(persistedExpired.StatusChangedAtUtc);
+            Assert.Single(await verification.Memberships.IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.MemberUserId == member.User.Id &&
+                    entity.GymId == persistedExpired.GymId &&
+                    entity.Status == MembershipStatus.PendingPayment)
+                .ToListAsync());
+            Assert.Equal(
+                2,
+                await ExpiryNotificationCountAsync(verification, expiredId));
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Worker_expiry_is_cross_tenant_idempotent_and_safe_with_concurrent_renewal()
+    {
+        var databaseName = $"GymLink_MembershipExpiryWorker_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+        try
+        {
+            await using (var migration = CreateContext(connectionString))
+            {
+                await migration.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            var member = await RegisterAsync(client, "Worker Expiry Member");
+            var respectPlanId = await FindPlanAsync(client, "Sportska Akademija Respect");
+            var arenaPlanId = await FindPlanAsync(client, "Arena Sport Centar");
+
+            foreach (var planId in new[] { respectPlanId, arenaPlanId })
+            {
+                Authorize(client, member);
+                (await client.PostAsJsonAsync(
+                    "/api/payments/memberships/checkout",
+                    new { membershipPlanId = planId })).EnsureSuccessStatusCode();
+                await PayPendingMembershipAsync(client, member);
+            }
+
+            var memberships = (await GetMineAsync(client)).Items.ToArray();
+            Assert.Equal(2, memberships.Length);
+            foreach (var membership in memberships)
+            {
+                var admin = await LoginAsync(
+                    client,
+                    membership.GymName == "Sportska Akademija Respect"
+                        ? "admin.respect"
+                        : "admin.arena");
+                Authorize(client, admin);
+                var suspendedResponse = await client.PostAsJsonAsync(
+                    $"/api/tenant/memberships/{membership.Id}/suspend",
+                    new
+                    {
+                        concurrencyToken = membership.ConcurrencyToken,
+                        reason = "Temporary expiry test hold",
+                    });
+                suspendedResponse.EnsureSuccessStatusCode();
+                await BackdateMembershipAsync(connectionString, membership.Id);
+            }
+
+            Authorize(client, member);
+            var current = await client.GetFromJsonAsync<PagedResult<MembershipDto>>(
+                "/api/me/memberships?currentOnly=true&page=1&pageSize=10");
+            Assert.NotNull(current);
+            Assert.Empty(current.Items);
+
+            using var scope = factory.Services.CreateScope();
+            var expiry = scope.ServiceProvider.GetRequiredService<IMembershipExpiryService>();
+            var scan = expiry.ExpireDueBatchAsync(CancellationToken.None);
+            var renewal = client.PostAsJsonAsync(
+                "/api/payments/memberships/checkout",
+                new { membershipPlanId = respectPlanId });
+            await Task.WhenAll(scan, renewal);
+            var renewalResponse = await renewal;
+            renewalResponse.EnsureSuccessStatusCode();
+            Assert.InRange(await scan, 1, 100);
+            Assert.Equal(0, await expiry.ExpireDueBatchAsync(CancellationToken.None));
+
+            await using var verification = CreateContext(connectionString);
+            var persisted = await verification.Memberships.IgnoreQueryFilters()
+                .Where(entity => memberships.Select(item => item.Id).Contains(entity.Id))
+                .ToListAsync();
+            Assert.Equal(2, persisted.Count);
+            Assert.All(persisted, entity =>
+            {
+                Assert.Equal(MembershipStatus.Expired, entity.Status);
+                Assert.Null(entity.StatusChangedByUserId);
+            });
+            foreach (var membership in memberships)
+            {
+                Assert.Equal(
+                    2,
+                    await ExpiryNotificationCountAsync(verification, membership.Id));
+            }
+            Assert.Single(await verification.Memberships.IgnoreQueryFilters()
+                .Where(entity =>
+                    entity.MemberUserId == member.User.Id &&
+                    entity.Status == MembershipStatus.PendingPayment)
+                .ToListAsync());
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
+
     private static async Task<MembershipRequestDto> CreateRequestAsync(
         HttpClient client,
         Guid planId)
@@ -859,6 +1011,30 @@ public sealed class Phase4MembershipApiTests
         return problem.RootElement.GetProperty("title").GetString()
             ?? throw new InvalidOperationException("Problem response had no title.");
     }
+
+    private static async Task BackdateMembershipAsync(
+        string connectionString,
+        Guid membershipId)
+    {
+        var startsAtUtc = DateTime.UtcNow.AddDays(-31);
+        var endsAtUtc = DateTime.UtcNow.AddDays(-1);
+        await using var context = CreateContext(connectionString);
+        Assert.Equal(
+            1,
+            await context.Memberships.IgnoreQueryFilters()
+                .Where(entity => entity.Id == membershipId)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(entity => entity.StartsAtUtc, startsAtUtc)
+                    .SetProperty(entity => entity.EndsAtUtc, endsAtUtc)));
+    }
+
+    private static Task<int> ExpiryNotificationCountAsync(
+        GymLinkDbContext context,
+        Guid membershipId) =>
+        context.OutboxMessages.CountAsync(message =>
+            message.MessageType == MessageContractNames.NotificationRequestedV1 &&
+            message.Payload.Contains("membership.expired") &&
+            message.Payload.Contains(membershipId.ToString()));
 
     private static WebApplicationFactory<Program> CreateFactory(
         string connectionString) =>

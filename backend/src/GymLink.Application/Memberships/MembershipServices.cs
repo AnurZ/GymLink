@@ -18,11 +18,19 @@ internal sealed class MembershipRequestService(
     ITenantMutationScope tenantMutationScope,
     IIdentityAccountManager identityAccounts,
     IMemberAssignmentActivator memberAssignmentActivator,
+    IMembershipExpiryService membershipExpiry,
     IMembershipWorkflowEventRecorder eventRecorder,
     IRecommendationActivityRecorder recommendationActivity,
     TimeProvider timeProvider) : IMembershipRequestService
 {
-    public async Task<MembershipRequestDto> CreateAsync(
+    public Task<MembershipRequestDto> CreateAsync(
+        CreateMembershipRequest request,
+        CancellationToken cancellationToken) =>
+        transaction.ExecuteSerializableAsync(
+            ct => CreateCoreAsync(request, ct),
+            cancellationToken);
+
+    private async Task<MembershipRequestDto> CreateCoreAsync(
         CreateMembershipRequest request,
         CancellationToken cancellationToken)
     {
@@ -62,6 +70,11 @@ internal sealed class MembershipRequestService(
                 "A pending membership request already exists for this gym.");
         }
 
+        await membershipExpiry.ExpireDueForAsync(
+            target.Plan.TenantId,
+            userId,
+            target.Plan.GymId,
+            cancellationToken);
         if (await HasCurrentMembershipAsync(
                 target.Plan.TenantId,
                 userId,
@@ -190,7 +203,7 @@ internal sealed class MembershipRequestService(
         var tenantId = RequireTenant();
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
-        await transaction.ExecuteAsync(async ct =>
+        await transaction.ExecuteSerializableAsync(async ct =>
         {
             var entity = await dbContext.MembershipRequests
                 .SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId, ct)
@@ -206,6 +219,11 @@ internal sealed class MembershipRequestService(
                 ?? throw new ConflictException(
                     "membership_plan_inactive",
                     "The selected membership plan is no longer active.");
+            await membershipExpiry.ExpireDueForAsync(
+                tenantId,
+                entity.MemberUserId,
+                entity.GymId,
+                ct);
             if (await HasCurrentMembershipAsync(tenantId, entity.MemberUserId, entity.GymId, ct))
             {
                 throw new ConflictException(
@@ -514,6 +532,8 @@ internal sealed class MembershipRequestService(
                 entity.PaymentId.HasValue ? ["suspend"] : ["cancel", "suspend"],
             MembershipStatus.Active when entity.PaymentId.HasValue => [],
             MembershipStatus.Active => ["cancel"],
+            MembershipStatus.Suspended when tenantAdmin && entity.EndsAtUtc <= now =>
+                ["expire"],
             MembershipStatus.Suspended when tenantAdmin => ["reactivate"],
             _ => [],
         };
@@ -535,14 +555,12 @@ internal sealed class MembershipRequestService(
         Guid memberUserId,
         Guid gymId,
         CancellationToken cancellationToken) =>
-        await dbContext.Memberships.IgnoreQueryFilters().AnyAsync(
-            x => x.TenantId == tenantId &&
-                 x.MemberUserId == memberUserId &&
-                 x.GymId == gymId &&
-                 (x.Status == MembershipStatus.PendingPayment ||
-                  x.Status == MembershipStatus.Active ||
-                  x.Status == MembershipStatus.Suspended),
-            cancellationToken);
+        await dbContext.Memberships.IgnoreQueryFilters()
+            .Where(x => x.TenantId == tenantId &&
+                        x.MemberUserId == memberUserId &&
+                        x.GymId == gymId)
+            .WhereCurrentAt(timeProvider.GetUtcNow().UtcDateTime)
+            .AnyAsync(cancellationToken);
 
     private async Task SaveWorkflowAsync(CancellationToken cancellationToken)
     {
@@ -802,6 +820,10 @@ internal sealed class MembershipService(
             ? dbContext.Memberships.IgnoreQueryFilters().AsNoTracking()
             : dbContext.Memberships.AsNoTracking();
         var now = timeProvider.GetUtcNow().UtcDateTime;
+        if (request.CurrentOnly)
+        {
+            source = source.WhereCurrentAt(now);
+        }
         var query =
             from entity in source
             join member in dbContext.UserProfiles.AsNoTracking()
@@ -815,10 +837,6 @@ internal sealed class MembershipService(
                   (!request.MembershipPlanId.HasValue ||
                    entity.MembershipPlanId == request.MembershipPlanId) &&
                   (!request.GymId.HasValue || entity.GymId == request.GymId) &&
-                  (!request.CurrentOnly ||
-                   entity.Status == MembershipStatus.PendingPayment ||
-                   entity.Status == MembershipStatus.Active ||
-                   entity.Status == MembershipStatus.Suspended) &&
                   (!request.CoversFromUtc.HasValue ||
                    (entity.StartsAtUtc.HasValue &&
                     entity.StartsAtUtc <= request.CoversFromUtc)) &&
@@ -934,6 +952,7 @@ internal sealed class MembershipService(
                 isPaid ? ["suspend"] : ["cancel", "suspend"],
             MembershipStatus.Active when isPaid => [],
             MembershipStatus.Active => ["cancel"],
+            MembershipStatus.Suspended when tenantAdmin && canExpire => ["expire"],
             MembershipStatus.Suspended when tenantAdmin => ["reactivate"],
             _ => [],
         };

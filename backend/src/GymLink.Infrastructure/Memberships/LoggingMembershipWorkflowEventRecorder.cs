@@ -46,6 +46,16 @@ internal sealed class LoggingMembershipWorkflowEventRecorder(
         }
     }
 
+    public async Task RecordManyAsync(
+        IReadOnlyCollection<MembershipWorkflowEventIntent> intents,
+        CancellationToken cancellationToken)
+    {
+        foreach (var intent in intents)
+        {
+            await RecordAsync(intent, cancellationToken);
+        }
+    }
+
     private async Task<MembershipNotificationDetails> LoadDetailsAsync(
         MembershipWorkflowEventIntent intent,
         CancellationToken cancellationToken)

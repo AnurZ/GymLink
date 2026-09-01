@@ -536,8 +536,39 @@ public sealed class DomainInvariantTests
         Assert.Throws<DomainException>(() => membership.Expire(ids[6], now.AddDays(29)));
         membership.Expire(ids[6], now.AddDays(30));
         Assert.Equal(MembershipStatus.Expired, membership.Status);
+        Assert.Equal(ids[6], membership.StatusChangedByUserId);
         Assert.Throws<DomainException>(() =>
             membership.CancelByMember(ids[1], now.AddDays(30)));
+    }
+
+    [Fact]
+    public void Membership_system_expiry_handles_active_and_suspended_boundaries()
+    {
+        var ids = Enumerable.Range(0, 8).Select(_ => Guid.NewGuid()).ToArray();
+        var now = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var active = new Membership(
+            ids[0], ids[1], ids[2], ids[3], ids[4],
+            "Monthly", 30, 55, "BAM", ids[5], now);
+        var suspended = new Membership(
+            ids[0], ids[6], ids[2], ids[3], ids[7],
+            "Monthly", 30, 55, "BAM", ids[5], now);
+        suspended.Suspend(ids[5], now.AddDays(1), "Policy hold");
+
+        var activeEarly = Assert.Throws<DomainException>(() =>
+            active.Expire(now.AddDays(30).AddTicks(-1)));
+        Assert.Equal("membership_not_expired", activeEarly.Code);
+
+        var boundary = now.AddDays(30);
+        active.Expire(boundary);
+        suspended.Expire(boundary);
+
+        Assert.Equal(MembershipStatus.Expired, active.Status);
+        Assert.Equal(MembershipStatus.Expired, suspended.Status);
+        Assert.Null(active.StatusChangedByUserId);
+        Assert.Null(suspended.StatusChangedByUserId);
+        Assert.Equal(boundary, active.StatusChangedAtUtc);
+        Assert.Equal(boundary, suspended.StatusChangedAtUtc);
+        Assert.Null(suspended.StatusReason);
     }
 
     [Fact]

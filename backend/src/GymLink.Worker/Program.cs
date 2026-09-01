@@ -21,8 +21,8 @@ builder.Services.AddSingleton<ICurrentUser>(provider =>
     provider.GetRequiredService<WorkerTenantContext>());
 builder.Services.AddSingleton<IRequestMetadata>(provider =>
     provider.GetRequiredService<WorkerTenantContext>());
-builder.Services.AddGymLinkPaymentWorkerApplication();
-builder.Services.AddGymLinkPaymentWorkerInfrastructure(builder.Configuration);
+builder.Services.AddGymLinkWorkerApplication();
+builder.Services.AddGymLinkWorkerInfrastructure(builder.Configuration);
 builder.Services.AddGymLinkRabbitMqOptions(builder.Configuration);
 builder.Services.AddOptions<PasswordResetOptions>()
     .Bind(builder.Configuration.GetSection(PasswordResetOptions.SectionName))
@@ -38,5 +38,6 @@ builder.Services.AddSingleton<IPasswordResetCodeService, PasswordResetCodeServic
 builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
 builder.Services.AddHostedService<RabbitMqWorkerService>();
 builder.Services.AddHostedService<PaymentReconciliationWorker>();
+builder.Services.AddHostedService<MembershipExpiryWorker>();
 
 await builder.Build().RunAsync();

@@ -129,6 +129,21 @@ public interface IMembershipWorkflowEventRecorder
     Task RecordAsync(
         MembershipWorkflowEventIntent intent,
         CancellationToken cancellationToken);
+
+    Task RecordManyAsync(
+        IReadOnlyCollection<MembershipWorkflowEventIntent> intents,
+        CancellationToken cancellationToken);
+}
+
+public interface IMembershipExpiryService
+{
+    Task<int> ExpireDueBatchAsync(CancellationToken cancellationToken);
+
+    Task<int> ExpireDueForAsync(
+        Guid tenantId,
+        Guid memberUserId,
+        Guid gymId,
+        CancellationToken cancellationToken);
 }
 
 public interface IMembershipRequestService

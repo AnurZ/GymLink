@@ -25,6 +25,7 @@ internal sealed class PaymentService(
     IConversationProvisioner conversationProvisioner,
     IConversationRealtimeNotifier conversationNotifier,
     IMemberAssignmentActivator memberAssignmentActivator,
+    IMembershipExpiryService membershipExpiry,
     IRecommendationActivityRecorder recommendationActivity,
     IReservationWorkflowEventRecorder reservationEvents,
     TimeProvider timeProvider,
@@ -69,15 +70,17 @@ internal sealed class PaymentService(
                     "membership_plan_not_found",
                     "Membership plan was not found.");
 
+            await membershipExpiry.ExpireDueForAsync(
+                plan.TenantId,
+                userId,
+                plan.GymId,
+                ct);
             var current = await dbContext.Memberships.IgnoreQueryFilters()
-                .SingleOrDefaultAsync(
-                    x => x.TenantId == plan.TenantId &&
-                         x.MemberUserId == userId &&
-                         x.GymId == plan.GymId &&
-                         (x.Status == MembershipStatus.PendingPayment ||
-                          x.Status == MembershipStatus.Active ||
-                          x.Status == MembershipStatus.Suspended),
-                    ct);
+                .Where(x => x.TenantId == plan.TenantId &&
+                            x.MemberUserId == userId &&
+                            x.GymId == plan.GymId)
+                .WhereCurrentAt(timeProvider.GetUtcNow().UtcDateTime)
+                .SingleOrDefaultAsync(ct);
             if (current is not null)
             {
                 if (current.Status == MembershipStatus.PendingPayment &&

@@ -281,7 +281,25 @@ public sealed class Membership : TenantEntity, IConcurrencyTracked
 
     public void Expire(Guid actorUserId, DateTime expiredAtUtc)
     {
-        EnsureStatus(MembershipStatus.Active, MembershipStatus.Expired);
+        EnsureActorAndUtc(actorUserId, expiredAtUtc);
+        ExpireCore(actorUserId, expiredAtUtc);
+    }
+
+    public void Expire(DateTime expiredAtUtc)
+    {
+        EnsureUtc(expiredAtUtc);
+        ExpireCore(null, expiredAtUtc);
+    }
+
+    private void ExpireCore(Guid? actorUserId, DateTime expiredAtUtc)
+    {
+        if (Status is not MembershipStatus.Active and not MembershipStatus.Suspended)
+        {
+            throw new DomainException(
+                "invalid_state_transition",
+                $"Membership cannot transition from {Status} to {MembershipStatus.Expired}.");
+        }
+
         if (!EndsAtUtc.HasValue || EndsAtUtc > expiredAtUtc)
         {
             throw new DomainException(
@@ -289,7 +307,10 @@ public sealed class Membership : TenantEntity, IConcurrencyTracked
                 "The membership end date has not been reached.");
         }
 
-        SetStatus(MembershipStatus.Expired, actorUserId, expiredAtUtc, null);
+        Status = MembershipStatus.Expired;
+        StatusChangedByUserId = actorUserId;
+        StatusChangedAtUtc = expiredAtUtc;
+        StatusReason = null;
     }
 
     private void EnsurePaymentlessCancellation()
@@ -342,6 +363,11 @@ public sealed class Membership : TenantEntity, IConcurrencyTracked
             throw new DomainException("actor_required", "A status-change actor is required.");
         }
 
+        EnsureUtc(occurredAtUtc);
+    }
+
+    private static void EnsureUtc(DateTime occurredAtUtc)
+    {
         if (occurredAtUtc.Kind != DateTimeKind.Utc)
         {
             throw new DomainException("utc_required", "Status-change time must use UTC.");
