@@ -224,6 +224,19 @@ internal sealed class AuthenticationService(
                 "The assigned gym is not currently available for this account.");
         }
 
+        if (account.Role == RoleNames.Trainer &&
+            !await dbContext.TrainerProfiles.IgnoreQueryFilters().AnyAsync(
+                trainer =>
+                    trainer.UserId == account.Id &&
+                    trainer.TenantId == assignment.TenantId &&
+                    trainer.IsActive,
+                cancellationToken))
+        {
+            throw new AuthorizationDeniedException(
+                "trainer_profile_inactive",
+                "Trainer access requires an active profile in the assigned gym.");
+        }
+
         return new TenantSessionDto(assignment.TenantId, assignment.Name, account.Role);
     }
 

@@ -125,7 +125,14 @@ internal sealed class JwtTokenValidationEvents(
                 (role == RoleNames.GymAdmin
                     ? tenant.Status is TenantStatus.PendingActivation or TenantStatus.Active
                     : tenant.Status == TenantStatus.Active);
-            if (assignment is null || !tenantAllowed)
+            var trainerProfileAllowed = role != RoleNames.Trainer ||
+                await dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking().AnyAsync(
+                    trainer =>
+                        trainer.UserId == userId &&
+                        trainer.TenantId == tenantId &&
+                        trainer.IsActive,
+                    context.HttpContext.RequestAborted);
+            if (assignment is null || !tenantAllowed || !trainerProfileAllowed)
             {
                 context.Fail("The staff assignment is no longer active.");
             }

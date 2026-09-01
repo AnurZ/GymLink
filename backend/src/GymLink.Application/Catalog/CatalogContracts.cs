@@ -145,7 +145,23 @@ public sealed record CreateTrainerRequest : TrainerWriteRequest
 public sealed record UpdateTrainerRequest : TrainerWriteRequest
 {
     public Guid UserId { get; init; }
-    public bool IsActive { get; init; }
+}
+
+public sealed record TrainerLifecycleRequest : IValidatableObject
+{
+    [Required]
+    public required string Reason { get; init; }
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        var length = Reason?.Trim().Length ?? 0;
+        if (length is < 2 or > 200)
+        {
+            yield return new ValidationResult(
+                "Reason must contain between 2 and 200 characters.",
+                [nameof(Reason)]);
+        }
+    }
 }
 
 public sealed record CatalogSearchRequest : PagedRequest

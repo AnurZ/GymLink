@@ -111,12 +111,19 @@ public sealed class TenantCatalogController(
         CancellationToken cancellationToken) =>
         Ok(await trainers.UpdateAsync(id, request, cancellationToken));
 
-    [HttpDelete("trainers/{id:guid}")]
-    public async Task<IActionResult> DeactivateTrainer(Guid id, CancellationToken cancellationToken)
-    {
-        await trainers.DeactivateAsync(id, cancellationToken);
-        return NoContent();
-    }
+    [HttpPost("trainers/{id:guid}/deactivate")]
+    public async Task<IActionResult> DeactivateTrainer(
+        Guid id,
+        TrainerLifecycleRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(await trainers.DeactivateAsync(id, request, cancellationToken));
+
+    [HttpPost("trainers/{id:guid}/reactivate")]
+    public async Task<IActionResult> ReactivateTrainer(
+        Guid id,
+        TrainerLifecycleRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(await trainers.ReactivateAsync(id, request, cancellationToken));
 
     [HttpPost("trainers/{id:guid}/image")]
     [Consumes("multipart/form-data")]

@@ -1529,6 +1529,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Centralni administrator'), findsNothing);
+    expect(find.text('Trener'), findsNothing);
     await tester.tap(find.text('Administrator teretane').last);
     await tester.pumpAndSettle();
     expect(find.textContaining('bez aktivnog članstva'), findsOneWidget);
@@ -1635,6 +1636,104 @@ void main() {
     await tester.tap(find.text('Kasnije'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('add-offering-trainer-1')), findsOneWidget);
+  });
+
+  testWidgets('GymAdmin deactivates and reactivates a trainer with a reason', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _GymAdminTrainerApi(hasTrainer: true);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: TrainerManagementScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Radnje trenera'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Deaktiviraj trenera'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Razlog'),
+      'Privremeno van rasporeda',
+    );
+    await tester.tap(find.text('Potvrdi'));
+    await tester.pumpAndSettle();
+
+    expect(
+      api.lifecycleRequests.single.$1,
+      '/api/tenant/trainers/trainer-1/deactivate',
+    );
+    expect(
+      api.lifecycleRequests.single.$2['reason'],
+      'Privremeno van rasporeda',
+    );
+    await tester.tap(find.byTooltip('Radnje trenera'));
+    await tester.pumpAndSettle();
+    expect(find.text('Reaktiviraj trenera'), findsOneWidget);
+    await tester.tap(find.text('Reaktiviraj trenera'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Razlog'),
+      'Ponovo dostupan',
+    );
+    await tester.tap(find.text('Potvrdi'));
+    await tester.pumpAndSettle();
+
+    expect(
+      api.lifecycleRequests.last.$1,
+      '/api/tenant/trainers/trainer-1/reactivate',
+    );
+    expect(api.lifecycleRequests.last.$2['reason'], 'Ponovo dostupan');
+  });
+
+  testWidgets('Trainer lifecycle API failures remain visible in the dialog', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _GymAdminTrainerApi(
+      hasTrainer: true,
+      lifecycleProblem: const ApiProblem(
+        status: 409,
+        code: 'trainer_lifecycle_conflict',
+        message: 'Stanje trenera je u konfliktu.',
+      ),
+    );
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: TrainerManagementScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Radnje trenera'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Deaktiviraj trenera'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Razlog'),
+      'Administrativna odluka',
+    );
+    await tester.tap(find.text('Potvrdi'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Stanje trenera je u konfliktu.'), findsOneWidget);
+    expect(find.byType(AlertDialog), findsOneWidget);
   });
 
   testWidgets('GymAdmin profile renders the ordered gallery controls', (
@@ -2652,10 +2751,17 @@ class _GymAdminMembershipRequestsApi extends ApiClient {
 }
 
 class _GymAdminTrainerApi extends ApiClient {
-  _GymAdminTrainerApi() : super(_TestTokens());
+  _GymAdminTrainerApi({
+    bool hasTrainer = false,
+    this.lifecycleProblem,
+  }) : _promoted = hasTrainer,
+       super(_TestTokens());
 
   Map<String, dynamic>? promotionBody;
-  bool _promoted = false;
+  final ApiProblem? lifecycleProblem;
+  final List<(String, Map<String, dynamic>)> lifecycleRequests = [];
+  bool _promoted;
+  bool _active = true;
 
   @override
   Future<PagedData> page(
@@ -2665,13 +2771,13 @@ class _GymAdminTrainerApi extends ApiClient {
     if (path == '/api/tenant/trainers') {
       return PagedData(
         items: _promoted
-            ? const [
+            ? [
                 {
                   'id': 'trainer-1',
                   'displayName': 'Active Member',
                   'credentials': null,
                   'averageRating': 0,
-                  'isActive': true,
+                  'isActive': _active,
                 },
               ]
             : const [],
@@ -2727,10 +2833,22 @@ class _GymAdminTrainerApi extends ApiClient {
     if (path == '/api/tenant/trainers') {
       promotionBody = Map<String, dynamic>.from(body! as Map);
       _promoted = true;
+      _active = true;
       return const {
         'id': 'trainer-1',
         'displayName': 'Active Member',
         'isActive': true,
+      };
+    }
+    if (path == '/api/tenant/trainers/trainer-1/deactivate' ||
+        path == '/api/tenant/trainers/trainer-1/reactivate') {
+      lifecycleRequests.add((path, Map<String, dynamic>.from(body! as Map)));
+      if (lifecycleProblem case final problem?) throw problem;
+      _active = path.endsWith('/reactivate');
+      return {
+        'id': 'trainer-1',
+        'displayName': 'Active Member',
+        'isActive': _active,
       };
     }
     throw StateError('Unexpected post request: $path');

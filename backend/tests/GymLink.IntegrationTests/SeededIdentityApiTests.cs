@@ -27,6 +27,131 @@ public sealed class SeededIdentityApiTests
     private const string SigningKey = "integration-test-signing-key-at-least-32-bytes";
 
     [Fact]
+    public async Task Central_admin_trainer_revocation_and_account_deactivation_use_reversible_lifecycle()
+    {
+        var databaseName = $"GymLink_TrainerAdministration_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+        try
+        {
+            await using (var migrationContext = CreateContext(connectionString))
+            {
+                await migrationContext.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            var centralAdmin = await LoginAsync(client, "centraladmin");
+            var gymAdmin = await LoginAsync(client, "admin.respect");
+            var originalTrainer = await LoginAsync(client, "respecttrainer1");
+            Guid profileId;
+            Guid assignmentId;
+            int offeringCount;
+            int scheduleCount;
+            await using (var baseline = CreateContext(connectionString))
+            {
+                var profile = await baseline.TrainerProfiles.IgnoreQueryFilters()
+                    .SingleAsync(item => item.UserId == originalTrainer.User.Id);
+                profileId = profile.Id;
+                assignmentId = await baseline.UserGymAssignments.IgnoreQueryFilters()
+                    .Where(item =>
+                        item.UserId == originalTrainer.User.Id &&
+                        item.Role == RoleNames.Trainer)
+                    .Select(item => item.Id)
+                    .SingleAsync();
+                offeringCount = await baseline.TrainerServiceOfferings.IgnoreQueryFilters()
+                    .CountAsync(item => item.TrainerProfileId == profileId);
+                scheduleCount = await baseline.TrainerAvailabilitySchedules.IgnoreQueryFilters()
+                    .CountAsync(item => item.TrainerProfileId == profileId);
+            }
+
+            Authorize(client, centralAdmin);
+            var revocation = await client.PostAsJsonAsync(
+                "/api/admin/users/roles/revoke",
+                new
+                {
+                    identifier = originalTrainer.User.Email,
+                    reason = "Trainer contract is temporarily paused",
+                });
+            revocation.EnsureSuccessStatusCode();
+            Assert.Equal(
+                RoleNames.Member,
+                (await revocation.Content.ReadFromJsonAsync<AdminUserDto>())?.Role);
+            Authorize(client, originalTrainer);
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                (await client.GetAsync("/api/profile")).StatusCode);
+
+            Authorize(client, gymAdmin);
+            var restored = await client.PostAsJsonAsync(
+                $"/api/tenant/trainers/{profileId}/reactivate",
+                new { reason = "Trainer contract resumed" });
+            restored.EnsureSuccessStatusCode();
+            Assert.True((await restored.Content.ReadFromJsonAsync<TrainerDto>())?.IsActive);
+            var restoredTrainer = await LoginAsync(client, "respecttrainer1");
+
+            Authorize(client, centralAdmin);
+            var deactivation = await client.PostAsJsonAsync(
+                "/api/admin/users/deactivate",
+                new
+                {
+                    identifier = restoredTrainer.User.Email,
+                    reason = "Account access is temporarily disabled",
+                });
+            deactivation.EnsureSuccessStatusCode();
+            var inactiveAccount = await deactivation.Content.ReadFromJsonAsync<AdminUserDto>();
+            Assert.NotNull(inactiveAccount);
+            Assert.False(inactiveAccount.IsActive);
+            Assert.Equal(RoleNames.Member, inactiveAccount.Role);
+
+            var accountReactivation = await client.PostAsJsonAsync(
+                "/api/admin/users/reactivate",
+                new
+                {
+                    identifier = restoredTrainer.User.Email,
+                    reason = "Account access restored",
+                });
+            accountReactivation.EnsureSuccessStatusCode();
+            var memberAccount = await accountReactivation.Content.ReadFromJsonAsync<AdminUserDto>();
+            Assert.NotNull(memberAccount);
+            Assert.True(memberAccount.IsActive);
+            Assert.Equal(RoleNames.Member, memberAccount.Role);
+            var memberSession = await LoginAsync(client, "respecttrainer1");
+            Assert.Equal(RoleNames.Member, memberSession.User.Role);
+
+            Authorize(client, gymAdmin);
+            var explicitReactivation = await client.PostAsJsonAsync(
+                $"/api/tenant/trainers/{profileId}/reactivate",
+                new { reason = "Gym administrator restored Trainer access" });
+            explicitReactivation.EnsureSuccessStatusCode();
+            Authorize(client, memberSession);
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                (await client.GetAsync("/api/profile")).StatusCode);
+
+            await using var verification = CreateContext(connectionString);
+            var profileAfter = await verification.TrainerProfiles.IgnoreQueryFilters()
+                .SingleAsync(item => item.UserId == originalTrainer.User.Id);
+            Assert.Equal(profileId, profileAfter.Id);
+            Assert.True(profileAfter.IsActive);
+            var assignmentAfter = await verification.UserGymAssignments.IgnoreQueryFilters()
+                .SingleAsync(item =>
+                    item.UserId == originalTrainer.User.Id &&
+                    item.Role == RoleNames.Trainer);
+            Assert.Equal(assignmentId, assignmentAfter.Id);
+            Assert.Equal(AssignmentStatus.Active, assignmentAfter.Status);
+            Assert.Equal(offeringCount, await verification.TrainerServiceOfferings
+                .IgnoreQueryFilters().CountAsync(item => item.TrainerProfileId == profileId));
+            Assert.Equal(scheduleCount, await verification.TrainerAvailabilitySchedules
+                .IgnoreQueryFilters().CountAsync(item => item.TrainerProfileId == profileId));
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
     public async Task Manually_replaced_preferences_regenerate_and_influence_recommendations()
     {
         var databaseName = $"GymLink_ManualPreferences_{Guid.NewGuid():N}";
@@ -859,6 +984,10 @@ public sealed class SeededIdentityApiTests
         return await response.Content.ReadFromJsonAsync<AuthSessionDto>()
             ?? throw new InvalidOperationException("Login returned no session.");
     }
+
+    private static void Authorize(HttpClient client, AuthSessionDto session) =>
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", session.AccessToken);
 
     private static void AssertSeededTrainerImage(
         GymLink.Domain.Trainers.TrainerProfile trainer)

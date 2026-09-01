@@ -41,6 +41,7 @@ public static class DependencyInjection
         services.AddAutoMapper(configuration => { }, Assembly.GetExecutingAssembly());
         services.AddScoped<IReferenceDataService, ReferenceDataService>();
         services.AddScoped<IGymCatalogService, GymCatalogService>();
+        services.AddScoped<ITrainerLifecycleCoordinator, TrainerLifecycleCoordinator>();
         services.AddScoped<ITrainerCatalogService, TrainerCatalogService>();
         services.AddScoped<IMembershipPlanService, MembershipPlanService>();
         services.AddScoped<ITrainerOfferingService, TrainerOfferingService>();

@@ -206,27 +206,183 @@ public sealed class Phase4MembershipApiTests
             Assert.Equal(RoleNames.Trainer, trainerSession.User.Role);
             Assert.Equal("Sportska Akademija Respect", trainerSession.User.Tenant?.Name);
 
-            await using var verification = CreateContext(connectionString);
-            Assert.True(await verification.Memberships.IgnoreQueryFilters().AnyAsync(
-                membership =>
-                    membership.MemberUserId == candidate.UserId &&
-                    membership.Status == MembershipStatus.Active));
-            Assert.True(await verification.TrainerProfiles.IgnoreQueryFilters().AnyAsync(
-                profile => profile.UserId == candidate.UserId));
-            Assert.True(await verification.UserGymAssignments.IgnoreQueryFilters().AnyAsync(
-                assignment =>
+            Guid gymId;
+            await using (var verification = CreateContext(connectionString))
+            {
+                Assert.True(await verification.Memberships.IgnoreQueryFilters().AnyAsync(
+                    membership =>
+                        membership.MemberUserId == candidate.UserId &&
+                        membership.Status == MembershipStatus.Active));
+                Assert.True(await verification.TrainerProfiles.IgnoreQueryFilters().AnyAsync(
+                    profile => profile.UserId == candidate.UserId));
+                Assert.True(await verification.UserGymAssignments.IgnoreQueryFilters().AnyAsync(
+                    assignment =>
+                        assignment.UserId == candidate.UserId &&
+                        assignment.Role == RoleNames.Trainer &&
+                        assignment.Status == AssignmentStatus.Active));
+                Assert.True(await verification.UserGymAssignments.IgnoreQueryFilters().AnyAsync(
+                    assignment =>
+                        assignment.UserId == candidate.UserId &&
+                        assignment.Role == RoleNames.Member &&
+                        assignment.Status == AssignmentStatus.Ended));
+                Assert.True(await verification.SecurityAuditRecords.AnyAsync(
+                    audit =>
+                        audit.TargetUserId == candidate.UserId &&
+                        audit.Action == "trainer.promoted"));
+                gymId = await (
+                        from gym in verification.Gyms.IgnoreQueryFilters()
+                        join profile in verification.TrainerProfiles.IgnoreQueryFilters()
+                            on gym.TenantId equals profile.TenantId
+                        where profile.Id == trainer.Id
+                        select gym.Id)
+                    .SingleAsync();
+            }
+
+            Authorize(client, sarajevoAdmin);
+            var shortReason = await client.PostAsJsonAsync(
+                $"/api/tenant/trainers/{trainer.Id}/deactivate",
+                new { reason = " x " });
+            Assert.Equal(HttpStatusCode.BadRequest, shortReason.StatusCode);
+            using (var validation = JsonDocument.Parse(
+                       await shortReason.Content.ReadAsStringAsync()))
+            {
+                Assert.True(validation.RootElement.GetProperty("errors")
+                    .TryGetProperty("Reason", out _));
+            }
+
+            var deactivation = await client.PostAsJsonAsync(
+                $"/api/tenant/trainers/{trainer.Id}/deactivate",
+                new { reason = "Trainer is temporarily unavailable" });
+            deactivation.EnsureSuccessStatusCode();
+            var inactiveTrainer = await deactivation.Content.ReadFromJsonAsync<TrainerDto>();
+            Assert.NotNull(inactiveTrainer);
+            Assert.Equal(trainer.Id, inactiveTrainer.Id);
+            Assert.False(inactiveTrainer.IsActive);
+
+            client.DefaultRequestHeaders.Authorization = null;
+            var hiddenTrainers = await client.GetFromJsonAsync<PagedResult<TrainerDto>>(
+                $"/api/gyms/{gymId}/trainers?page=1&pageSize=50");
+            Assert.NotNull(hiddenTrainers);
+            Assert.DoesNotContain(hiddenTrainers.Items, item => item.Id == trainer.Id);
+            Assert.Equal(
+                HttpStatusCode.NotFound,
+                (await client.GetAsync($"/api/trainers/{trainer.Id}/offerings")).StatusCode);
+
+            Authorize(client, trainerSession);
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                (await client.GetAsync("/api/profile")).StatusCode);
+            var memberSession = await LoginAsync(client, member.User.Username);
+            Assert.Equal(RoleNames.Member, memberSession.User.Role);
+
+            await using (var expireMembership = CreateContext(connectionString))
+            {
+                var membership = await expireMembership.Memberships.IgnoreQueryFilters()
+                    .SingleAsync(item => item.MemberUserId == candidate.UserId);
+                expireMembership.Entry(membership).Property(item => item.Status).CurrentValue =
+                    MembershipStatus.Expired;
+                expireMembership.Entry(membership).Property(item => item.EndsAtUtc).CurrentValue =
+                    membership.StartsAtUtc!.Value.AddSeconds(1);
+                await expireMembership.SaveChangesAsync();
+            }
+
+            Authorize(client, sarajevoAdmin);
+            var reactivation = await client.PostAsJsonAsync(
+                $"/api/tenant/trainers/{trainer.Id}/reactivate",
+                new { reason = "Trainer has returned to work" });
+            reactivation.EnsureSuccessStatusCode();
+            var activeTrainer = await reactivation.Content.ReadFromJsonAsync<TrainerDto>();
+            Assert.NotNull(activeTrainer);
+            Assert.Equal(trainer.Id, activeTrainer.Id);
+            Assert.True(activeTrainer.IsActive);
+            Assert.Equal(trainer.TrainingTypeIds, activeTrainer.TrainingTypeIds);
+
+            client.DefaultRequestHeaders.Authorization = null;
+            var visibleTrainers = await client.GetFromJsonAsync<PagedResult<TrainerDto>>(
+                $"/api/gyms/{gymId}/trainers?page=1&pageSize=50");
+            Assert.NotNull(visibleTrainers);
+            Assert.Contains(visibleTrainers.Items, item => item.Id == trainer.Id);
+
+            Authorize(client, memberSession);
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                (await client.GetAsync("/api/profile")).StatusCode);
+            var restoredTrainerSession = await LoginAsync(client, member.User.Username);
+            Assert.Equal(RoleNames.Trainer, restoredTrainerSession.User.Role);
+
+            await using var finalVerification = CreateContext(connectionString);
+            Assert.Single(await finalVerification.TrainerProfiles.IgnoreQueryFilters()
+                .Where(profile => profile.UserId == candidate.UserId && profile.IsActive)
+                .ToListAsync());
+            Assert.Single(await finalVerification.UserGymAssignments.IgnoreQueryFilters()
+                .Where(assignment =>
                     assignment.UserId == candidate.UserId &&
                     assignment.Role == RoleNames.Trainer &&
-                    assignment.Status == AssignmentStatus.Active));
-            Assert.True(await verification.UserGymAssignments.IgnoreQueryFilters().AnyAsync(
-                assignment =>
-                    assignment.UserId == candidate.UserId &&
-                    assignment.Role == RoleNames.Member &&
-                    assignment.Status == AssignmentStatus.Ended));
-            Assert.True(await verification.SecurityAuditRecords.AnyAsync(
+                    assignment.Status == AssignmentStatus.Active)
+                .ToListAsync());
+            Assert.True(await finalVerification.SecurityAuditRecords.AnyAsync(
                 audit =>
                     audit.TargetUserId == candidate.UserId &&
-                    audit.Action == "trainer.promoted"));
+                    audit.Action == "trainer.deactivated"));
+            Assert.True(await finalVerification.SecurityAuditRecords.AnyAsync(
+                audit =>
+                    audit.TargetUserId == candidate.UserId &&
+                    audit.Action == "trainer.reactivated"));
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Central_admin_generic_role_assignment_rejects_trainer_promotion()
+    {
+        var databaseName = $"GymLink_GenericTrainerRole_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+        try
+        {
+            await using (var migrationContext = CreateContext(connectionString))
+            {
+                await migrationContext.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            var member = await LoginAsync(client, "mobile1");
+            var centralAdmin = await LoginAsync(client, "centraladmin");
+            Guid tenantId;
+            await using (var context = CreateContext(connectionString))
+            {
+                tenantId = await context.Tenants
+                    .Where(tenant => tenant.Name == "Sportska Akademija Respect")
+                    .Select(tenant => tenant.Id)
+                    .SingleAsync();
+            }
+
+            Authorize(client, centralAdmin);
+            var response = await client.PostAsJsonAsync(
+                "/api/admin/users/roles/assign",
+                new
+                {
+                    identifier = member.User.Email,
+                    role = RoleNames.Trainer,
+                    tenantId,
+                    reason = "Attempted generic promotion",
+                });
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Equal("trainer_promotion_required", await ReadProblemCodeAsync(response));
+
+            var unchanged = await LoginAsync(client, member.User.Username);
+            Assert.Equal(RoleNames.Member, unchanged.User.Role);
+            await using var verification = CreateContext(connectionString);
+            Assert.False(await verification.TrainerProfiles.IgnoreQueryFilters().AnyAsync(
+                profile => profile.UserId == member.User.Id));
+            Assert.False(await verification.UserGymAssignments.IgnoreQueryFilters().AnyAsync(
+                assignment =>
+                    assignment.UserId == member.User.Id &&
+                    assignment.Role == RoleNames.Trainer));
         }
         finally
         {

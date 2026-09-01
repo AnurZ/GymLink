@@ -12,6 +12,7 @@ namespace GymLink.Application.Recommendations;
 internal sealed class RecommendationService(
     IApplicationDbContext dbContext,
     ICurrentUser currentUser,
+    IIdentityAccountManager accounts,
     IApplicationTransaction transaction,
     IRecommendationActivityRecorder activityRecorder,
     TimeProvider timeProvider) : IRecommendationService
@@ -456,6 +457,9 @@ internal sealed class RecommendationService(
 
     private async Task<CandidateSet> LoadCandidatesAsync(CancellationToken cancellationToken)
     {
+        var trainerUserIds = await accounts.GetUserIdsInRoleAsync(
+            RoleNames.Trainer,
+            cancellationToken);
         var gymRows = await (
                 from gym in dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
                 join tenant in dbContext.Tenants.AsNoTracking() on gym.TenantId equals tenant.Id
@@ -489,14 +493,14 @@ internal sealed class RecommendationService(
             x => x.Select(item => item.Id).ToHashSet());
 
         var trainerRows = await (
-                from trainer in dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
+                from trainer in dbContext.CanonicalActiveTrainers()
                 join user in dbContext.UserProfiles.AsNoTracking() on trainer.UserId equals user.Id
                 join gym in dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
                     on trainer.TenantId equals gym.TenantId
                 join tenant in dbContext.Tenants.AsNoTracking() on gym.TenantId equals tenant.Id
                 join city in dbContext.Cities.AsNoTracking() on gym.CityId equals city.Id
-                where trainer.IsActive && user.IsActive && gym.IsPubliclyVisible &&
-                      tenant.Status == TenantStatus.Active
+                where trainerUserIds.Contains(trainer.UserId) &&
+                      gym.IsPubliclyVisible && tenant.Status == TenantStatus.Active
                 orderby user.DisplayName, trainer.Id
                 select new
                 {

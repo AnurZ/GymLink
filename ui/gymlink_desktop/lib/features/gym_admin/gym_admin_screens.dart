@@ -794,27 +794,23 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
     }
   }
 
-  Future<void> _deactivate(Map<String, dynamic> item) async {
+  Future<void> _changeLifecycle(
+    Map<String, dynamic> item, {
+    required bool reactivate,
+  }) async {
     final api = context.read<ApiClient>();
-    if (!await confirmAction(
+    final saved = await submitReasonedAction(
       context,
-      title: 'Deaktiviraj trenera',
-      message:
-          'Trener neće biti izbrisan. Historijski termini i recenzije ostaju sačuvani.',
-    )) {
-      return;
-    }
-    if (!mounted) return;
-    try {
-      await api.delete('/api/tenant/trainers/${item['id']}');
-      await _load();
-    } on ApiProblem catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.message)));
-      }
-    }
+      title: reactivate ? 'Reaktiviraj trenera' : 'Deaktiviraj trenera',
+      onSubmit: (reason) async {
+        final action = reactivate ? 'reactivate' : 'deactivate';
+        await api.post(
+          '/api/tenant/trainers/${item['id']}/$action',
+          body: {'reason': reason},
+        );
+      },
+    );
+    if (saved && mounted) await _load();
   }
 
   Future<void> _addTrainer() async {
@@ -1069,7 +1065,15 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
                                         } else if (value == 'remove-image') {
                                           _removeTrainerImage(item);
                                         } else if (value == 'deactivate') {
-                                          _deactivate(item);
+                                          _changeLifecycle(
+                                            item,
+                                            reactivate: false,
+                                          );
+                                        } else if (value == 'reactivate') {
+                                          _changeLifecycle(
+                                            item,
+                                            reactivate: true,
+                                          );
                                         }
                                       },
                                       itemBuilder: (_) => [
@@ -1088,6 +1092,11 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
                                           const PopupMenuItem(
                                             value: 'deactivate',
                                             child: Text('Deaktiviraj trenera'),
+                                          )
+                                        else
+                                          const PopupMenuItem(
+                                            value: 'reactivate',
+                                            child: Text('Reaktiviraj trenera'),
                                           ),
                                       ],
                                     ),

@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using GymLink.Application.Abstractions;
+using GymLink.Application.Catalog;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Domain.Common;
@@ -81,6 +82,7 @@ internal sealed class UserAdministrationService(
     ICurrentUser currentUser,
     ITenantMutationScope tenantMutationScope,
     IGymAdminAssignmentCoordinator gymAdminAssignment,
+    ITrainerLifecycleCoordinator trainerLifecycle,
     TimeProvider timeProvider) : IUserAdministrationService
 {
     public async Task<PagedResult<AdminUserDto>> SearchAsync(
@@ -120,6 +122,41 @@ internal sealed class UserAdministrationService(
         RoleAssignmentRequest request,
         CancellationToken cancellationToken)
     {
+        if (request.Role == RoleNames.Trainer)
+        {
+            throw new ConflictException(
+                "trainer_promotion_required",
+                "Trainer accounts must be created through the GymAdmin promotion workflow.");
+        }
+
+        if (!RoleNames.All.Contains(request.Role))
+        {
+            throw new ApplicationRuleException(
+                "role_invalid",
+                "The requested role is not supported.");
+        }
+
+        var existingAccount = await FindRequiredAsync(request.Identifier, cancellationToken);
+        if (existingAccount.Role == RoleNames.Trainer)
+        {
+            if (request.Role != RoleNames.Member)
+            {
+                throw new ConflictException(
+                    "trainer_lifecycle_conflict",
+                    "Deactivate the Trainer lifecycle before assigning another staff role.");
+            }
+
+            await trainerLifecycle.DeactivateForAdministrationAsync(
+                existingAccount.Id,
+                request.Reason,
+                RequireActor(),
+                TrainerAdministrationAction.RoleAssignmentToMember,
+                cancellationToken);
+            return await BuildAsync(
+                await FindRequiredAsync(existingAccount.Id.ToString(), cancellationToken),
+                cancellationToken);
+        }
+
         try
         {
             return await transaction.ExecuteSerializableAsync(async token =>
@@ -131,13 +168,6 @@ internal sealed class UserAdministrationService(
                         "The seeded CentralAdmin is the only CentralAdmin account.");
                 }
 
-                if (!RoleNames.All.Contains(request.Role))
-                {
-                    throw new ApplicationRuleException(
-                        "role_invalid",
-                        "The requested role is not supported.");
-                }
-
                 var actorId = RequireActor();
                 var account = await FindRequiredAsync(request.Identifier, token);
                 if (account.Role == RoleNames.CentralAdmin &&
@@ -147,7 +177,7 @@ internal sealed class UserAdministrationService(
                 }
 
                 Tenant? tenant = null;
-                if (request.Role is RoleNames.GymAdmin or RoleNames.Trainer)
+                if (request.Role == RoleNames.GymAdmin)
                 {
                     if (!request.TenantId.HasValue)
                     {
@@ -161,10 +191,8 @@ internal sealed class UserAdministrationService(
                         ?? throw new NotFoundException(
                             "tenant_not_found",
                             "The tenant was not found.");
-                    var allowed = request.Role == RoleNames.GymAdmin
-                        ? tenant.Status is TenantStatus.PendingActivation or TenantStatus.Active
-                        : tenant.Status == TenantStatus.Active;
-                    if (!allowed)
+                    if (tenant.Status is not TenantStatus.PendingActivation and
+                        not TenantStatus.Active)
                     {
                         throw new ConflictException(
                             "tenant_unavailable",
@@ -242,10 +270,25 @@ internal sealed class UserAdministrationService(
         }
     }
 
-    public Task<AdminUserDto> RevokeRoleAsync(
+    public async Task<AdminUserDto> RevokeRoleAsync(
         UserActionRequest request,
-        CancellationToken cancellationToken) =>
-        transaction.ExecuteAsync(async token =>
+        CancellationToken cancellationToken)
+    {
+        var existingAccount = await FindRequiredAsync(request.Identifier, cancellationToken);
+        if (existingAccount.Role == RoleNames.Trainer)
+        {
+            await trainerLifecycle.DeactivateForAdministrationAsync(
+                existingAccount.Id,
+                request.Reason,
+                RequireActor(),
+                TrainerAdministrationAction.RoleRevocation,
+                cancellationToken);
+            return await BuildAsync(
+                await FindRequiredAsync(existingAccount.Id.ToString(), cancellationToken),
+                cancellationToken);
+        }
+
+        return await transaction.ExecuteAsync(async token =>
         {
             var actorId = RequireActor();
             var account = await FindRequiredAsync(request.Identifier, token);
@@ -269,21 +312,37 @@ internal sealed class UserAdministrationService(
                 await FindRequiredAsync(account.Id.ToString(), token),
                 token);
         }, cancellationToken);
+    }
 
-    public Task<AdminUserDto> DeactivateAsync(
+    public async Task<AdminUserDto> DeactivateAsync(
         UserActionRequest request,
-        CancellationToken cancellationToken) =>
-        transaction.ExecuteAsync(async token =>
+        CancellationToken cancellationToken)
+    {
+        var existingAccount = await FindRequiredAsync(request.Identifier, cancellationToken);
+        var actorId = RequireActor();
+        if (existingAccount.Id == actorId)
         {
-            var actorId = RequireActor();
-            var account = await FindRequiredAsync(request.Identifier, token);
-            if (account.Id == actorId)
-            {
-                throw new ConflictException(
-                    "self_deactivation_forbidden",
-                    "Central administrators cannot deactivate their own account.");
-            }
+            throw new ConflictException(
+                "self_deactivation_forbidden",
+                "Central administrators cannot deactivate their own account.");
+        }
 
+        if (existingAccount.Role == RoleNames.Trainer)
+        {
+            await trainerLifecycle.DeactivateForAdministrationAsync(
+                existingAccount.Id,
+                request.Reason,
+                actorId,
+                TrainerAdministrationAction.AccountDeactivation,
+                cancellationToken);
+            return await BuildAsync(
+                await FindRequiredAsync(existingAccount.Id.ToString(), cancellationToken),
+                cancellationToken);
+        }
+
+        return await transaction.ExecuteAsync(async token =>
+        {
+            var account = await FindRequiredAsync(request.Identifier, token);
             if (account.Role == RoleNames.CentralAdmin)
             {
                 await EnsureNotLastCentralAdminAsync(token);
@@ -302,6 +361,7 @@ internal sealed class UserAdministrationService(
 
             return await BuildAsync(account, token);
         }, cancellationToken);
+    }
 
     public Task<AdminUserDto> ReactivateAsync(
         UserActionRequest request,

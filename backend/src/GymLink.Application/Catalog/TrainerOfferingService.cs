@@ -1,5 +1,6 @@
 using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
+using GymLink.Application.Identity;
 using GymLink.Application.Recommendations;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Common;
@@ -12,6 +13,7 @@ public sealed class TrainerOfferingService(
     IApplicationDbContext dbContext,
     ITenantContext tenantContext,
     ICurrentUser currentUser,
+    IIdentityAccountManager accounts,
     IRecommendationActivityRecorder recommendationActivity) : ITrainerOfferingService
 {
     public async Task<PagedResult<TrainerOfferingDto>> SearchAsync(
@@ -63,14 +65,12 @@ public sealed class TrainerOfferingService(
         CancellationToken cancellationToken)
     {
         request.Validate();
-        var trainer = await dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
-            .SingleOrDefaultAsync(x => x.Id == trainerId && x.IsActive, cancellationToken)
+        var trainer = await dbContext.CanonicalActiveTrainers()
+            .SingleOrDefaultAsync(x => x.Id == trainerId, cancellationToken)
             ?? throw new NotFoundException("trainer_not_found", "The trainer was not found.");
-        var visibleTenant = await dbContext.Tenants.AsNoTracking()
-            .AnyAsync(x => x.Id == trainer.TenantId && x.Status == Domain.Enums.TenantStatus.Active, cancellationToken);
         var visibleGym = await dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
             .AnyAsync(x => x.TenantId == trainer.TenantId && x.IsPubliclyVisible, cancellationToken);
-        if (!visibleTenant || !visibleGym)
+        if (!visibleGym || !await accounts.IsInRoleAsync(trainer.UserId, RoleNames.Trainer))
         {
             throw new NotFoundException("trainer_not_found", "The trainer was not found.");
         }

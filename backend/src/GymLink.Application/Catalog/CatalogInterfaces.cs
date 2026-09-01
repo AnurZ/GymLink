@@ -22,7 +22,14 @@ public interface ITrainerCatalogService
         CancellationToken cancellationToken);
     Task<TrainerDto> CreateAsync(CreateTrainerRequest request, CancellationToken cancellationToken);
     Task<TrainerDto> UpdateAsync(Guid id, UpdateTrainerRequest request, CancellationToken cancellationToken);
-    Task DeactivateAsync(Guid id, CancellationToken cancellationToken);
+    Task<TrainerDto> DeactivateAsync(
+        Guid id,
+        TrainerLifecycleRequest request,
+        CancellationToken cancellationToken);
+    Task<TrainerDto> ReactivateAsync(
+        Guid id,
+        TrainerLifecycleRequest request,
+        CancellationToken cancellationToken);
 }
 
 public interface IMembershipPlanService

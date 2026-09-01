@@ -15,6 +15,7 @@ namespace GymLink.Application.Reservations;
 internal sealed class AvailabilityService(
     IApplicationDbContext dbContext,
     IApplicationTransaction transaction,
+    IIdentityAccountManager accounts,
     ICurrentUser currentUser,
     ITenantContext tenantContext,
     IReservationWorkflowEventRecorder eventRecorder,
@@ -63,13 +64,12 @@ internal sealed class AvailabilityService(
                 "A trainer offering is required.");
         }
 
-        var trainer = await dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
-            .SingleOrDefaultAsync(x => x.Id == trainerId && x.IsActive, cancellationToken)
+        var trainer = await dbContext.CanonicalActiveTrainers()
+            .SingleOrDefaultAsync(x => x.Id == trainerId, cancellationToken)
             ?? throw new NotFoundException("trainer_not_found", "The trainer was not found.");
-        var visible = await dbContext.Tenants.AsNoTracking()
-                .AnyAsync(x => x.Id == trainer.TenantId && x.Status == TenantStatus.Active, cancellationToken) &&
-            await dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
-                .AnyAsync(x => x.TenantId == trainer.TenantId && x.IsPubliclyVisible, cancellationToken);
+        var visible = await dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
+                .AnyAsync(x => x.TenantId == trainer.TenantId && x.IsPubliclyVisible, cancellationToken) &&
+            await accounts.IsInRoleAsync(trainer.UserId, RoleNames.Trainer);
         if (!visible)
         {
             throw new NotFoundException("trainer_not_found", "The trainer was not found.");
@@ -221,13 +221,12 @@ internal sealed class AvailabilityService(
         }
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
-        var trainer = await dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
-            .SingleOrDefaultAsync(x => x.Id == trainerId && x.IsActive, cancellationToken)
+        var trainer = await dbContext.CanonicalActiveTrainers()
+            .SingleOrDefaultAsync(x => x.Id == trainerId, cancellationToken)
             ?? throw new NotFoundException("trainer_not_found", "The trainer was not found.");
-        var visible = await dbContext.Tenants.AsNoTracking()
-                .AnyAsync(x => x.Id == trainer.TenantId && x.Status == TenantStatus.Active, cancellationToken) &&
-            await dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
-                .AnyAsync(x => x.TenantId == trainer.TenantId && x.IsPubliclyVisible, cancellationToken);
+        var visible = await dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
+                .AnyAsync(x => x.TenantId == trainer.TenantId && x.IsPubliclyVisible, cancellationToken) &&
+            await accounts.IsInRoleAsync(trainer.UserId, RoleNames.Trainer);
         if (!visible)
         {
             throw new NotFoundException("trainer_not_found", "The trainer was not found.");
@@ -871,6 +870,7 @@ internal sealed class AvailabilityService(
 internal sealed class ReservationService(
     IApplicationDbContext dbContext,
     IApplicationTransaction transaction,
+    IIdentityAccountManager accounts,
     ICurrentUser currentUser,
     ITenantContext tenantContext,
     ITenantMutationScope tenantMutationScope,
@@ -908,7 +908,7 @@ internal sealed class ReservationService(
             {
                 var target = await (
                         from offering in dbContext.TrainerServiceOfferings.IgnoreQueryFilters()
-                        join trainer in dbContext.TrainerProfiles.IgnoreQueryFilters()
+                        join trainer in dbContext.CanonicalActiveTrainers()
                             on new { offering.TenantId, Id = offering.TrainerProfileId }
                             equals new { trainer.TenantId, trainer.Id }
                         join gym in dbContext.Gyms.IgnoreQueryFilters()
@@ -916,7 +916,6 @@ internal sealed class ReservationService(
                         join tenant in dbContext.Tenants on offering.TenantId equals tenant.Id
                         where offering.Id == request.TrainerServiceOfferingId &&
                               offering.IsActive &&
-                              trainer.IsActive &&
                               gym.IsPubliclyVisible &&
                               tenant.Status == TenantStatus.Active
                         select new { Offering = offering, Trainer = trainer, Gym = gym })
@@ -924,6 +923,13 @@ internal sealed class ReservationService(
                     ?? throw new NotFoundException(
                         "bookable_time_not_found",
                         "The selected offering and appointment time are not bookable.");
+                if (!await accounts.IsInRoleAsync(target.Trainer.UserId, RoleNames.Trainer))
+                {
+                    throw new NotFoundException(
+                        "bookable_time_not_found",
+                        "The selected offering and appointment time are not bookable.");
+                }
+
                 var endsAtUtc = request.StartsAtUtc.AddMinutes(target.Offering.DurationMinutes);
                 var schedule = await dbContext.TrainerAvailabilitySchedules
                     .IgnoreQueryFilters()
@@ -1619,6 +1625,7 @@ internal sealed class ReviewService(
     IApplicationDbContext dbContext,
     IApplicationTransaction transaction,
     ICurrentUser currentUser,
+    IIdentityAccountManager accounts,
     ITenantMutationScope tenantMutationScope,
     IReservationWorkflowEventRecorder eventRecorder,
     IRecommendationActivityRecorder recommendationActivity,
@@ -1785,13 +1792,12 @@ internal sealed class ReviewService(
 
     private async Task EnsurePublicTrainerAsync(Guid trainerId, CancellationToken cancellationToken)
     {
-        var trainer = await dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
-            .SingleOrDefaultAsync(x => x.Id == trainerId && x.IsActive, cancellationToken)
+        var trainer = await dbContext.CanonicalActiveTrainers()
+            .SingleOrDefaultAsync(x => x.Id == trainerId, cancellationToken)
             ?? throw new NotFoundException("trainer_not_found", "The trainer was not found.");
-        var visible = await dbContext.Tenants.AsNoTracking()
-                .AnyAsync(x => x.Id == trainer.TenantId && x.Status == TenantStatus.Active, cancellationToken) &&
-            await dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
-                .AnyAsync(x => x.TenantId == trainer.TenantId && x.IsPubliclyVisible, cancellationToken);
+        var visible = await dbContext.Gyms.IgnoreQueryFilters().AsNoTracking()
+                .AnyAsync(x => x.TenantId == trainer.TenantId && x.IsPubliclyVisible, cancellationToken) &&
+            await accounts.IsInRoleAsync(trainer.UserId, RoleNames.Trainer);
         if (!visible)
         {
             throw new NotFoundException("trainer_not_found", "The trainer was not found.");

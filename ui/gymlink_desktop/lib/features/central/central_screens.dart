@@ -3023,7 +3023,7 @@ class _RoleDialogState extends State<_RoleDialog> {
       _formError = null;
     });
     if (!_formKey.currentState!.validate()) return;
-    final needsTenant = _role == 'GymAdmin' || _role == 'Trainer';
+    final needsTenant = _role == 'GymAdmin';
     setState(() => _saving = true);
     try {
       await widget.onSubmit({
@@ -3072,7 +3072,7 @@ class _RoleDialogState extends State<_RoleDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final needsTenant = _role == 'GymAdmin' || _role == 'Trainer';
+    final needsTenant = _role == 'GymAdmin';
     return AlertDialog(
       title: const Text('Dodijeli predefinisanu ulogu'),
       content: SizedBox(
@@ -3099,7 +3099,6 @@ class _RoleDialogState extends State<_RoleDialog> {
                 decoration: const InputDecoration(labelText: 'Uloga'),
                 items: const [
                   DropdownMenuItem(value: 'Member', child: Text('Član')),
-                  DropdownMenuItem(value: 'Trainer', child: Text('Trener')),
                   DropdownMenuItem(
                     value: 'GymAdmin',
                     child: Text('Administrator teretane'),

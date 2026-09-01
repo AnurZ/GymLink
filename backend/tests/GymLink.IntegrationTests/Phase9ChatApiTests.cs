@@ -372,8 +372,13 @@ public sealed class Phase9ChatApiTests
                 null);
             postRevocationRead.EnsureSuccessStatusCode();
             Assert.False(revokedReadDelivery.Task.IsCompleted);
-            await hub.InvokeAsync("conversation:read", opened.Id);
 
+            Authorize(client, trainer);
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                (await client.GetAsync("/api/profile")).StatusCode);
+
+            Authorize(client, member);
             var sentAfterIneligibility = await client.PostAsJsonAsync(
                 $"/api/me/conversations/{opened.Id}/messages",
                 new { clientMessageId = Guid.NewGuid(), text = "Razgovor ostaje otvoren." });
