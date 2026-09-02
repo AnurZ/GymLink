@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../desktop_frame.dart';
 import '../profile/profile_screen.dart';
 import 'central_screens.dart';
+import 'central_operations_screen.dart';
 import '../reporting/reporting_screens.dart';
 
 class CentralAdminShell extends StatelessWidget {
@@ -30,6 +31,11 @@ class CentralAdminShell extends StatelessWidget {
           'Korisnici i uloge',
           Icons.manage_accounts_outlined,
           UserManagementScreen(),
+        ),
+        DesktopDestination(
+          'Operacije',
+          Icons.fact_check_outlined,
+          CentralOperationsScreen(),
         ),
         DesktopDestination(
           'Referentni podaci',

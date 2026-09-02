@@ -872,6 +872,7 @@ internal sealed class ReservationService(
     IApplicationTransaction transaction,
     IIdentityAccountManager accounts,
     ICurrentUser currentUser,
+    IRequestMetadata requestMetadata,
     ITenantContext tenantContext,
     ITenantMutationScope tenantMutationScope,
     IReservationWorkflowEventRecorder eventRecorder,
@@ -1077,10 +1078,10 @@ internal sealed class ReservationService(
     public Task<PagedResult<ReservationDto>> SearchMineAsync(
         ReservationSearchRequest request,
         CancellationToken cancellationToken) =>
-        SearchAsync(request, null, RequireUser(), null, null, true, cancellationToken);
+        SearchAsync(request, null, RequireUser(), null, null, null, true, false, cancellationToken);
 
     public Task<ReservationDto> GetMineAsync(Guid id, CancellationToken cancellationToken) =>
-        GetAsync(id, RequireUser(), null, null, true, cancellationToken);
+        GetAsync(id, RequireUser(), null, null, null, true, false, cancellationToken);
 
     public async Task<ReservationDto> CancelMineAsync(
         Guid id,
@@ -1118,22 +1119,49 @@ internal sealed class ReservationService(
         CancellationToken cancellationToken)
     {
         var trainer = await RequireOwnTrainerAsync(cancellationToken);
-        return await SearchAsync(request, null, null, trainer.Id, RequireTenant(), false, cancellationToken);
+        return await SearchAsync(request, null, null, trainer.Id, RequireTenant(), null, false, false, cancellationToken);
     }
 
     public async Task<ReservationDto> GetTrainerAsync(Guid id, CancellationToken cancellationToken)
     {
         var trainer = await RequireOwnTrainerAsync(cancellationToken);
-        return await GetAsync(id, null, trainer.Id, RequireTenant(), false, cancellationToken);
+        return await GetAsync(id, null, trainer.Id, RequireTenant(), null, false, false, cancellationToken);
     }
 
     public Task<PagedResult<ReservationDto>> SearchTenantAsync(
         ReservationSearchRequest request,
         CancellationToken cancellationToken) =>
-        SearchAsync(request, null, null, request.TrainerProfileId, RequireTenant(), false, cancellationToken);
+        SearchAsync(request, null, null, request.TrainerProfileId, RequireTenant(), null, false, false, cancellationToken);
 
     public Task<ReservationDto> GetTenantAsync(Guid id, CancellationToken cancellationToken) =>
-        GetAsync(id, null, null, RequireTenant(), false, cancellationToken);
+        GetAsync(id, null, null, RequireTenant(), null, false, false, cancellationToken);
+
+    public async Task<PagedResult<ReservationDto>> SearchAdminGymAsync(
+        Guid gymId,
+        ReservationSearchRequest request,
+        CancellationToken cancellationToken)
+    {
+        var tenantId = await ResolveGymTenantAsync(gymId, cancellationToken);
+        var result = await SearchAsync(
+            request,
+            reservationId: null,
+            memberId: null,
+            trainerId: request.TrainerProfileId,
+            tenantId,
+            gymId,
+            ignoreFilters: true,
+            centralAdmin: true,
+            cancellationToken);
+        AddCentralAudit(
+            "central.reservation_operations_viewed",
+            tenantId,
+            "Gym",
+            gymId,
+            targetUserId: null,
+            "CentralAdmin viewed operational reservation records.");
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return result;
+    }
 
     public Task<ReservationDto> ConfirmAsync(
         Guid id,
@@ -1153,22 +1181,59 @@ internal sealed class ReservationService(
         CancellationToken cancellationToken) =>
         TransitionAsync(id, request.ConcurrencyToken, null, ReservationAction.Complete, cancellationToken);
 
+    public async Task<ReservationDto> CompleteAdminGymAsync(
+        Guid gymId,
+        Guid id,
+        ReservationConcurrencyRequest request,
+        CancellationToken cancellationToken)
+    {
+        var tenantId = await ResolveGymTenantAsync(gymId, cancellationToken);
+        return await TransitionAsync(
+            id,
+            request.ConcurrencyToken,
+            reason: null,
+            ReservationAction.Complete,
+            cancellationToken,
+            explicitTenantId: tenantId,
+            gymId,
+            centralAdmin: true);
+    }
+
     private async Task<ReservationDto> TransitionAsync(
         Guid id,
         string concurrencyToken,
         string? reason,
         ReservationAction action,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Guid? explicitTenantId = null,
+        Guid? gymId = null,
+        bool centralAdmin = false)
     {
         var actor = RequireUser();
-        var tenantId = RequireTenant();
+        var tenantId = explicitTenantId ?? RequireTenant();
         var provisionedConversation = await transaction.ExecuteSerializableAsync(
             async ct =>
             {
-                var entity = await dbContext.AppointmentReservations
+                var reservations = centralAdmin
+                    ? dbContext.AppointmentReservations.IgnoreQueryFilters()
+                    : dbContext.AppointmentReservations;
+                var entity = await reservations
                     .SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId, ct)
                     ?? throw ReservationNotFound();
-                await EnsureStaffOwnershipAsync(entity, action, ct);
+                if (centralAdmin &&
+                    (!gymId.HasValue ||
+                     !await dbContext.Memberships.IgnoreQueryFilters().AnyAsync(
+                         x => x.Id == entity.MembershipId &&
+                              x.TenantId == tenantId &&
+                              x.GymId == gymId,
+                         ct)))
+                {
+                    throw ReservationNotFound();
+                }
+                if (!centralAdmin)
+                {
+                    await EnsureStaffOwnershipAsync(entity, action, ct);
+                }
                 EnsureToken(entity.RowVersion, concurrencyToken);
                 if (action == ReservationAction.Cancel &&
                     await HasOpenCheckoutAsync(entity.Id, ct))
@@ -1179,6 +1244,9 @@ internal sealed class ReservationService(
                 }
 
                 var now = timeProvider.GetUtcNow().UtcDateTime;
+                using var tenantWrite = centralAdmin
+                    ? tenantMutationScope.Begin(tenantId)
+                    : null;
                 ConversationProvisioningResult? conversation = null;
                 if (action == ReservationAction.Confirm)
                 {
@@ -1231,6 +1299,16 @@ internal sealed class ReservationService(
                     }
                 }
 
+                if (centralAdmin)
+                {
+                    AddCentralAudit(
+                        "central.reservation_completed",
+                        tenantId,
+                        "AppointmentReservation",
+                        entity.Id,
+                        entity.MemberUserId,
+                        "CentralAdmin manually completed a confirmed reservation.");
+                }
                 await RecordStatusAsync(entity, actor, ct);
                 await SaveAsync(ct);
                 return conversation;
@@ -1242,6 +1320,19 @@ internal sealed class ReservationService(
             await conversationNotifier.ConversationAvailableAsync(
                 provisionedConversation,
                 CancellationToken.None);
+        }
+
+        if (centralAdmin)
+        {
+            return await GetAsync(
+                id,
+                memberId: null,
+                trainerId: null,
+                tenantId,
+                gymId,
+                ignoreFilters: true,
+                centralAdmin: true,
+                cancellationToken);
         }
 
         return tenantContext.TenantRole == RoleNames.Trainer
@@ -1282,7 +1373,9 @@ internal sealed class ReservationService(
         Guid? memberId,
         Guid? trainerId,
         Guid? tenantId,
+        Guid? gymId,
         bool ignoreFilters,
+        bool centralAdmin,
         CancellationToken cancellationToken)
     {
         request.Validate();
@@ -1321,6 +1414,7 @@ internal sealed class ReservationService(
                 MemberName = member.DisplayName,
                 GymName = gym.Name,
                 OfferingName = offering.Name,
+                GymId = membership.GymId,
                 HasReview = reviews.Any(x => x.ReservationId == reservation.Id),
             };
         if (reservationId.HasValue)
@@ -1341,6 +1435,11 @@ internal sealed class ReservationService(
         if (tenantId.HasValue)
         {
             query = query.Where(x => x.Reservation.TenantId == tenantId);
+        }
+
+        if (gymId.HasValue)
+        {
+            query = query.Where(x => x.GymId == gymId);
         }
 
         if (!reservationId.HasValue)
@@ -1412,6 +1511,7 @@ internal sealed class ReservationService(
                     x.Reservation.PaymentId.HasValue,
                     memberId.HasValue,
                     trainerId.HasValue || tenantId.HasValue,
+                    centralAdmin,
                     dbContext.Payments.IgnoreQueryFilters().Any(payment =>
                         payment.Purpose == PaymentPurpose.TrainerReservation &&
                         payment.TargetId == x.Reservation.Id &&
@@ -1427,8 +1527,14 @@ internal sealed class ReservationService(
         bool isPaid,
         bool memberView,
         bool staffView,
+        bool centralAdmin,
         bool hasOpenCheckout)
     {
+        if (centralAdmin)
+        {
+            return status == ReservationStatus.Confirmed ? ["complete"] : [];
+        }
+
         if (status == ReservationStatus.Pending && memberView)
         {
             return hasOpenCheckout
@@ -1471,7 +1577,9 @@ internal sealed class ReservationService(
         Guid? memberId,
         Guid? trainerId,
         Guid? tenantId,
+        Guid? gymId,
         bool ignoreFilters,
+        bool centralAdmin,
         CancellationToken cancellationToken)
     {
         var result = await SearchAsync(
@@ -1480,7 +1588,9 @@ internal sealed class ReservationService(
             memberId,
             trainerId,
             tenantId,
+            gymId,
             ignoreFilters,
+            centralAdmin,
             cancellationToken);
         return result.Items.SingleOrDefault(x => x.Id == id)
             ?? throw ReservationNotFound();
@@ -1523,6 +1633,36 @@ internal sealed class ReservationService(
 
     private static NotFoundException ReservationNotFound() =>
         new("reservation_not_found", "The reservation was not found.");
+
+    private async Task<Guid> ResolveGymTenantAsync(
+        Guid gymId,
+        CancellationToken cancellationToken) =>
+        await dbContext.Gyms.IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(x => x.Id == gymId)
+            .Select(x => (Guid?)x.TenantId)
+            .SingleOrDefaultAsync(cancellationToken)
+        ?? throw new NotFoundException("gym_not_found", "The gym was not found.");
+
+    private void AddCentralAudit(
+        string action,
+        Guid tenantId,
+        string targetType,
+        Guid targetId,
+        Guid? targetUserId,
+        string reason) =>
+        dbContext.SecurityAuditRecords.Add(new SecurityAuditRecord
+        {
+            ActorUserId = RequireUser(),
+            TargetUserId = targetUserId,
+            TargetTenantId = tenantId,
+            Action = action,
+            TargetType = targetType,
+            TargetId = targetId,
+            Reason = reason,
+            CorrelationId = requestMetadata.CorrelationId,
+            OccurredAtUtc = timeProvider.GetUtcNow().UtcDateTime,
+        });
 
     private static bool FitsWeeklyShift(
         DateTime startsAtUtc,

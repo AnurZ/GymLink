@@ -4,6 +4,7 @@ using GymLink.Application.Identity;
 using GymLink.Application.Recommendations;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
+using GymLink.Domain.Identity;
 using GymLink.Domain.Memberships;
 using GymLink.Domain.Tenancy;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,7 @@ internal sealed class MembershipRequestService(
     IApplicationDbContext dbContext,
     IApplicationTransaction transaction,
     ICurrentUser currentUser,
+    IRequestMetadata requestMetadata,
     ITenantContext tenantContext,
     ITenantMutationScope tenantMutationScope,
     IIdentityAccountManager identityAccounts,
@@ -130,6 +132,7 @@ internal sealed class MembershipRequestService(
             tenantId: null,
             ignoreQueryFilters: true,
             tenantAdmin: false,
+            centralAdmin: false,
             cancellationToken: cancellationToken);
 
     public Task<MembershipRequestDto> GetMineAsync(
@@ -141,6 +144,7 @@ internal sealed class MembershipRequestService(
             tenantId: null,
             ignoreQueryFilters: true,
             tenantAdmin: false,
+            centralAdmin: false,
             cancellationToken: cancellationToken);
 
     public async Task<MembershipRequestDto> CancelMineAsync(
@@ -181,6 +185,7 @@ internal sealed class MembershipRequestService(
             tenantId: RequireTenant(),
             ignoreQueryFilters: false,
             tenantAdmin: true,
+            centralAdmin: false,
             cancellationToken);
 
     public Task<MembershipRequestDto> GetTenantAsync(
@@ -192,27 +197,105 @@ internal sealed class MembershipRequestService(
             tenantId: RequireTenant(),
             ignoreQueryFilters: false,
             tenantAdmin: true,
+            centralAdmin: false,
             cancellationToken);
 
-    public async Task<MembershipRequestDto> ApproveAsync(
+    public Task<MembershipRequestDto> ApproveAsync(
+        Guid id,
+        ConcurrencyRequest request,
+        CancellationToken cancellationToken) =>
+        ApproveForTenantAsync(
+            id,
+            request,
+            RequireTenant(),
+            gymId: null,
+            ignoreQueryFilters: false,
+            cashOnly: false,
+            centralAdmin: false,
+            cancellationToken);
+
+    public async Task<PagedResult<MembershipRequestDto>> SearchAdminGymAsync(
+        Guid gymId,
+        MembershipRequestSearchRequest request,
+        CancellationToken cancellationToken)
+    {
+        var tenantId = await ResolveGymTenantAsync(gymId, cancellationToken);
+        var result = await SearchAsync(
+            request with { GymId = gymId },
+            memberUserId: null,
+            tenantId,
+            ignoreQueryFilters: true,
+            tenantAdmin: false,
+            centralAdmin: true,
+            cancellationToken);
+        AddCentralAudit(
+            "central.membership_operations_viewed",
+            tenantId,
+            "Gym",
+            gymId,
+            targetUserId: null,
+            "CentralAdmin viewed operational membership records.");
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return result;
+    }
+
+    public async Task<MembershipRequestDto> ConfirmCashAdminGymAsync(
+        Guid gymId,
         Guid id,
         ConcurrencyRequest request,
         CancellationToken cancellationToken)
     {
+        var tenantId = await ResolveGymTenantAsync(gymId, cancellationToken);
+        return await ApproveForTenantAsync(
+            id,
+            request,
+            tenantId,
+            gymId,
+            ignoreQueryFilters: true,
+            cashOnly: true,
+            centralAdmin: true,
+            cancellationToken);
+    }
+
+    private async Task<MembershipRequestDto> ApproveForTenantAsync(
+        Guid id,
+        ConcurrencyRequest request,
+        Guid tenantId,
+        Guid? gymId,
+        bool ignoreQueryFilters,
+        bool cashOnly,
+        bool centralAdmin,
+        CancellationToken cancellationToken)
+    {
         var actorId = RequireUser();
-        var tenantId = RequireTenant();
         var now = timeProvider.GetUtcNow().UtcDateTime;
 
         await transaction.ExecuteSerializableAsync(async ct =>
         {
-            var entity = await dbContext.MembershipRequests
-                .SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId, ct)
+            var requests = ignoreQueryFilters
+                ? dbContext.MembershipRequests.IgnoreQueryFilters()
+                : dbContext.MembershipRequests;
+            var entity = await requests.SingleOrDefaultAsync(
+                x => x.Id == id &&
+                     x.TenantId == tenantId &&
+                     (!gymId.HasValue || x.GymId == gymId),
+                ct)
                 ?? throw RequestNotFound();
             EnsureConcurrency(entity.RowVersion, request.ConcurrencyToken);
+            if (cashOnly && entity.PaymentMethod != MembershipPaymentMethod.PayInPerson)
+            {
+                throw new ConflictException(
+                    "membership_request_not_pay_in_person",
+                    "Only a pay-in-person membership request can be confirmed as cash received.");
+            }
 
-            var plan = await dbContext.MembershipPlans
+            var plans = ignoreQueryFilters
+                ? dbContext.MembershipPlans.IgnoreQueryFilters()
+                : dbContext.MembershipPlans;
+            var plan = await plans
                 .SingleOrDefaultAsync(
-                    x => x.Id == entity.MembershipPlanId &&
+                    x => x.TenantId == tenantId &&
+                         x.Id == entity.MembershipPlanId &&
                          x.GymId == entity.GymId &&
                          x.IsActive,
                     ct)
@@ -231,6 +314,9 @@ internal sealed class MembershipRequestService(
                     "A current membership already exists for this gym.");
             }
 
+            using var tenantWrite = centralAdmin
+                ? tenantMutationScope.Begin(tenantId)
+                : null;
             entity.Approve(actorId, now);
             var membership = entity.PaymentMethod == MembershipPaymentMethod.PayInPerson
                 ? new Membership(
@@ -267,6 +353,16 @@ internal sealed class MembershipRequestService(
                     "Pay-in-person membership confirmed.",
                     ct);
             }
+            if (centralAdmin)
+            {
+                AddCentralAudit(
+                    "central.membership_cash_confirmed",
+                    tenantId,
+                    "MembershipRequest",
+                    entity.Id,
+                    entity.MemberUserId,
+                    "CentralAdmin confirmed an in-person membership payment.");
+            }
             await eventRecorder.RecordAsync(new MembershipWorkflowEventIntent(
                 "membership.approved",
                 membership.TenantId,
@@ -277,7 +373,14 @@ internal sealed class MembershipRequestService(
             await SaveWorkflowAsync(ct);
             return membership;
         }, cancellationToken);
-        return await GetTenantAsync(id, cancellationToken);
+        return await GetProjectedAsync(
+            id,
+            memberUserId: null,
+            tenantId,
+            ignoreQueryFilters,
+            tenantAdmin: !centralAdmin,
+            centralAdmin,
+            cancellationToken);
     }
 
     public async Task<MembershipRequestDto> RejectAsync(
@@ -312,6 +415,7 @@ internal sealed class MembershipRequestService(
         Guid? tenantId,
         bool ignoreQueryFilters,
         bool tenantAdmin,
+        bool centralAdmin,
         CancellationToken cancellationToken)
     {
         ValidateRange(request.RequestedFromUtc, request.RequestedToUtc);
@@ -362,7 +466,8 @@ internal sealed class MembershipRequestService(
                 plan.Name,
                 plan.Price,
                 plan.Currency,
-                tenantAdmin);
+                tenantAdmin,
+                centralAdmin);
         var page = await query.ToPagedResultAsync(request, cancellationToken);
         var emails = await identityAccounts.GetEmailsAsync(
             page.Items.Select(x => x.MemberUserId).Distinct().ToArray(),
@@ -371,6 +476,7 @@ internal sealed class MembershipRequestService(
             page.Items.Select(x => x.Id).ToArray(),
             ignoreQueryFilters,
             tenantAdmin,
+            centralAdmin,
             cancellationToken);
         return new(
             page.Items.Select(x => x with
@@ -389,6 +495,7 @@ internal sealed class MembershipRequestService(
         Guid? tenantId,
         bool ignoreQueryFilters,
         bool tenantAdmin,
+        bool centralAdmin,
         CancellationToken cancellationToken)
     {
         var source = ignoreQueryFilters
@@ -414,7 +521,8 @@ internal sealed class MembershipRequestService(
                     plan.Name,
                     plan.Price,
                     plan.Currency,
-                    tenantAdmin))
+                    tenantAdmin,
+                    centralAdmin))
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw RequestNotFound();
         var account = await identityAccounts.FindByIdAsync(result.MemberUserId, cancellationToken);
@@ -422,6 +530,7 @@ internal sealed class MembershipRequestService(
             [result.Id],
             ignoreQueryFilters,
             tenantAdmin,
+            centralAdmin,
             cancellationToken);
         return result with
         {
@@ -437,7 +546,8 @@ internal sealed class MembershipRequestService(
         string planName,
         decimal price,
         string currency,
-        bool tenantAdmin) =>
+        bool tenantAdmin,
+        bool centralAdmin) =>
         new(
             entity.Id,
             entity.MemberUserId,
@@ -455,11 +565,16 @@ internal sealed class MembershipRequestService(
             entity.DecidedAtUtc,
             entity.DecisionReason,
             null,
-            entity.Status == MembershipRequestStatus.Pending
-                ? tenantAdmin && entity.PaymentMethod == MembershipPaymentMethod.PayInPerson
+            centralAdmin
+                ? entity.Status == MembershipRequestStatus.Pending &&
+                  entity.PaymentMethod == MembershipPaymentMethod.PayInPerson
+                    ? ["confirmCashPayment"]
+                    : []
+                : entity.Status == MembershipRequestStatus.Pending
+                    ? tenantAdmin && entity.PaymentMethod == MembershipPaymentMethod.PayInPerson
                     ? ["approve", "reject", "view"]
                     : tenantAdmin ? ["view"] : ["cancel", "view"]
-                : ["view"],
+                    : ["view"],
             Convert.ToBase64String(entity.RowVersion));
 
     private async Task<IReadOnlyDictionary<Guid, MembershipRequestMembershipDto>>
@@ -467,6 +582,7 @@ internal sealed class MembershipRequestService(
             Guid[] requestIds,
             bool ignoreQueryFilters,
             bool tenantAdmin,
+            bool centralAdmin,
             CancellationToken cancellationToken)
     {
         if (requestIds.Length == 0)
@@ -510,15 +626,16 @@ internal sealed class MembershipRequestService(
                 entity.PaymentId.HasValue,
                 entity.StatusChangedAtUtc,
                 entity.StatusReason,
-                LinkedMembershipAllowedActions(entity, tenantAdmin, now),
+                LinkedMembershipAllowedActions(entity, tenantAdmin, centralAdmin, now),
                 Convert.ToBase64String(entity.RowVersion)));
     }
 
     private static IReadOnlyList<string> LinkedMembershipAllowedActions(
         LinkedMembershipProjection entity,
         bool tenantAdmin,
+        bool centralAdmin,
         DateTime now) =>
-        entity.Status switch
+        centralAdmin ? [] : entity.Status switch
         {
             MembershipStatus.PendingPayment
                 when entity.PaymentStatus is PaymentStatus.Created or PaymentStatus.Processing =>
@@ -632,6 +749,36 @@ internal sealed class MembershipRequestService(
 
     private static NotFoundException RequestNotFound() =>
         new("membership_request_not_found", "The membership request was not found.");
+
+    private async Task<Guid> ResolveGymTenantAsync(
+        Guid gymId,
+        CancellationToken cancellationToken) =>
+        await dbContext.Gyms.IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(x => x.Id == gymId)
+            .Select(x => (Guid?)x.TenantId)
+            .SingleOrDefaultAsync(cancellationToken)
+        ?? throw new NotFoundException("gym_not_found", "The gym was not found.");
+
+    private void AddCentralAudit(
+        string action,
+        Guid tenantId,
+        string targetType,
+        Guid targetId,
+        Guid? targetUserId,
+        string reason) =>
+        dbContext.SecurityAuditRecords.Add(new SecurityAuditRecord
+        {
+            ActorUserId = RequireUser(),
+            TargetUserId = targetUserId,
+            TargetTenantId = tenantId,
+            Action = action,
+            TargetType = targetType,
+            TargetId = targetId,
+            Reason = reason,
+            CorrelationId = requestMetadata.CorrelationId,
+            OccurredAtUtc = timeProvider.GetUtcNow().UtcDateTime,
+        });
 }
 
 internal sealed class MembershipService(

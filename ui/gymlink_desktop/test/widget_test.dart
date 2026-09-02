@@ -10,6 +10,7 @@ import 'package:gymlink_desktop/core/app_errors.dart';
 import 'package:gymlink_desktop/core/theme.dart';
 import 'package:gymlink_desktop/features/auth/login_screen.dart';
 import 'package:gymlink_desktop/features/central/central_screens.dart';
+import 'package:gymlink_desktop/features/central/central_operations_screen.dart';
 import 'package:gymlink_desktop/features/desktop_frame.dart';
 import 'package:gymlink_desktop/features/auth/password_reset_screens.dart';
 import 'package:gymlink_desktop/features/gym_admin/gym_admin_screens.dart';
@@ -1881,6 +1882,89 @@ void main() {
     expect(find.text('Nesačuvane promjene'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'CentralAdmin operations use only scoped routes and authoritative actions',
+    (tester) async {
+      tester.view.physicalSize = const Size(1600, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _CentralOperationsApi();
+      await tester.pumpWidget(
+        Provider<ApiClient>.value(
+          value: api,
+          child: MaterialApp(
+            theme: buildGymLinkTheme(),
+            home: const Scaffold(body: CentralOperationsScreen()),
+          ),
+        ),
+      );
+
+      expect(find.text('Prvo odaberite teretanu.'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('central-select-gym')));
+      await tester.pumpAndSettle();
+      expect(find.text('Aktivna teretana'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('central-gym-gym-1')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Čeka potvrdu uplate'), findsOneWidget);
+      expect(find.text('Uspješno'), findsOneWidget);
+      expect(
+        find.byKey(const Key('central-confirm-cash-cash-request')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('central-confirm-cash-stripe-request')),
+        findsNothing,
+      );
+
+      final confirmCash = find.byKey(
+        const Key('central-confirm-cash-cash-request'),
+      );
+      await tester.ensureVisible(confirmCash);
+      await tester.pump();
+      await tester.tap(confirmCash);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Potvrdi uplatu'));
+      await tester.pumpAndSettle();
+      expect(
+        api.posts.single,
+        '/api/admin/gyms/gym-1/membership-requests/cash-request/confirm-cash',
+      );
+
+      await tester.tap(find.text('Rezervacije'));
+      await tester.pumpAndSettle();
+      expect(find.text('Plaćanje uživo — bez online zapisa'), findsOneWidget);
+      expect(
+        find.byKey(const Key('central-complete-reservation-reservation-1')),
+        findsOneWidget,
+      );
+      final completeReservation = find.byKey(
+        const Key('central-complete-reservation-reservation-1'),
+      );
+      await tester.ensureVisible(completeReservation);
+      await tester.pump();
+      await tester.tap(completeReservation);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Označi završenom'));
+      await tester.pumpAndSettle();
+
+      expect(
+        api.posts.last,
+        '/api/admin/gyms/gym-1/reservations/reservation-1/complete',
+      );
+      expect(
+        api.pages.where((path) => path.contains('/api/admin/gyms/gym-1/')),
+        isNotEmpty,
+      );
+      expect(
+        api.pages.where((path) => path.startsWith('/api/gym-admin/')),
+        isEmpty,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 Future<void> _openGymWizardAtLocation(WidgetTester tester) async {
@@ -1930,6 +2014,129 @@ class _TestTokens implements AuthTokenSource {
 
   @override
   Future<bool> refresh() async => false;
+}
+
+class _CentralOperationsApi extends ApiClient {
+  _CentralOperationsApi() : super(_TestTokens());
+
+  final List<String> pages = [];
+  final List<String> posts = [];
+  bool cashConfirmed = false;
+  bool reservationCompleted = false;
+
+  @override
+  Future<PagedData> page(
+    String path, {
+    Map<String, Object?> query = const {},
+  }) async {
+    pages.add(path);
+    if (path == '/api/admin/gyms') {
+      return const PagedData(
+        items: [
+          {
+            'id': 'gym-1',
+            'name': 'Aktivna teretana',
+            'address': 'Zmaja od Bosne 1',
+            'cityName': 'Sarajevo',
+            'status': 1,
+          },
+        ],
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
+      );
+    }
+    if (path == '/api/admin/gyms/gym-1/membership-requests') {
+      return PagedData(
+        items: [
+          {
+            'id': 'cash-request',
+            'memberDisplayName': 'Cash Member',
+            'memberEmail': 'cash@example.test',
+            'planName': 'Mjesečni',
+            'price': 50,
+            'currency': 'BAM',
+            'paymentMethod': 2,
+            'status': cashConfirmed ? 1 : 0,
+            'requestedAtUtc': '2026-09-01T08:00:00Z',
+            'membership': cashConfirmed
+                ? {
+                    'status': 1,
+                    'paymentStatus': null,
+                    'allowedActions': <String>[],
+                  }
+                : null,
+            'allowedActions': cashConfirmed
+                ? <String>[]
+                : <String>['confirmCashPayment'],
+            'concurrencyToken': 'cash-token',
+          },
+          {
+            'id': 'stripe-request',
+            'memberDisplayName': 'Stripe Member',
+            'memberEmail': 'stripe@example.test',
+            'planName': 'Godišnji',
+            'price': 500,
+            'currency': 'BAM',
+            'paymentMethod': 0,
+            'status': 1,
+            'requestedAtUtc': '2026-09-01T09:00:00Z',
+            'membership': {
+              'status': 1,
+              'paymentStatus': 2,
+              'allowedActions': <String>[],
+            },
+            'allowedActions': <String>[],
+            'concurrencyToken': 'stripe-token',
+          },
+        ],
+        page: 1,
+        pageSize: 20,
+        totalCount: 2,
+      );
+    }
+    if (path == '/api/admin/gyms/gym-1/reservations') {
+      return PagedData(
+        items: [
+          {
+            'id': 'reservation-1',
+            'memberName': 'Cash Member',
+            'trainerName': 'Trainer One',
+            'offeringName': 'Individualni trening',
+            'startsAtUtc': '2026-09-01T10:00:00Z',
+            'paymentMethod': 1,
+            'paymentStatus': null,
+            'status': reservationCompleted ? 2 : 1,
+            'allowedActions': reservationCompleted
+                ? <String>[]
+                : <String>['complete'],
+            'concurrencyToken': 'reservation-token',
+          },
+        ],
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
+      );
+    }
+    throw StateError('Unexpected page route: $path');
+  }
+
+  @override
+  Future<Object?> post(
+    String path, {
+    Object? body,
+    bool authenticated = true,
+  }) async {
+    posts.add(path);
+    if (path.endsWith('/confirm-cash')) {
+      cashConfirmed = true;
+    } else if (path.endsWith('/complete')) {
+      reservationCompleted = true;
+    } else {
+      throw StateError('Unexpected post route: $path');
+    }
+    return const <String, Object?>{};
+  }
 }
 
 class _ReportingApi extends ApiClient {

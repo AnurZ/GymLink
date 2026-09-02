@@ -179,6 +179,15 @@ public interface IReservationService
     Task<ReservationDto> ConfirmAsync(Guid id, ReservationConcurrencyRequest request, CancellationToken cancellationToken);
     Task<ReservationDto> CancelStaffAsync(Guid id, StaffCancellationRequest request, CancellationToken cancellationToken);
     Task<ReservationDto> CompleteAsync(Guid id, ReservationConcurrencyRequest request, CancellationToken cancellationToken);
+    Task<PagedResult<ReservationDto>> SearchAdminGymAsync(
+        Guid gymId,
+        ReservationSearchRequest request,
+        CancellationToken cancellationToken);
+    Task<ReservationDto> CompleteAdminGymAsync(
+        Guid gymId,
+        Guid id,
+        ReservationConcurrencyRequest request,
+        CancellationToken cancellationToken);
 }
 
 public interface IReviewService

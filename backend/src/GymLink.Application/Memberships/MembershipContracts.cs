@@ -171,6 +171,15 @@ public interface IMembershipRequestService
         Guid id,
         ReasonedConcurrencyRequest request,
         CancellationToken cancellationToken);
+    Task<PagedResult<MembershipRequestDto>> SearchAdminGymAsync(
+        Guid gymId,
+        MembershipRequestSearchRequest request,
+        CancellationToken cancellationToken);
+    Task<MembershipRequestDto> ConfirmCashAdminGymAsync(
+        Guid gymId,
+        Guid id,
+        ConcurrencyRequest request,
+        CancellationToken cancellationToken);
 }
 
 public interface IMembershipService
