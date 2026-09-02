@@ -813,6 +813,11 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
     if (saved && mounted) await _load();
   }
 
+  Future<void> _showReviews(Map<String, dynamic> trainer) => showDialog<void>(
+    context: context,
+    builder: (_) => _TrainerReviewsDialog(trainer: trainer),
+  );
+
   Future<void> _addTrainer() async {
     final api = context.read<ApiClient>();
     final created = await showDialog<Map<String, dynamic>>(
@@ -1027,6 +1032,12 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
+                                  IconButton(
+                                    key: Key('trainer-reviews-$id'),
+                                    tooltip: 'Pregledaj recenzije',
+                                    onPressed: () => _showReviews(item),
+                                    icon: const Icon(Icons.reviews_outlined),
+                                  ),
                                   StatusPill(
                                     item['isActive'] == true
                                         ? 'Active'
@@ -1160,6 +1171,165 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
       ],
     ),
   );
+}
+
+class _TrainerReviewsDialog extends StatefulWidget {
+  const _TrainerReviewsDialog({required this.trainer});
+
+  final Map<String, dynamic> trainer;
+
+  @override
+  State<_TrainerReviewsDialog> createState() => _TrainerReviewsDialogState();
+}
+
+class _TrainerReviewsDialogState extends State<_TrainerReviewsDialog> {
+  static const _pageSize = 10;
+
+  PagedData? _reviews;
+  bool _loading = true;
+  Object? _error;
+  int _requestedPage = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPage(1);
+  }
+
+  Future<void> _loadPage(int page) async {
+    setState(() {
+      _requestedPage = page;
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final reviews = await context.read<ApiClient>().page(
+        '/api/trainers/${widget.trainer['id']}/reviews',
+        query: {'page': page, 'pageSize': _pageSize},
+      );
+      if (!mounted) return;
+      setState(() => _reviews = reviews);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final averageRating = widget.trainer['averageRating'] ?? 0;
+    final reviewCount = (widget.trainer['reviewCount'] as num?)?.toInt() ?? 0;
+    final page = _reviews?.page ?? 1;
+    final totalPages = _reviews == null || _reviews!.totalCount == 0
+        ? 1
+        : (_reviews!.totalCount / _pageSize).ceil();
+    final canNavigate = !_loading && _error == null && _reviews != null;
+
+    return AlertDialog(
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Recenzije · ${widget.trainer['displayName']}',
+              key: const Key('trainer-reviews-title'),
+            ),
+          ),
+          CloseButton(onPressed: () => Navigator.pop(context)),
+        ],
+      ),
+      content: SizedBox(
+        width: 680,
+        height: 520,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Prosječna ocjena $averageRating · $reviewCount recenzija',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            Expanded(
+              child: AsyncPanel(
+                loading: _loading,
+                error: _error,
+                onRetry: () => _loadPage(_requestedPage),
+                child: _reviews == null || _reviews!.items.isEmpty
+                    ? const EmptyState('Još nema recenzija za ovog trenera.')
+                    : ListView.separated(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        itemCount: _reviews!.items.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        itemBuilder: (_, index) {
+                          final review = _reviews!.items[index];
+                          final rating =
+                              (review['rating'] as num?)?.toInt() ?? 0;
+                          final comment = review['comment']?.toString().trim();
+                          return ListTile(
+                            leading: CircleAvatar(child: Text('$rating')),
+                            title: Row(
+                              children: [
+                                const Icon(Icons.star, color: Colors.amber),
+                                const SizedBox(width: 6),
+                                Text('Ocjena $rating/5'),
+                              ],
+                            ),
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    comment == null || comment.isEmpty
+                                        ? 'Bez komentara'
+                                        : comment,
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    _dateTime(review['createdAtUtc']),
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ),
+            const Divider(height: 1),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Text('Stranica $page od $totalPages'),
+                IconButton(
+                  tooltip: 'Prethodna stranica recenzija',
+                  onPressed: canNavigate && page > 1
+                      ? () => _loadPage(page - 1)
+                      : null,
+                  icon: const Icon(Icons.chevron_left),
+                ),
+                IconButton(
+                  tooltip: 'Sljedeća stranica recenzija',
+                  onPressed:
+                      canNavigate &&
+                          page < totalPages &&
+                          page * _pageSize < _reviews!.totalCount
+                      ? () => _loadPage(page + 1)
+                      : null,
+                  icon: const Icon(Icons.chevron_right),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _TrainerAvatar extends StatelessWidget {

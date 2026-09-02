@@ -1792,6 +1792,125 @@ void main() {
     expect(find.byType(AlertDialog), findsOneWidget);
   });
 
+  testWidgets('GymAdmin pages through anonymous trainer review details', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final firstPage = List.generate(
+      10,
+      (index) => {
+        'id': 'review-$index',
+        'rating': index == 0 ? 5 : 4,
+        'comment': index == 1
+            ? null
+            : index == 0
+            ? 'Odličan individualni pristup i jasne upute.'
+            : 'Komentar $index',
+        'createdAtUtc': '2026-08-${20 - index}T10:30:00Z',
+        if (index == 0) 'reviewerName': 'Reviewer Secret',
+      },
+    );
+    final api = _GymAdminTrainerApi(
+      hasTrainer: true,
+      reviewPages: {
+        1: firstPage,
+        2: [
+          {
+            'id': 'review-10',
+            'rating': 3,
+            'comment': 'Napredak je bio vidljiv.',
+            'createdAtUtc': '2026-08-01T09:00:00Z',
+          },
+        ],
+      },
+      reviewTotalCount: 11,
+      reviewDelay: const Duration(milliseconds: 100),
+    );
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: TrainerManagementScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('trainer-reviews-trainer-1')));
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(
+      tester
+          .widget<IconButton>(
+            find.widgetWithIcon(IconButton, Icons.chevron_right),
+          )
+          .onPressed,
+      isNull,
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    expect(api.reviewQueries.first, {'page': 1, 'pageSize': 10});
+    expect(find.text('Recenzije · Active Member'), findsOneWidget);
+    expect(find.text('Prosječna ocjena 4.5 · 11 recenzija'), findsOneWidget);
+    expect(
+      find.text('Odličan individualni pristup i jasne upute.'),
+      findsOneWidget,
+    );
+    expect(find.text('Bez komentara'), findsOneWidget);
+    expect(find.text('Reviewer Secret'), findsNothing);
+    expect(find.text('Stranica 1 od 2'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Sljedeća stranica recenzija'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    expect(api.reviewQueries.last, {'page': 2, 'pageSize': 10});
+    expect(find.text('Napredak je bio vidljiv.'), findsOneWidget);
+    expect(find.text('Stranica 2 od 2'), findsOneWidget);
+
+    await tester.tap(find.byType(CloseButton));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('trainer-reviews-title')), findsNothing);
+  });
+
+  testWidgets('Inactive trainer review dialog retries into an empty state', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _GymAdminTrainerApi(
+      hasTrainer: true,
+      active: false,
+      reviewFailures: 1,
+    );
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: TrainerManagementScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Inactive'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('trainer-reviews-trainer-1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Recenzije trenutno nisu dostupne.'), findsOneWidget);
+
+    await tester.tap(find.text('Pokušaj ponovo'));
+    await tester.pumpAndSettle();
+    expect(find.text('Još nema recenzija za ovog trenera.'), findsOneWidget);
+    expect(api.reviewQueries.length, 2);
+  });
+
   testWidgets('GymAdmin profile renders the ordered gallery controls', (
     tester,
   ) async {
@@ -3024,21 +3143,53 @@ class _GymAdminMembershipRequestsApi extends ApiClient {
 }
 
 class _GymAdminTrainerApi extends ApiClient {
-  _GymAdminTrainerApi({bool hasTrainer = false, this.lifecycleProblem})
-    : _promoted = hasTrainer,
-      super(_TestTokens());
+  _GymAdminTrainerApi({
+    bool hasTrainer = false,
+    this.active = true,
+    this.lifecycleProblem,
+    this.reviewPages = const {},
+    this.reviewTotalCount = 0,
+    this.reviewDelay = Duration.zero,
+    this.reviewFailures = 0,
+  }) : _promoted = hasTrainer,
+       super(_TestTokens());
 
   Map<String, dynamic>? promotionBody;
   final ApiProblem? lifecycleProblem;
+  final Map<int, List<Map<String, dynamic>>> reviewPages;
+  final int reviewTotalCount;
+  final Duration reviewDelay;
+  final List<Map<String, Object?>> reviewQueries = [];
   final List<(String, Map<String, dynamic>)> lifecycleRequests = [];
+  int reviewFailures;
   bool _promoted;
-  bool _active = true;
+  bool active;
 
   @override
   Future<PagedData> page(
     String path, {
     Map<String, Object?> query = const {},
   }) async {
+    if (path == '/api/trainers/trainer-1/reviews') {
+      reviewQueries.add(Map<String, Object?>.from(query));
+      if (reviewDelay > Duration.zero) await Future<void>.delayed(reviewDelay);
+      if (reviewFailures > 0) {
+        reviewFailures--;
+        throw const ApiProblem(
+          status: 503,
+          code: 'reviews_unavailable',
+          message: 'Recenzije trenutno nisu dostupne.',
+        );
+      }
+      final page = (query['page'] as num?)?.toInt() ?? 1;
+      final pageSize = (query['pageSize'] as num?)?.toInt() ?? 10;
+      return PagedData(
+        items: reviewPages[page] ?? const [],
+        page: page,
+        pageSize: pageSize,
+        totalCount: reviewTotalCount,
+      );
+    }
     if (path == '/api/tenant/trainers') {
       return PagedData(
         items: _promoted
@@ -3047,8 +3198,9 @@ class _GymAdminTrainerApi extends ApiClient {
                   'id': 'trainer-1',
                   'displayName': 'Active Member',
                   'credentials': null,
-                  'averageRating': 0,
-                  'isActive': _active,
+                  'averageRating': reviewTotalCount == 0 ? 0 : 4.5,
+                  'reviewCount': reviewTotalCount,
+                  'isActive': active,
                 },
               ]
             : const [],
@@ -3104,7 +3256,7 @@ class _GymAdminTrainerApi extends ApiClient {
     if (path == '/api/tenant/trainers') {
       promotionBody = Map<String, dynamic>.from(body! as Map);
       _promoted = true;
-      _active = true;
+      active = true;
       return const {
         'id': 'trainer-1',
         'displayName': 'Active Member',
@@ -3115,11 +3267,11 @@ class _GymAdminTrainerApi extends ApiClient {
         path == '/api/tenant/trainers/trainer-1/reactivate') {
       lifecycleRequests.add((path, Map<String, dynamic>.from(body! as Map)));
       if (lifecycleProblem case final problem?) throw problem;
-      _active = path.endsWith('/reactivate');
+      active = path.endsWith('/reactivate');
       return {
         'id': 'trainer-1',
         'displayName': 'Active Member',
-        'isActive': _active,
+        'isActive': active,
       };
     }
     throw StateError('Unexpected post request: $path');

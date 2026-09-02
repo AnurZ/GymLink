@@ -9,6 +9,7 @@ using GymLink.Application.Catalog;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.Recommendations;
+using GymLink.Application.Reservations;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
 using GymLink.Domain.Tenancy;
@@ -25,6 +26,85 @@ public sealed class SeededIdentityApiTests
 {
     private const string Password = "Test123!";
     private const string SigningKey = "integration-test-signing-key-at-least-32-bytes";
+    private static readonly JsonSerializerOptions WebJsonOptions =
+        new(JsonSerializerDefaults.Web);
+
+    [Fact]
+    public async Task Gym_admin_can_read_anonymous_reviews_for_an_inactive_tenant_trainer()
+    {
+        var databaseName = $"GymLink_InactiveTrainerReviews_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+        try
+        {
+            await using (var migrationContext = CreateContext(connectionString))
+            {
+                await migrationContext.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            var gymAdmin = await LoginAsync(client, "admin.respect");
+            var otherGymAdmin = await LoginAsync(client, "admin.oxide");
+            var member = await LoginAsync(client, "mobile1");
+            var trainer = await LoginAsync(client, "respecttrainer1");
+
+            Guid trainerProfileId;
+            List<Guid> expectedReviewIds;
+            await using (var baseline = CreateContext(connectionString))
+            {
+                trainerProfileId = await baseline.TrainerProfiles.IgnoreQueryFilters()
+                    .Where(item => item.UserId == trainer.User.Id)
+                    .Select(item => item.Id)
+                    .SingleAsync();
+                expectedReviewIds = await baseline.Reviews.IgnoreQueryFilters()
+                    .Where(item => item.TrainerProfileId == trainerProfileId)
+                    .OrderByDescending(item => item.CreatedAtUtc)
+                    .ThenBy(item => item.Id)
+                    .Select(item => item.Id)
+                    .ToListAsync();
+            }
+            Assert.NotEmpty(expectedReviewIds);
+
+            Authorize(client, gymAdmin);
+            var deactivate = await client.PostAsJsonAsync(
+                $"/api/tenant/trainers/{trainerProfileId}/deactivate",
+                new { reason = "Trainer is temporarily unavailable" });
+            deactivate.EnsureSuccessStatusCode();
+
+            var response = await client.GetAsync(
+                $"/api/trainers/{trainerProfileId}/reviews?page=1&pageSize=2");
+            response.EnsureSuccessStatusCode();
+            var json = await response.Content.ReadAsStringAsync();
+            var reviews = JsonSerializer.Deserialize<PagedResult<ReviewDto>>(
+                json,
+                WebJsonOptions);
+            Assert.NotNull(reviews);
+            Assert.Equal(1, reviews.Page);
+            Assert.Equal(2, reviews.PageSize);
+            Assert.Equal(expectedReviewIds.Count, reviews.TotalCount);
+            Assert.Equal(expectedReviewIds.Take(2), reviews.Items.Select(item => item.Id));
+            Assert.All(reviews.Items, item => Assert.InRange(item.Rating, 1, 5));
+            Assert.DoesNotContain("reviewerUserId", json, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("reservationId", json, StringComparison.OrdinalIgnoreCase);
+
+            Authorize(client, otherGymAdmin);
+            Assert.Equal(
+                HttpStatusCode.NotFound,
+                (await client.GetAsync(
+                    $"/api/trainers/{trainerProfileId}/reviews?page=1&pageSize=10")).StatusCode);
+
+            Authorize(client, member);
+            Assert.Equal(
+                HttpStatusCode.NotFound,
+                (await client.GetAsync(
+                    $"/api/trainers/{trainerProfileId}/reviews?page=1&pageSize=10")).StatusCode);
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
 
     [Fact]
     public async Task Central_admin_trainer_revocation_and_account_deactivation_use_reversible_lifecycle()

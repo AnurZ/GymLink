@@ -1765,6 +1765,7 @@ internal sealed class ReviewService(
     IApplicationDbContext dbContext,
     IApplicationTransaction transaction,
     ICurrentUser currentUser,
+    ITenantContext tenantContext,
     IIdentityAccountManager accounts,
     ITenantMutationScope tenantMutationScope,
     IReservationWorkflowEventRecorder eventRecorder,
@@ -1834,7 +1835,7 @@ internal sealed class ReviewService(
         ReviewSearchRequest request,
         CancellationToken cancellationToken)
     {
-        await EnsurePublicTrainerAsync(trainerId, cancellationToken);
+        await EnsureTrainerReviewsReadableAsync(trainerId, cancellationToken);
         return await dbContext.Reviews.IgnoreQueryFilters().AsNoTracking()
             .Where(x => x.TrainerProfileId == trainerId)
             .OrderByDescending(x => x.CreatedAtUtc).ThenBy(x => x.Id)
@@ -1930,8 +1931,21 @@ internal sealed class ReviewService(
             .ToPagedResultAsync(request, cancellationToken);
     }
 
-    private async Task EnsurePublicTrainerAsync(Guid trainerId, CancellationToken cancellationToken)
+    private async Task EnsureTrainerReviewsReadableAsync(
+        Guid trainerId,
+        CancellationToken cancellationToken)
     {
+        if (currentUser.IsAuthenticated &&
+            tenantContext.TenantRole == RoleNames.GymAdmin &&
+            tenantContext.TenantId.HasValue &&
+            await dbContext.TrainerProfiles.IgnoreQueryFilters().AsNoTracking()
+                .AnyAsync(
+                    x => x.Id == trainerId && x.TenantId == tenantContext.TenantId.Value,
+                    cancellationToken))
+        {
+            return;
+        }
+
         var trainer = await dbContext.CanonicalActiveTrainers()
             .SingleOrDefaultAsync(x => x.Id == trainerId, cancellationToken)
             ?? throw new NotFoundException("trainer_not_found", "The trainer was not found.");
