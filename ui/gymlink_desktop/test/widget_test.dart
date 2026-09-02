@@ -1667,6 +1667,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('Nema dodijeljenih trenera.'), findsOneWidget);
+    expect(find.text('Nema definisanih usluga.'), findsOneWidget);
     await tester.tap(find.text('Dodaj trenera'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Active Member'), findsOneWidget);
@@ -1695,6 +1697,153 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('add-offering-trainer-1')), findsOneWidget);
   });
+
+  testWidgets(
+    'Trainer Management filters both loaded lists independently without API calls',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _GymAdminTrainerApi(
+        trainerItems: const [
+          {
+            'id': 'trainer-1',
+            'displayName': 'Amela Hadžić',
+            'credentials': 'Kondicioni trener',
+            'averageRating': 4.8,
+            'reviewCount': 12,
+            'isActive': true,
+          },
+          {
+            'id': 'trainer-2',
+            'displayName': 'BORIS Kovač',
+            'credentials': 'Yoga instruktor',
+            'averageRating': 4.6,
+            'reviewCount': 9,
+            'isActive': true,
+          },
+          {
+            'id': 'trainer-3',
+            'displayName': 'Cedomir Marić',
+            'credentials': 'Strength coach',
+            'averageRating': 4.4,
+            'reviewCount': 7,
+            'isActive': true,
+          },
+        ],
+        offeringItems: const [
+          {
+            'id': 'offering-1',
+            'trainerProfileId': 'trainer-1',
+            'name': 'Individualni trening',
+            'trainingType': 'Funkcionalni trening',
+            'durationMinutes': 60,
+            'price': 30,
+            'currency': 'BAM',
+            'isActive': true,
+          },
+          {
+            'id': 'offering-2',
+            'trainerProfileId': 'trainer-2',
+            'name': 'Jutarnji flow',
+            'trainingType': 'Yoga',
+            'durationMinutes': 45,
+            'price': 25,
+            'currency': 'BAM',
+            'isActive': true,
+          },
+          {
+            'id': 'offering-3',
+            'trainerProfileId': 'trainer-3',
+            'name': 'Kettlebell osnove',
+            'trainingType': 'Snaga',
+            'durationMinutes': 50,
+            'price': 28,
+            'currency': 'BAM',
+            'isActive': true,
+          },
+        ],
+      );
+      await tester.pumpWidget(
+        Provider<ApiClient>.value(
+          value: api,
+          child: MaterialApp(
+            theme: buildGymLinkTheme(),
+            home: const Scaffold(body: TrainerManagementScreen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(api.pageRequests, hasLength(2));
+      expect(find.text('Amela Hadžić'), findsOneWidget);
+      expect(find.text('BORIS Kovač'), findsOneWidget);
+      expect(find.text('Individualni trening'), findsOneWidget);
+      expect(find.text('Jutarnji flow'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const Key('trainer-management-trainer-search')),
+        'aMeLa',
+      );
+      await tester.pump();
+      expect(find.text('Amela Hadžić'), findsOneWidget);
+      expect(find.text('BORIS Kovač'), findsNothing);
+      expect(find.text('Individualni trening'), findsOneWidget);
+      expect(find.text('Jutarnji flow'), findsOneWidget);
+      expect(find.byTooltip('Radnje trenera'), findsOneWidget);
+      expect(find.byKey(const Key('add-offering-trainer-1')), findsNothing);
+
+      await tester.enterText(
+        find.byKey(const Key('trainer-management-offering-search')),
+        'boris',
+      );
+      await tester.pump();
+      expect(find.text('Jutarnji flow'), findsOneWidget);
+      expect(find.text('Individualni trening'), findsNothing);
+      expect(find.text('Kettlebell osnove'), findsNothing);
+      expect(find.text('Amela Hadžić'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const Key('trainer-management-offering-search')),
+        'SNAGA',
+      );
+      await tester.pump();
+      expect(find.text('Kettlebell osnove'), findsOneWidget);
+      expect(find.text('Jutarnji flow'), findsNothing);
+
+      await tester.enterText(
+        find.byKey(const Key('trainer-management-trainer-search')),
+        'nepostojeći trener',
+      );
+      await tester.enterText(
+        find.byKey(const Key('trainer-management-offering-search')),
+        'nepostojeća usluga',
+      );
+      await tester.pump();
+      expect(
+        find.text('Nema trenera koji odgovaraju pretrazi.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Nema usluga koje odgovaraju pretrazi.'),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(const Key('trainer-management-trainer-search-clear')),
+      );
+      await tester.tap(
+        find.byKey(const Key('trainer-management-offering-search-clear')),
+      );
+      await tester.pump();
+      expect(find.text('Amela Hadžić'), findsOneWidget);
+      expect(find.text('BORIS Kovač'), findsOneWidget);
+      expect(find.text('Individualni trening'), findsOneWidget);
+      expect(find.text('Jutarnji flow'), findsOneWidget);
+      expect(api.pageRequests, hasLength(2));
+    },
+  );
 
   testWidgets('GymAdmin deactivates and reactivates a trainer with a reason', (
     tester,
@@ -3150,6 +3299,8 @@ class _GymAdminMembershipRequestsApi extends ApiClient {
 class _GymAdminTrainerApi extends ApiClient {
   _GymAdminTrainerApi({
     bool hasTrainer = false,
+    this.trainerItems,
+    this.offeringItems,
     this.active = true,
     this.lifecycleProblem,
     this.reviewPages = const {},
@@ -3160,11 +3311,14 @@ class _GymAdminTrainerApi extends ApiClient {
        super(_TestTokens());
 
   Map<String, dynamic>? promotionBody;
+  final List<Map<String, dynamic>>? trainerItems;
+  final List<Map<String, dynamic>>? offeringItems;
   final ApiProblem? lifecycleProblem;
   final Map<int, List<Map<String, dynamic>>> reviewPages;
   final int reviewTotalCount;
   final Duration reviewDelay;
   final List<Map<String, Object?>> reviewQueries = [];
+  final List<(String, Map<String, Object?>)> pageRequests = [];
   final List<(String, Map<String, dynamic>)> lifecycleRequests = [];
   int reviewFailures;
   bool _promoted;
@@ -3175,6 +3329,7 @@ class _GymAdminTrainerApi extends ApiClient {
     String path, {
     Map<String, Object?> query = const {},
   }) async {
+    pageRequests.add((path, Map<String, Object?>.from(query)));
     if (path == '/api/trainers/trainer-1/reviews') {
       reviewQueries.add(Map<String, Object?>.from(query));
       if (reviewDelay > Duration.zero) await Future<void>.delayed(reviewDelay);
@@ -3196,6 +3351,14 @@ class _GymAdminTrainerApi extends ApiClient {
       );
     }
     if (path == '/api/tenant/trainers') {
+      if (trainerItems case final items?) {
+        return PagedData(
+          items: items,
+          page: 1,
+          pageSize: 20,
+          totalCount: items.length,
+        );
+      }
       return PagedData(
         items: _promoted
             ? [
@@ -3215,7 +3378,13 @@ class _GymAdminTrainerApi extends ApiClient {
       );
     }
     if (path == '/api/tenant/trainer-offerings') {
-      return const PagedData(items: [], page: 1, pageSize: 50, totalCount: 0);
+      final items = offeringItems ?? const <Map<String, dynamic>>[];
+      return PagedData(
+        items: items,
+        page: 1,
+        pageSize: 20,
+        totalCount: items.length,
+      );
     }
     if (path == '/api/tenant/trainer-candidates') {
       return const PagedData(

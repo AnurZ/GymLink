@@ -759,6 +759,8 @@ class TrainerManagementScreen extends StatefulWidget {
 class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
   List<Map<String, dynamic>> _trainers = const [];
   List<Map<String, dynamic>> _offerings = const [];
+  final _trainerSearch = TextEditingController();
+  final _offeringSearch = TextEditingController();
   bool _loading = true;
   final Set<String> _imageBusy = {};
   Object? _error;
@@ -768,6 +770,72 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
     super.initState();
     _load();
   }
+
+  @override
+  void dispose() {
+    _trainerSearch.dispose();
+    _offeringSearch.dispose();
+    super.dispose();
+  }
+
+  List<Map<String, dynamic>> get _visibleTrainers {
+    final query = _trainerSearch.text.trim().toLowerCase();
+    if (query.isEmpty) return _trainers;
+    return _trainers
+        .where(
+          (trainer) =>
+              trainer['displayName'].toString().toLowerCase().contains(query),
+        )
+        .toList();
+  }
+
+  Map<String, dynamic>? _trainerForOffering(Map<String, dynamic> offering) =>
+      _trainers
+          .where((trainer) => trainer['id'] == offering['trainerProfileId'])
+          .firstOrNull;
+
+  List<Map<String, dynamic>> get _visibleOfferings {
+    final query = _offeringSearch.text.trim().toLowerCase();
+    if (query.isEmpty) return _offerings;
+    return _offerings.where((offering) {
+      final trainerName =
+          _trainerForOffering(offering)?['displayName']?.toString() ?? '';
+      return [
+        offering['name'],
+        offering['trainingType'],
+        trainerName,
+      ].any((value) => value.toString().toLowerCase().contains(query));
+    }).toList();
+  }
+
+  Widget _searchField({
+    required Key key,
+    required TextEditingController controller,
+    required String hintText,
+    required Key clearKey,
+  }) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+    child: TextField(
+      key: key,
+      controller: controller,
+      onChanged: (_) => setState(() {}),
+      decoration: InputDecoration(
+        hintText: hintText,
+        prefixIcon: const Icon(Icons.search),
+        suffixIcon: controller.text.isEmpty
+            ? null
+            : IconButton(
+                key: clearKey,
+                tooltip: 'Očisti pretragu',
+                onPressed: () {
+                  controller.clear();
+                  setState(() {});
+                },
+                icon: const Icon(Icons.clear),
+              ),
+      ),
+    ),
+  );
 
   Future<void> _load() async {
     setState(() => _loading = true);
@@ -993,14 +1061,27 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
                   ),
                 ),
                 const Divider(height: 1),
+                _searchField(
+                  key: const Key('trainer-management-trainer-search'),
+                  controller: _trainerSearch,
+                  hintText: 'Pretraži trenere po imenu...',
+                  clearKey: const Key(
+                    'trainer-management-trainer-search-clear',
+                  ),
+                ),
+                const Divider(height: 1),
                 Expanded(
                   child: _trainers.isEmpty
                       ? const EmptyState('Nema dodijeljenih trenera.')
+                      : _visibleTrainers.isEmpty
+                      ? const EmptyState(
+                          'Nema trenera koji odgovaraju pretrazi.',
+                        )
                       : ListView.separated(
-                          itemCount: _trainers.length,
+                          itemCount: _visibleTrainers.length,
                           separatorBuilder: (_, _) => const Divider(height: 1),
                           itemBuilder: (_, index) {
-                            final item = _trainers[index];
+                            final item = _visibleTrainers[index];
                             final id = item['id'].toString();
                             final hasActiveOffering = _offerings.any(
                               (offering) =>
@@ -1130,20 +1211,28 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
                   ),
                 ),
                 const Divider(height: 1),
+                _searchField(
+                  key: const Key('trainer-management-offering-search'),
+                  controller: _offeringSearch,
+                  hintText: 'Pretraži usluge, vrste treninga ili trenere...',
+                  clearKey: const Key(
+                    'trainer-management-offering-search-clear',
+                  ),
+                ),
+                const Divider(height: 1),
                 Expanded(
                   child: _offerings.isEmpty
                       ? const EmptyState('Nema definisanih usluga.')
+                      : _visibleOfferings.isEmpty
+                      ? const EmptyState(
+                          'Nema usluga koje odgovaraju pretrazi.',
+                        )
                       : ListView.separated(
-                          itemCount: _offerings.length,
+                          itemCount: _visibleOfferings.length,
                           separatorBuilder: (_, _) => const Divider(height: 1),
                           itemBuilder: (_, index) {
-                            final item = _offerings[index];
-                            final trainer = _trainers
-                                .where(
-                                  (trainer) =>
-                                      trainer['id'] == item['trainerProfileId'],
-                                )
-                                .firstOrNull;
+                            final item = _visibleOfferings[index];
+                            final trainer = _trainerForOffering(item);
                             return ListTile(
                               title: Text(item['name'].toString()),
                               subtitle: Text(
