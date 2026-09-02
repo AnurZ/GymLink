@@ -19,14 +19,7 @@ const _reservationStatuses = [
   'Završena',
   'Otkazana',
 ];
-const _paymentStatuses = [
-  'Kreirano',
-  'U obradi',
-  'Uspješno',
-  'Neuspješno',
-  'Djelimično refundirano',
-  'Refundirano',
-];
+const _paymentStatuses = ['Kreirano', 'U obradi', 'Uspješno', 'Neuspješno'];
 const _tenantStatuses = [
   'Čeka aktivaciju',
   'Aktivna',

@@ -8,6 +8,7 @@ using GymLink.Domain.Reservations;
 using GymLink.Domain.Tenancy;
 using GymLink.Domain.Trainers;
 using GymLink.Domain.Identity;
+using GymLink.Domain.Enums;
 using GymLink.Infrastructure.Identity;
 using GymLink.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
@@ -120,7 +121,6 @@ public sealed class EfModelTests
         using var context = CreateContext(Guid.NewGuid());
 
         AssertPrecision(context, typeof(Payment), nameof(Payment.Amount), 18, 2);
-        AssertPrecision(context, typeof(Refund), nameof(Refund.Amount), 18, 2);
         AssertPrecision(context, typeof(Membership), nameof(Membership.Price), 18, 2);
         AssertPrecision(
             context,
@@ -128,6 +128,20 @@ public sealed class EfModelTests
             nameof(AppointmentReservation.Price),
             18,
             2);
+    }
+
+    [Fact]
+    public void Refund_persistence_and_payment_refund_statuses_are_absent()
+    {
+        using var context = CreateContext(Guid.NewGuid());
+
+        Assert.DoesNotContain(
+            context.Model.GetEntityTypes(),
+            entityType => entityType.ClrType.Name.Equals("Refund", StringComparison.Ordinal) ||
+                entityType.GetTableName()?.Equals("Refunds", StringComparison.Ordinal) == true);
+        Assert.Equal(
+            ["Created", "Processing", "Succeeded", "Failed"],
+            Enum.GetNames<PaymentStatus>());
     }
 
     [Fact]

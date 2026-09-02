@@ -580,6 +580,8 @@ void main() {
       expect(find.text('Plati uživo'), findsWidgets);
       expect(find.text('Stripe'), findsWidgets);
       expect(find.text('Stripe fallback'), findsNothing);
+      expect(find.text('PartiallyRefunded'), findsNothing);
+      expect(find.text('Refunded'), findsNothing);
       await tester.tap(
         find.byKey(const Key('membership-payment-method-filter')),
       );
@@ -2029,6 +2031,8 @@ void main() {
 
       expect(find.text('Čeka potvrdu uplate'), findsOneWidget);
       expect(find.text('Uspješno'), findsOneWidget);
+      expect(find.text('Djelimično refundirano'), findsNothing);
+      expect(find.text('Refundirano'), findsNothing);
       expect(
         find.byKey(const Key('central-confirm-cash-cash-request')),
         findsOneWidget,

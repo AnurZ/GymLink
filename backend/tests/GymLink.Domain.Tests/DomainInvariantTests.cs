@@ -290,15 +290,6 @@ public sealed class DomainInvariantTests
     }
 
     [Fact]
-    public void Refund_cannot_exceed_charged_amount()
-    {
-        Refund.EnsureTotalDoesNotExceedChargedAmount(100, 25, 75);
-
-        Assert.Throws<DomainException>(() =>
-            Refund.EnsureTotalDoesNotExceedChargedAmount(100, 25, 76));
-    }
-
-    [Fact]
     public void Payment_requires_server_amount_and_verified_provider_confirmation()
     {
         var ids = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();

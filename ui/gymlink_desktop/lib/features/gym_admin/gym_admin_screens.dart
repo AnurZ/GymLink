@@ -18,14 +18,7 @@ const _membershipStatuses = [
   'Cancelled',
   'Suspended',
 ];
-const _paymentStatuses = [
-  'Created',
-  'Processing',
-  'Succeeded',
-  'Failed',
-  'PartiallyRefunded',
-  'Refunded',
-];
+const _paymentStatuses = ['Created', 'Processing', 'Succeeded', 'Failed'];
 const _reservationStatuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
 const _visibleReservationStatuses = [1, 2, 3];
 

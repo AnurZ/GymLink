@@ -70,7 +70,6 @@ public sealed class GymLinkDbContext(
     public DbSet<Recommendation> Recommendations => Set<Recommendation>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<StripeEventReceipt> StripeEventReceipts => Set<StripeEventReceipt>();
-    public DbSet<Refund> Refunds => Set<Refund>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
