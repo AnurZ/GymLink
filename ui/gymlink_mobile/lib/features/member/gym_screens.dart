@@ -41,7 +41,6 @@ class _GymDiscoveryScreenState extends State<GymDiscoveryScreen> {
     try {
       final data = await context.read<ApiClient>().page(
         '/api/gyms',
-        authenticated: false,
         query: {'query': _search.text.trim()},
       );
       _data = data;
@@ -713,18 +712,16 @@ class _GymDetailsScreenState extends State<GymDetailsScreen> {
     try {
       final api = context.read<ApiClient>();
       final results = await Future.wait([
-        api.get('/api/gyms/${widget.gymId}', authenticated: false),
+        api.get('/api/gyms/${widget.gymId}'),
         api.page(
           '/api/gyms/${widget.gymId}/membership-plans',
           query: const {'page': 1, 'pageSize': 100},
-          authenticated: false,
         ),
         api.page(
           '/api/gyms/${widget.gymId}/trainers',
           query: const {'page': 1, 'pageSize': 100},
-          authenticated: false,
         ),
-        api.page('/api/gyms/${widget.gymId}/reviews', authenticated: false),
+        api.page('/api/gyms/${widget.gymId}/reviews'),
         api.page(
           '/api/me/memberships',
           query: {'gymId': widget.gymId, 'currentOnly': true},
@@ -1192,7 +1189,6 @@ class _BookingScreenState extends State<BookingScreen> {
       final offerings = await api.page(
         '/api/trainers/${widget.trainer['id']}/offerings',
         query: const {'page': 1, 'pageSize': 100},
-        authenticated: false,
       );
       _offerings = offerings.items
           .where((item) => item['isActive'] == true)
@@ -1227,7 +1223,6 @@ class _BookingScreenState extends State<BookingScreen> {
       final result = Map<String, dynamic>.from(
         (await context.read<ApiClient>().get(
               '/api/trainers/${widget.trainer['id']}/availability-calendar',
-              authenticated: false,
               query: {
                 'trainerServiceOfferingId': offering['id'],
                 'fromLocalDate': _dateKey(first),

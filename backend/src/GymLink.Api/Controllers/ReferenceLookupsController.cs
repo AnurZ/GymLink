@@ -6,7 +6,7 @@ namespace GymLink.Api.Controllers;
 
 [ApiController]
 [Route("api/reference-data")]
-[AllowAnonymous]
+[Authorize]
 public sealed class ReferenceLookupsController(IReferenceDataService service) : ControllerBase
 {
     [HttpGet("lookups")]

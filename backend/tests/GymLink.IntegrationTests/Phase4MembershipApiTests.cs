@@ -41,8 +41,8 @@ public sealed class Phase4MembershipApiTests
             await using var factory = CreateFactory(connectionString);
             using var client = factory.CreateClient();
             var member = await RegisterAsync(client);
-            var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
             Authorize(client, member);
+            var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
 
             var checkout = await client.PostAsJsonAsync(
                 "/api/payments/memberships/checkout",
@@ -95,8 +95,8 @@ public sealed class Phase4MembershipApiTests
             await using var factory = CreateFactory(connectionString);
             using var client = factory.CreateClient();
             var member = await RegisterAsync(client);
-            var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
             Authorize(client, member);
+            var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
 
             var legacyMethod = await client.PostAsJsonAsync(
                 "/api/membership-requests",
@@ -151,6 +151,7 @@ public sealed class Phase4MembershipApiTests
             var member = await RegisterAsync(client, "Role Test Member");
             var sarajevoAdmin = await LoginAsync(client, "admin.respect");
             var mostarAdmin = await LoginAsync(client, "admin.arena");
+            Authorize(client, member);
             var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
 
             Authorize(client, member);
@@ -259,7 +260,7 @@ public sealed class Phase4MembershipApiTests
             Assert.Equal(trainer.Id, inactiveTrainer.Id);
             Assert.False(inactiveTrainer.IsActive);
 
-            client.DefaultRequestHeaders.Authorization = null;
+            Authorize(client, sarajevoAdmin);
             var hiddenTrainers = await client.GetFromJsonAsync<PagedResult<TrainerDto>>(
                 $"/api/gyms/{gymId}/trainers?page=1&pageSize=50");
             Assert.NotNull(hiddenTrainers);
@@ -297,7 +298,7 @@ public sealed class Phase4MembershipApiTests
             Assert.True(activeTrainer.IsActive);
             Assert.Equal(trainer.TrainingTypeIds, activeTrainer.TrainingTypeIds);
 
-            client.DefaultRequestHeaders.Authorization = null;
+            Authorize(client, sarajevoAdmin);
             var visibleTrainers = await client.GetFromJsonAsync<PagedResult<TrainerDto>>(
                 $"/api/gyms/{gymId}/trainers?page=1&pageSize=50");
             Assert.NotNull(visibleTrainers);
@@ -411,6 +412,7 @@ public sealed class Phase4MembershipApiTests
             var member = await RegisterAsync(client);
             var sarajevoAdmin = await LoginAsync(client, "admin.respect");
             var mostarAdmin = await LoginAsync(client, "admin.arena");
+            Authorize(client, member);
             var sarajevoPlanId = await FindPlanAsync(client, "Sportska Akademija Respect");
             var mostarPlanId = await FindPlanAsync(client, "Arena Sport Centar");
 
@@ -574,6 +576,7 @@ public sealed class Phase4MembershipApiTests
             Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
             var member = await RegisterAsync(client);
             var admin = await LoginAsync(client, "admin.respect");
+            Authorize(client, member);
             var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
 
             Authorize(client, member);
@@ -629,6 +632,7 @@ public sealed class Phase4MembershipApiTests
             var numericMember = await RegisterAsync(client, "Numeric Cash Member");
             var stripeMember = await RegisterAsync(client, "Stripe Membership Member");
             var admin = await LoginAsync(client, "admin.respect");
+            Authorize(client, numericMember);
             var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
 
             Authorize(client, numericMember);
@@ -769,8 +773,8 @@ public sealed class Phase4MembershipApiTests
             await using var factory = CreateFactory(connectionString);
             using var client = factory.CreateClient();
             var member = await RegisterAsync(client, "Lazy Expiry Member");
-            var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
             Authorize(client, member);
+            var planId = await FindPlanAsync(client, "Sportska Akademija Respect");
             (await client.PostAsJsonAsync(
                 "/api/payments/memberships/checkout",
                 new { membershipPlanId = planId })).EnsureSuccessStatusCode();
@@ -826,6 +830,7 @@ public sealed class Phase4MembershipApiTests
             await using var factory = CreateFactory(connectionString);
             using var client = factory.CreateClient();
             var member = await RegisterAsync(client, "Worker Expiry Member");
+            Authorize(client, member);
             var respectPlanId = await FindPlanAsync(client, "Sportska Akademija Respect");
             var arenaPlanId = await FindPlanAsync(client, "Arena Sport Centar");
 
@@ -925,7 +930,6 @@ public sealed class Phase4MembershipApiTests
 
     private static async Task<Guid> FindPlanAsync(HttpClient client, string gymName)
     {
-        client.DefaultRequestHeaders.Authorization = null;
         using var gyms = JsonDocument.Parse(
             await client.GetStringAsync($"/api/gyms?query={Uri.EscapeDataString(gymName)}"));
         var gymId = gyms.RootElement.GetProperty("items")[0].GetProperty("id").GetGuid();

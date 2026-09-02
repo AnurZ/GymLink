@@ -917,8 +917,7 @@ class _TrainerOfferingsScreenState extends State<TrainerOfferingsScreen> {
     final api = context.read<ApiClient>();
     try {
       final lookups = Map<String, dynamic>.from(
-        (await api.get('/api/reference-data/lookups', authenticated: false))!
-            as Map,
+        (await api.get('/api/reference-data/lookups'))! as Map,
       );
       if (!mounted) return;
       final created = await showDialog<bool>(
@@ -1208,10 +1207,7 @@ class _TrainerReviewsScreenState extends State<TrainerReviewsScreen> {
       if (trainerId == null || trainerId.isEmpty) {
         throw StateError('Aktivan profil trenera nije pronađen.');
       }
-      _items = (await api.page(
-        '/api/trainers/$trainerId/reviews',
-        authenticated: false,
-      )).items;
+      _items = (await api.page('/api/trainers/$trainerId/reviews')).items;
     } catch (error) {
       _error = error;
     } finally {

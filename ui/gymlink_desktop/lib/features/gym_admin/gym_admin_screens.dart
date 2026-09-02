@@ -937,8 +937,7 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
     final api = context.read<ApiClient>();
     try {
       final lookups = Map<String, dynamic>.from(
-        (await api.get('/api/reference-data/lookups', authenticated: false))!
-            as Map,
+        (await api.get('/api/reference-data/lookups'))! as Map,
       );
       if (!mounted) return;
       final saved = await showDialog<bool>(
@@ -1967,7 +1966,7 @@ class _GymCatalogScreenState extends State<GymCatalogScreen> {
       final results = await Future.wait([
         api.get('/api/tenant/gym'),
         api.page('/api/tenant/membership-plans'),
-        api.get('/api/reference-data/lookups', authenticated: false),
+        api.get('/api/reference-data/lookups'),
       ]);
       _gym = Map<String, dynamic>.from(results[0]! as Map);
       _resetGalleryDraft();
@@ -2625,7 +2624,7 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
           '/api/tenant/trainer-candidates',
           query: {'query': _search.text.trim()},
         ),
-        api.get('/api/reference-data/lookups', authenticated: false),
+        api.get('/api/reference-data/lookups'),
       ]);
       _candidates = (results[0] as PagedData).items;
       final lookups = Map<String, dynamic>.from(results[1]! as Map);

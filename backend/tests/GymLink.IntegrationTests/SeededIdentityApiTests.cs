@@ -30,7 +30,7 @@ public sealed class SeededIdentityApiTests
         new(JsonSerializerDefaults.Web);
 
     [Fact]
-    public async Task Gym_admin_can_read_anonymous_reviews_for_an_inactive_tenant_trainer()
+    public async Task Gym_admin_can_read_authenticated_reviews_for_an_inactive_tenant_trainer()
     {
         var databaseName = $"GymLink_InactiveTrainerReviews_{Guid.NewGuid():N}";
         var connectionString = TestSqlServer.ConnectionString(databaseName);
@@ -98,6 +98,112 @@ public sealed class SeededIdentityApiTests
                 HttpStatusCode.NotFound,
                 (await client.GetAsync(
                     $"/api/trainers/{trainerProfileId}/reviews?page=1&pageSize=10")).StatusCode);
+        }
+        finally
+        {
+            await using var cleanup = CreateContext(connectionString);
+            await cleanup.Database.EnsureDeletedAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Business_catalog_reads_require_authentication_and_accept_every_operational_role()
+    {
+        var databaseName = $"GymLink_Review09Authorization_{Guid.NewGuid():N}";
+        var connectionString = TestSqlServer.ConnectionString(databaseName);
+        try
+        {
+            await using (var migrationContext = CreateContext(connectionString))
+            {
+                await migrationContext.Database.MigrateAsync();
+            }
+
+            await using var factory = CreateFactory(connectionString);
+            using var client = factory.CreateClient();
+            var member = await LoginAsync(client, "mobile1");
+            var trainer = await LoginAsync(client, "respecttrainer1");
+            var gymAdmin = await LoginAsync(client, "admin.respect");
+            var centralAdmin = await LoginAsync(client, "centraladmin");
+
+            Authorize(client, member);
+            using var gyms = JsonDocument.Parse(
+                await client.GetStringAsync(
+                    "/api/gyms?query=Sportska%20Akademija%20Respect&page=1&pageSize=1"));
+            var gymId = gyms.RootElement.GetProperty("items")[0].GetProperty("id").GetGuid();
+            using var trainers = JsonDocument.Parse(
+                await client.GetStringAsync($"/api/gyms/{gymId}/trainers?page=1&pageSize=1"));
+            var trainerId = trainers.RootElement.GetProperty("items")[0].GetProperty("id").GetGuid();
+            using var offerings = JsonDocument.Parse(
+                await client.GetStringAsync($"/api/trainers/{trainerId}/offerings?page=1&pageSize=1"));
+            var offeringId = offerings.RootElement.GetProperty("items")[0].GetProperty("id").GetGuid();
+            var localDate = DateOnly.FromDateTime(DateTime.UtcNow);
+            var protectedPaths = new[]
+            {
+                "/api/gyms?page=1&pageSize=1",
+                $"/api/gyms/{gymId}",
+                $"/api/gyms/{gymId}/trainers?page=1&pageSize=1",
+                $"/api/gyms/{gymId}/membership-plans?page=1&pageSize=1",
+                $"/api/trainers/{trainerId}/offerings?page=1&pageSize=1",
+                $"/api/trainers/{trainerId}/availability?trainerServiceOfferingId={offeringId}&page=1&pageSize=1",
+                $"/api/trainers/{trainerId}/availability-calendar" +
+                    $"?trainerServiceOfferingId={offeringId}" +
+                    $"&fromLocalDate={localDate:yyyy-MM-dd}" +
+                    $"&toLocalDate={localDate:yyyy-MM-dd}",
+                $"/api/trainers/{trainerId}/reviews?page=1&pageSize=1",
+                $"/api/gyms/{gymId}/reviews?page=1&pageSize=1",
+                "/api/reference-data/lookups",
+            };
+
+            client.DefaultRequestHeaders.Authorization = null;
+            foreach (var path in protectedPaths)
+            {
+                Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync(path)).StatusCode);
+            }
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", "not-a-valid-jwt");
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                (await client.GetAsync("/api/gyms?page=1&pageSize=1")).StatusCode);
+
+            Authorize(client, member);
+            foreach (var path in protectedPaths)
+            {
+                (await client.GetAsync(path)).EnsureSuccessStatusCode();
+            }
+
+            foreach (var session in new[] { member, trainer, gymAdmin, centralAdmin })
+            {
+                Authorize(client, session);
+                (await client.GetAsync("/api/gyms?page=1&pageSize=1"))
+                    .EnsureSuccessStatusCode();
+                (await client.GetAsync("/api/reference-data/lookups"))
+                    .EnsureSuccessStatusCode();
+            }
+
+            client.DefaultRequestHeaders.Authorization = null;
+            var refreshed = await client.PostAsJsonAsync(
+                "/api/auth/refresh",
+                new { refreshToken = member.RefreshToken });
+            refreshed.EnsureSuccessStatusCode();
+            Assert.Equal(
+                HttpStatusCode.Accepted,
+                (await client.PostAsJsonAsync(
+                    "/api/auth/forgot-password",
+                    new { email = "unknown@example.test" })).StatusCode);
+            Assert.Equal(
+                HttpStatusCode.BadRequest,
+                (await client.PostAsJsonAsync(
+                    "/api/auth/reset-password",
+                    new { email = "member@gymlink.local", code = "12", newPassword = "weak" }))
+                    .StatusCode);
+            Assert.Equal(
+                HttpStatusCode.OK,
+                (await client.GetAsync("/payments/stripe/cancel")).StatusCode);
+            Assert.NotEqual(
+                HttpStatusCode.Unauthorized,
+                (await client.PostAsync(
+                    "/api/webhooks/stripe",
+                    new StringContent("{}"))).StatusCode);
         }
         finally
         {
@@ -460,6 +566,8 @@ public sealed class SeededIdentityApiTests
             await using var factory = CreateFactory(connectionString);
             using var client = factory.CreateClient();
             Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+            var member = await LoginAsync(client, "mobile1");
+            Authorize(client, member);
 
             var gyms = await client.GetFromJsonAsync<PagedResult<JsonElement>>(
                 "/api/gyms?query=Sportska%20Akademija%20Respect&page=1&pageSize=1");
@@ -496,7 +604,6 @@ public sealed class SeededIdentityApiTests
                 (await client.GetAsync(
                     $"/api/gyms/{gymId}/trainers?page=1&pageSize=101")).StatusCode);
 
-            var member = await LoginAsync(client, "mobile1");
             await using (var context = CreateContext(connectionString))
             {
                 var cityId = await context.Cities.AsNoTracking()
@@ -697,7 +804,8 @@ public sealed class SeededIdentityApiTests
                 (await client.GetAsync(
                     "/api/admin/gym-registration-requests?page=1&pageSize=10")).StatusCode);
 
-            client.DefaultRequestHeaders.Authorization = null;
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", sessions["mobile1"].AccessToken);
             using var catalog = JsonDocument.Parse(
                 await (await client.GetAsync("/api/gyms")).Content.ReadAsStringAsync());
             var names = catalog.RootElement.GetProperty("items")

@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace GymLink.Api.Controllers;
 
 [ApiController]
-[AllowAnonymous]
+[Authorize]
 public sealed class PublicCatalogController(
     IGymCatalogService gyms,
     ITrainerCatalogService trainers,

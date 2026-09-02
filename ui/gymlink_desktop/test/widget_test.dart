@@ -1794,90 +1794,91 @@ void main() {
     expect(find.byType(AlertDialog), findsOneWidget);
   });
 
-  testWidgets('GymAdmin pages through anonymous trainer review details', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1400, 900);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final firstPage = List.generate(
-      10,
-      (index) => {
-        'id': 'review-$index',
-        'rating': index == 0 ? 5 : 4,
-        'comment': index == 1
-            ? null
-            : index == 0
-            ? 'Odličan individualni pristup i jasne upute.'
-            : 'Komentar $index',
-        'createdAtUtc': '2026-08-${20 - index}T10:30:00Z',
-        if (index == 0) 'reviewerName': 'Reviewer Secret',
-      },
-    );
-    final api = _GymAdminTrainerApi(
-      hasTrainer: true,
-      reviewPages: {
-        1: firstPage,
-        2: [
-          {
-            'id': 'review-10',
-            'rating': 3,
-            'comment': 'Napredak je bio vidljiv.',
-            'createdAtUtc': '2026-08-01T09:00:00Z',
-          },
-        ],
-      },
-      reviewTotalCount: 11,
-      reviewDelay: const Duration(milliseconds: 100),
-    );
-    await tester.pumpWidget(
-      Provider<ApiClient>.value(
-        value: api,
-        child: MaterialApp(
-          theme: buildGymLinkTheme(),
-          home: const Scaffold(body: TrainerManagementScreen()),
+  testWidgets(
+    'GymAdmin pages through privacy-preserving trainer review details',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final firstPage = List.generate(
+        10,
+        (index) => {
+          'id': 'review-$index',
+          'rating': index == 0 ? 5 : 4,
+          'comment': index == 1
+              ? null
+              : index == 0
+              ? 'Odličan individualni pristup i jasne upute.'
+              : 'Komentar $index',
+          'createdAtUtc': '2026-08-${20 - index}T10:30:00Z',
+          if (index == 0) 'reviewerName': 'Reviewer Secret',
+        },
+      );
+      final api = _GymAdminTrainerApi(
+        hasTrainer: true,
+        reviewPages: {
+          1: firstPage,
+          2: [
+            {
+              'id': 'review-10',
+              'rating': 3,
+              'comment': 'Napredak je bio vidljiv.',
+              'createdAtUtc': '2026-08-01T09:00:00Z',
+            },
+          ],
+        },
+        reviewTotalCount: 11,
+        reviewDelay: const Duration(milliseconds: 100),
+      );
+      await tester.pumpWidget(
+        Provider<ApiClient>.value(
+          value: api,
+          child: MaterialApp(
+            theme: buildGymLinkTheme(),
+            home: const Scaffold(body: TrainerManagementScreen()),
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('trainer-reviews-trainer-1')));
-    await tester.pump();
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(
-      tester
-          .widget<IconButton>(
-            find.widgetWithIcon(IconButton, Icons.chevron_right),
-          )
-          .onPressed,
-      isNull,
-    );
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('trainer-reviews-trainer-1')));
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.widgetWithIcon(IconButton, Icons.chevron_right),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
 
-    expect(api.reviewQueries.first, {'page': 1, 'pageSize': 10});
-    expect(find.text('Recenzije · Active Member'), findsOneWidget);
-    expect(find.text('Prosječna ocjena 4.5 · 11 recenzija'), findsOneWidget);
-    expect(
-      find.text('Odličan individualni pristup i jasne upute.'),
-      findsOneWidget,
-    );
-    expect(find.text('Bez komentara'), findsOneWidget);
-    expect(find.text('Reviewer Secret'), findsNothing);
-    expect(find.text('Stranica 1 od 2'), findsOneWidget);
+      expect(api.reviewQueries.first, {'page': 1, 'pageSize': 10});
+      expect(find.text('Recenzije · Active Member'), findsOneWidget);
+      expect(find.text('Prosječna ocjena 4.5 · 11 recenzija'), findsOneWidget);
+      expect(
+        find.text('Odličan individualni pristup i jasne upute.'),
+        findsOneWidget,
+      );
+      expect(find.text('Bez komentara'), findsOneWidget);
+      expect(find.text('Reviewer Secret'), findsNothing);
+      expect(find.text('Stranica 1 od 2'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Sljedeća stranica recenzija'));
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.pumpAndSettle();
-    expect(api.reviewQueries.last, {'page': 2, 'pageSize': 10});
-    expect(find.text('Napredak je bio vidljiv.'), findsOneWidget);
-    expect(find.text('Stranica 2 od 2'), findsOneWidget);
+      await tester.tap(find.byTooltip('Sljedeća stranica recenzija'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+      expect(api.reviewQueries.last, {'page': 2, 'pageSize': 10});
+      expect(find.text('Napredak je bio vidljiv.'), findsOneWidget);
+      expect(find.text('Stranica 2 od 2'), findsOneWidget);
 
-    await tester.tap(find.byType(CloseButton));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('trainer-reviews-title')), findsNothing);
-  });
+      await tester.tap(find.byType(CloseButton));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('trainer-reviews-title')), findsNothing);
+    },
+  );
 
   testWidgets('Inactive trainer review dialog retries into an empty state', (
     tester,

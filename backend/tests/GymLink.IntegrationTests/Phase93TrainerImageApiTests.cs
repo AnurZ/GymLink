@@ -77,6 +77,7 @@ public sealed class Phase93TrainerImageApiTests
             Assert.Equal("image/jpeg", storedImage.Content.Headers.ContentType?.MediaType);
             Assert.Equal(maximumJpeg.LongLength, storedImage.Content.Headers.ContentLength);
 
+            Authorize(client, memberSession);
             var gymId = await FindGymAsync(client, "Sportska Akademija Respect");
             var publicTrainers = await client.GetFromJsonAsync<PagedResult<TrainerDto>>(
                 $"/api/gyms/{gymId}/trainers");
@@ -300,7 +301,6 @@ public sealed class Phase93TrainerImageApiTests
 
     private static async Task<Guid> FindGymAsync(HttpClient client, string name)
     {
-        client.DefaultRequestHeaders.Authorization = null;
         using var response = JsonDocument.Parse(
             await client.GetStringAsync($"/api/gyms?query={Uri.EscapeDataString(name)}"));
         return response.RootElement.GetProperty("items")[0].GetProperty("id").GetGuid();

@@ -114,6 +114,95 @@ void main() {
     );
   });
 
+  test('business catalog reads send the bearer token', () async {
+    final captured = <http.Request>[];
+    final api = ApiClient(
+      _AuthenticatedTokens(),
+      baseUrlOverride: 'https://example.test',
+      httpClient: MockClient((request) async {
+        captured.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+    const paths = [
+      '/api/gyms',
+      '/api/gyms/gym-1',
+      '/api/gyms/gym-1/trainers',
+      '/api/gyms/gym-1/membership-plans',
+      '/api/trainers/trainer-1/offerings',
+      '/api/trainers/trainer-1/availability',
+      '/api/trainers/trainer-1/availability-calendar',
+      '/api/trainers/trainer-1/reviews',
+      '/api/gyms/gym-1/reviews',
+      '/api/reference-data/lookups',
+    ];
+
+    for (final path in paths) {
+      await api.get(path);
+    }
+
+    expect(captured, hasLength(paths.length));
+    expect(
+      captured.map((request) => request.headers['authorization']).toSet(),
+      {'Bearer token'},
+    );
+  });
+
+  test('auth calls remain anonymous even when a token exists', () async {
+    final captured = <http.Request>[];
+    final api = ApiClient(
+      _AuthenticatedTokens(),
+      baseUrlOverride: 'https://example.test',
+      httpClient: MockClient((request) async {
+        captured.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+
+    for (final path in const [
+      '/api/auth/login',
+      '/api/auth/register',
+      '/api/auth/forgot-password',
+      '/api/auth/reset-password',
+    ]) {
+      await api.post(path, authenticated: false);
+    }
+
+    expect(
+      captured.every(
+        (request) => !request.headers.containsKey('authorization'),
+      ),
+      isTrue,
+    );
+  });
+
+  test(
+    'authenticated 401 refreshes once and retries with the new token',
+    () async {
+      final tokens = _RefreshingTokens();
+      final captured = <http.Request>[];
+      final api = ApiClient(
+        tokens,
+        baseUrlOverride: 'https://example.test',
+        httpClient: MockClient((request) async {
+          captured.add(request);
+          return captured.length == 1
+              ? http.Response('{"title":"authentication_required"}', 401)
+              : http.Response('{}', 200);
+        }),
+      );
+
+      await api.get('/api/gyms');
+
+      expect(tokens.refreshCount, 1);
+      expect(tokens.invalidateCount, 0);
+      expect(captured.map((request) => request.headers['authorization']), [
+        'Bearer old-token',
+        'Bearer new-token',
+      ]);
+    },
+  );
+
   test('trainer image URLs resolve against the configured API origin', () {
     final api = ApiClient(
       _Tokens(),
@@ -170,4 +259,36 @@ final class _Tokens implements AuthTokenSource {
 
   @override
   Future<bool> refresh() async => false;
+}
+
+final class _AuthenticatedTokens implements AuthTokenSource {
+  @override
+  String? get accessToken => 'token';
+
+  @override
+  Future<void> invalidate() async {}
+
+  @override
+  Future<bool> refresh() async => false;
+}
+
+final class _RefreshingTokens implements AuthTokenSource {
+  String _token = 'old-token';
+  int refreshCount = 0;
+  int invalidateCount = 0;
+
+  @override
+  String? get accessToken => _token;
+
+  @override
+  Future<void> invalidate() async {
+    invalidateCount++;
+  }
+
+  @override
+  Future<bool> refresh() async {
+    refreshCount++;
+    _token = 'new-token';
+    return true;
+  }
 }

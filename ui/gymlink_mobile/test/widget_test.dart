@@ -1365,7 +1365,9 @@ void main() {
     expect(find.textContaining('complete'), findsNothing);
   });
 
-  testWidgets('trainer opens an anonymous review detail', (tester) async {
+  testWidgets('trainer opens a privacy-preserving review detail', (
+    tester,
+  ) async {
     final api = ApiClient(
       _TestTokenSource(),
       baseUrlOverride: 'http://test.local',

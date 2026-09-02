@@ -167,8 +167,7 @@ final class RecommendationRepository {
   Future<({List<PreferenceLookup> cities, List<PreferenceLookup> types})>
   getLookups() async {
     final json = Map<String, dynamic>.from(
-      (await _api.get('/api/reference-data/lookups', authenticated: false))!
-          as Map,
+      (await _api.get('/api/reference-data/lookups'))! as Map,
     );
     List<PreferenceLookup> parse(String key) => (json[key] as List? ?? const [])
         .whereType<Map>()

@@ -117,6 +117,77 @@ void main() {
     expect(page.totalCount, 1);
   });
 
+  test('GymAdmin business reads send the bearer token', () async {
+    final captured = <http.Request>[];
+    final api = ApiClient(
+      _AuthenticatedTokens(),
+      baseUrlOverride: 'https://example.test',
+      httpClient: MockClient((request) async {
+        captured.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+
+    await api.get('/api/reference-data/lookups');
+    await api.get('/api/trainers/trainer-1/reviews');
+
+    expect(
+      captured.map((request) => request.headers['authorization']).toSet(),
+      {'Bearer token'},
+    );
+  });
+
+  test('desktop auth calls remain anonymous when a token exists', () async {
+    final captured = <http.Request>[];
+    final api = ApiClient(
+      _AuthenticatedTokens(),
+      baseUrlOverride: 'https://example.test',
+      httpClient: MockClient((request) async {
+        captured.add(request);
+        return http.Response('{}', 200);
+      }),
+    );
+
+    for (final path in const [
+      '/api/auth/login',
+      '/api/auth/forgot-password',
+      '/api/auth/reset-password',
+    ]) {
+      await api.post(path, authenticated: false);
+    }
+
+    expect(
+      captured.every(
+        (request) => !request.headers.containsKey('authorization'),
+      ),
+      isTrue,
+    );
+  });
+
+  test('desktop authenticated 401 refreshes once and retries', () async {
+    final tokens = _RefreshingTokens();
+    final captured = <http.Request>[];
+    final api = ApiClient(
+      tokens,
+      baseUrlOverride: 'https://example.test',
+      httpClient: MockClient((request) async {
+        captured.add(request);
+        return captured.length == 1
+            ? http.Response('{"title":"authentication_required"}', 401)
+            : http.Response('{}', 200);
+      }),
+    );
+
+    await api.get('/api/reference-data/lookups');
+
+    expect(tokens.refreshCount, 1);
+    expect(tokens.invalidateCount, 0);
+    expect(captured.map((request) => request.headers['authorization']), [
+      'Bearer old-token',
+      'Bearer new-token',
+    ]);
+  });
+
   test('trainer image URLs and multipart upload use the API origin', () async {
     late http.Request captured;
     final api = ApiClient(
@@ -264,4 +335,25 @@ final class _AuthenticatedTokens implements AuthTokenSource {
 
   @override
   Future<bool> refresh() async => false;
+}
+
+final class _RefreshingTokens implements AuthTokenSource {
+  String _token = 'old-token';
+  int refreshCount = 0;
+  int invalidateCount = 0;
+
+  @override
+  String? get accessToken => _token;
+
+  @override
+  Future<void> invalidate() async {
+    invalidateCount++;
+  }
+
+  @override
+  Future<bool> refresh() async {
+    refreshCount++;
+    _token = 'new-token';
+    return true;
+  }
 }

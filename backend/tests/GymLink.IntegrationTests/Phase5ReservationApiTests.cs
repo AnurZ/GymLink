@@ -47,6 +47,7 @@ public sealed class Phase5ReservationApiTests
             var otherAdmin = await LoginAsync(setupClient, "admin.arena");
             var trainerSession = await LoginAsync(setupClient, "respecttrainer1");
 
+            Authorize(setupClient, member);
             var gymId = await FindGymAsync(setupClient, "Sportska Akademija Respect");
             var plans = await setupClient.GetFromJsonAsync<PagedResult<MembershipPlanDto>>(
                 $"/api/gyms/{gymId}/membership-plans");
@@ -623,7 +624,7 @@ public sealed class Phase5ReservationApiTests
             Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
             Assert.Equal("gym_review_exists", await ProblemCodeAsync(duplicate));
 
-            setupClient.DefaultRequestHeaders.Authorization = null;
+            Authorize(setupClient, member);
             var ratedGym = await setupClient.GetFromJsonAsync<GymDetailsDto>(
                 $"/api/gyms/{gymId}");
             Assert.NotNull(ratedGym);
@@ -712,7 +713,6 @@ public sealed class Phase5ReservationApiTests
         HttpClient client,
         string name)
     {
-        client.DefaultRequestHeaders.Authorization = null;
         using var response = JsonDocument.Parse(
             await client.GetStringAsync($"/api/gyms?query={Uri.EscapeDataString(name)}"));
         var item = response.RootElement.GetProperty("items")[0];

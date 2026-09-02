@@ -90,7 +90,7 @@ public sealed class TenantAvailabilityController(IAvailabilityService service) :
 }
 
 [ApiController]
-[AllowAnonymous]
+[Authorize]
 public sealed class PublicReservationCatalogController(
     IAvailabilityService availability,
     IReviewService reviews) : ControllerBase
