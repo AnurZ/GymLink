@@ -105,6 +105,7 @@ internal sealed class GymAdministrationService(
     ITenantMutationScope tenantMutationScope,
     IGymAdminAssignmentCoordinator gymAdminAssignment,
     ITenantActivationReadinessService readinessService,
+    IGymCreationValidator gymCreationValidator,
     TimeProvider timeProvider) : IGymAdministrationService
 {
     public async Task<PagedResult<AdminGymDto>> SearchAsync(
@@ -226,22 +227,11 @@ internal sealed class GymAdministrationService(
                     ?? throw new AuthenticationFailedException(
                         "authentication_required",
                         "Authentication is required.");
-                var cityExists = await (
-                        from city in dbContext.Cities.AsNoTracking()
-                        join country in dbContext.Countries.AsNoTracking()
-                            on city.CountryId equals country.Id
-                        where city.Id == request.CityId &&
-                              city.IsActive &&
-                              country.IsActive &&
-                              country.Code == "BIH"
-                        select city.Id)
-                    .AnyAsync(token);
-                if (!cityExists)
-                {
-                    throw new NotFoundException(
-                        "city_not_found",
-                        "The selected active BiH city was not found.");
-                }
+                var identity = await gymCreationValidator.ValidateAsync(
+                    request.CityId,
+                    request.Name,
+                    request.Address,
+                    token);
 
                 var equipmentIds = request.EquipmentIds.Distinct().ToArray();
                 var trainingTypeIds = request.TrainingTypeIds.Distinct().ToArray();
@@ -263,21 +253,8 @@ internal sealed class GymAdministrationService(
                         "One or more active training types were not found.");
                 }
 
-                var name = request.Name.Trim();
-                var address = request.Address.Trim();
-                if (await dbContext.Gyms.IgnoreQueryFilters().AsNoTracking().AnyAsync(
-                        x => x.CityId == request.CityId &&
-                             x.Name == name &&
-                             x.Address == address,
-                        token))
-                {
-                    throw new ConflictException(
-                        "gym_already_exists",
-                        "A gym with the same name and address already exists.");
-                }
-
                 var now = timeProvider.GetUtcNow().UtcDateTime;
-                var tenant = new Tenant(Guid.NewGuid(), name)
+                var tenant = new Tenant(Guid.NewGuid(), identity.Name)
                 {
                     Status = TenantStatus.PendingActivation,
                     StatusChangedByUserId = actorId,
@@ -287,9 +264,9 @@ internal sealed class GymAdministrationService(
                 var gym = new Gym
                 {
                     TenantId = tenant.Id,
-                    Name = name,
+                    Name = identity.Name,
                     Description = request.Description.Trim(),
-                    Address = address,
+                    Address = identity.Address,
                     CityId = request.CityId,
                     Latitude = request.Latitude,
                     Longitude = request.Longitude,
@@ -373,12 +350,22 @@ internal sealed class GymAdministrationService(
                 return await ProjectAsync(gym.Id, token);
             }, cancellationToken);
         }
-        catch (Exception exception) when (ContainsDbUpdateException(exception))
+        catch (Exception exception) when (!IsApplicationException(exception))
         {
-            throw new ConflictException(
-                "gym_admin_already_assigned",
-                "The selected account already has an active gym assignment. Revoke it before assigning another gym.",
-                exception);
+            await gymCreationValidator.ValidateAsync(
+                request.CityId,
+                request.Name,
+                request.Address,
+                cancellationToken);
+            if (ContainsDbUpdateException(exception))
+            {
+                throw new ConflictException(
+                    "gym_admin_already_assigned",
+                    "The selected account already has an active gym assignment. Revoke it before assigning another gym.",
+                    exception);
+            }
+
+            throw;
         }
     }
 
@@ -532,4 +519,12 @@ internal sealed class GymAdministrationService(
 
         return false;
     }
+
+    private static bool IsApplicationException(Exception exception) =>
+        exception is NotFoundException or
+            ConflictException or
+            ApplicationRuleException or
+            AuthenticationFailedException or
+            AuthorizationDeniedException or
+            ExternalServiceUnavailableException;
 }

@@ -1,4 +1,5 @@
 using GymLink.Application.Abstractions;
+using GymLink.Application.Catalog;
 using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.Messaging;
@@ -19,6 +20,7 @@ internal sealed class GymRegistrationService(
     ITenantMutationScope tenantMutationScope,
     IOutboxWriter outbox,
     IRequestMetadata requestMetadata,
+    IGymCreationValidator gymCreationValidator,
     TimeProvider timeProvider) : IGymRegistrationService
 {
     public async Task<GymRegistrationDto> SubmitAsync(
@@ -165,72 +167,113 @@ internal sealed class GymRegistrationService(
     public Task<GymRegistrationDto> GetAsync(Guid id, CancellationToken cancellationToken) =>
         GetProjectedAsync(id, cancellationToken);
 
-    public Task<GymRegistrationDto> ApproveAsync(
+    public async Task<GymRegistrationDto> ApproveAsync(
         Guid id,
         RegistrationDecisionRequest request,
-        CancellationToken cancellationToken) =>
-        transaction.ExecuteAsync(async token =>
+        CancellationToken cancellationToken)
+    {
+        try
         {
-            var actorId = RequireUser();
-            var entity = await GetSubmittedEntityAsync(id, token);
-            var applicant = await accounts.FindByIdAsync(entity.ApplicantUserId, token)
-                ?? throw new NotFoundException("applicant_not_found", "The applicant account was not found.");
-            if (applicant.Role != RoleNames.Member)
+            return await transaction.ExecuteSerializableAsync(async token =>
             {
-                throw new ConflictException(
-                    "applicant_role_changed",
-                    "The applicant must still have the Member role.");
+                var actorId = RequireUser();
+                var entity = await GetSubmittedEntityAsync(id, token);
+                var applicant = await accounts.FindByIdAsync(entity.ApplicantUserId, token)
+                    ?? throw new NotFoundException(
+                        "applicant_not_found",
+                        "The applicant account was not found.");
+                if (applicant.Role != RoleNames.Member)
+                {
+                    throw new ConflictException(
+                        "applicant_role_changed",
+                        "The applicant must still have the Member role.");
+                }
+
+                var identity = await gymCreationValidator.ValidateAsync(
+                    entity.CityId,
+                    entity.ProposedGymName,
+                    entity.ProposedAddress,
+                    token);
+
+                var tenant = new Tenant(Guid.NewGuid(), identity.Name)
+                {
+                    Status = TenantStatus.PendingActivation,
+                    StatusChangedByUserId = actorId,
+                    StatusChangedAtUtc = timeProvider.GetUtcNow().UtcDateTime,
+                    StatusReason = request.Reason.Trim(),
+                };
+                dbContext.Tenants.Add(tenant);
+                using var tenantWrite = tenantMutationScope.Begin(tenant.Id);
+                dbContext.Gyms.Add(new Gym
+                {
+                    TenantId = tenant.Id,
+                    Name = identity.Name,
+                    Description = entity.ProposedDescription,
+                    Address = identity.Address,
+                    CityId = entity.CityId,
+                    Latitude = entity.Latitude,
+                    Longitude = entity.Longitude,
+                    PhoneNumber = entity.PhoneNumber,
+                    IsPubliclyVisible = false,
+                });
+                dbContext.UserGymAssignments.Add(new UserGymAssignment
+                {
+                    TenantId = tenant.Id,
+                    UserId = entity.ApplicantUserId,
+                    Role = RoleNames.GymAdmin,
+                    Status = AssignmentStatus.Active,
+                    StartsAtUtc = timeProvider.GetUtcNow().UtcDateTime,
+                    ApprovedByUserId = actorId,
+                    Reason = "Gym registration approved.",
+                });
+
+                var roleResult = await accounts.ReplaceRoleAsync(
+                    entity.ApplicantUserId,
+                    RoleNames.GymAdmin,
+                    token);
+                EnsureSucceeded(roleResult);
+                await RevokeUserSessionsAsync(entity.ApplicantUserId, "role_changed", token);
+
+                entity.Status = GymRegistrationStatus.Approved;
+                entity.DecidedByUserId = actorId;
+                entity.DecidedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
+                entity.DecisionReason = request.Reason.Trim();
+                entity.CreatedTenantId = tenant.Id;
+                AddAudit(
+                    actorId,
+                    entity.ApplicantUserId,
+                    tenant.Id,
+                    "registration.approved",
+                    entity.Id,
+                    request.Reason);
+                AddDecisionNotification(entity, "registration.approved");
+                await dbContext.SaveChangesAsync(token);
+                return await GetProjectedAsync(entity.Id, token);
+            }, cancellationToken);
+        }
+        catch (Exception exception) when (!IsApplicationException(exception))
+        {
+            var proposedGym = await dbContext.GymRegistrationRequests.AsNoTracking()
+                .Where(entity => entity.Id == id)
+                .Select(entity => new
+                {
+                    entity.CityId,
+                    Name = entity.ProposedGymName,
+                    Address = entity.ProposedAddress,
+                })
+                .SingleOrDefaultAsync(cancellationToken);
+            if (proposedGym is not null)
+            {
+                await gymCreationValidator.ValidateAsync(
+                    proposedGym.CityId,
+                    proposedGym.Name,
+                    proposedGym.Address,
+                    cancellationToken);
             }
 
-            var tenant = new Tenant(Guid.NewGuid(), entity.ProposedGymName)
-            {
-                Status = TenantStatus.PendingActivation,
-                StatusChangedByUserId = actorId,
-                StatusChangedAtUtc = timeProvider.GetUtcNow().UtcDateTime,
-                StatusReason = request.Reason.Trim(),
-            };
-            dbContext.Tenants.Add(tenant);
-            using var tenantWrite = tenantMutationScope.Begin(tenant.Id);
-            dbContext.Gyms.Add(new Gym
-            {
-                TenantId = tenant.Id,
-                Name = entity.ProposedGymName,
-                Description = entity.ProposedDescription,
-                Address = entity.ProposedAddress,
-                CityId = entity.CityId,
-                Latitude = entity.Latitude,
-                Longitude = entity.Longitude,
-                PhoneNumber = entity.PhoneNumber,
-                IsPubliclyVisible = false,
-            });
-            dbContext.UserGymAssignments.Add(new UserGymAssignment
-            {
-                TenantId = tenant.Id,
-                UserId = entity.ApplicantUserId,
-                Role = RoleNames.GymAdmin,
-                Status = AssignmentStatus.Active,
-                StartsAtUtc = timeProvider.GetUtcNow().UtcDateTime,
-                ApprovedByUserId = actorId,
-                Reason = "Gym registration approved.",
-            });
-
-            var roleResult = await accounts.ReplaceRoleAsync(
-                entity.ApplicantUserId,
-                RoleNames.GymAdmin,
-                token);
-            EnsureSucceeded(roleResult);
-            await RevokeUserSessionsAsync(entity.ApplicantUserId, "role_changed", token);
-
-            entity.Status = GymRegistrationStatus.Approved;
-            entity.DecidedByUserId = actorId;
-            entity.DecidedAtUtc = timeProvider.GetUtcNow().UtcDateTime;
-            entity.DecisionReason = request.Reason.Trim();
-            entity.CreatedTenantId = tenant.Id;
-            AddAudit(actorId, entity.ApplicantUserId, tenant.Id, "registration.approved", entity.Id, request.Reason);
-            AddDecisionNotification(entity, "registration.approved");
-            await dbContext.SaveChangesAsync(token);
-            return await GetProjectedAsync(entity.Id, token);
-        }, cancellationToken);
+            throw;
+        }
+    }
 
     public Task<GymRegistrationDto> RejectAsync(
         Guid id,
@@ -367,4 +410,12 @@ internal sealed class GymRegistrationService(
             throw new ConflictException("role_change_failed", string.Join(" ", result.Errors));
         }
     }
+
+    private static bool IsApplicationException(Exception exception) =>
+        exception is NotFoundException or
+            ConflictException or
+            ApplicationRuleException or
+            AuthenticationFailedException or
+            AuthorizationDeniedException or
+            ExternalServiceUnavailableException;
 }
