@@ -9,6 +9,7 @@ import '../chat/chat_screens.dart';
 import '../reservations/reservation_refresh_controller.dart';
 
 const _reservationStatuses = ['Pending', 'Confirmed', 'Completed', 'Cancelled'];
+const _visibleTrainerReservationStatuses = [1, 2, 3];
 const _emptyGuid = '00000000-0000-0000-0000-000000000000';
 
 bool _canOpenAppointmentChat(Object? status) {
@@ -30,6 +31,7 @@ class _TrainerAppointmentsScreenState extends State<TrainerAppointmentsScreen> {
   List<Map<String, dynamic>> _items = const [];
   bool _loading = true;
   Object? _error;
+  int? _status;
 
   @override
   void initState() {
@@ -63,6 +65,7 @@ class _TrainerAppointmentsScreenState extends State<TrainerAppointmentsScreen> {
       _items = (await context.read<ApiClient>().page(
         '/api/me/trainer-reservations',
         query: {
+          'status': _status,
           'fromUtc': DateTime.now()
               .toUtc()
               .subtract(const Duration(days: 30))
@@ -79,77 +82,101 @@ class _TrainerAppointmentsScreenState extends State<TrainerAppointmentsScreen> {
   @override
   Widget build(BuildContext context) => RefreshIndicator(
     onRefresh: _load,
-    child: AsyncPanel(
-      loading: _loading,
-      error: _error,
-      onRetry: _load,
-      child: _items.isEmpty
-          ? ListView(
-              padding: const EdgeInsets.all(16),
-              children: const [
-                _AppointmentSortHint(),
-                SizedBox(
-                  height: 500,
+    child: ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        DropdownButtonFormField<int?>(
+          key: const Key('trainer-appointment-status-filter'),
+          initialValue: _status,
+          decoration: const InputDecoration(labelText: 'Status'),
+          items: [
+            const DropdownMenuItem(value: null, child: Text('Svi statusi')),
+            ..._visibleTrainerReservationStatuses.map(
+              (status) => DropdownMenuItem(
+                value: status,
+                child: Text(enumLabel(status, _reservationStatuses)),
+              ),
+            ),
+          ],
+          onChanged: (value) {
+            _status = value;
+            _load();
+          },
+        ),
+        const SizedBox(height: 14),
+        const _AppointmentSortHint(),
+        const SizedBox(height: 10),
+        AsyncPanel(
+          loading: _loading,
+          error: _error,
+          onRetry: _load,
+          child: _items.isEmpty
+              ? SizedBox(
+                  height: 420,
                   child: EmptyState(
                     title: 'Nema termina',
-                    message: 'Trenutno nemate zakazanih termina.',
+                    message: _status == null
+                        ? 'Trenutno nemate zakazanih termina.'
+                        : 'Nema termina za izabrani status.',
                     icon: Icons.event_available,
                   ),
-                ),
-              ],
-            )
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                const _AppointmentSortHint(),
-                const SizedBox(height: 10),
-                ..._items.map(
-                  (item) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Card(
-                      child: ListTile(
-                        leading: const CircleAvatar(child: Icon(Icons.person)),
-                        title: Text(item['memberName'].toString()),
-                        subtitle: Text(
-                          '${DateFormat('dd.MM.yyyy. HH:mm').format(DateTime.parse(item['startsAtUtc'].toString()).toLocal())}\n${item['offeringName']}',
-                        ),
-                        isThreeLine: true,
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            StatusPill(
-                              enumLabel(item['status'], _reservationStatuses),
-                            ),
-                            if (_canOpenAppointmentChat(item['status']))
-                              IconButton(
-                                key: Key(
-                                  'trainer-appointment-chat-${item['id']}',
-                                ),
-                                tooltip: 'Otvori razgovor',
-                                onPressed: () => openChatForReservation(
-                                  context,
-                                  item['id'].toString(),
-                                ),
-                                icon: const Icon(Icons.forum_outlined),
+                )
+              : Column(
+                  children: _items
+                      .map(
+                        (item) => Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: Card(
+                            child: ListTile(
+                              leading: const CircleAvatar(
+                                child: Icon(Icons.person),
                               ),
-                          ],
-                        ),
-                        onTap: () async {
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute<void>(
-                              builder: (_) =>
-                                  TrainerAppointmentDetails(item: item),
+                              title: Text(item['memberName'].toString()),
+                              subtitle: Text(
+                                '${DateFormat('dd.MM.yyyy. HH:mm').format(DateTime.parse(item['startsAtUtc'].toString()).toLocal())}\n${item['offeringName']}',
+                              ),
+                              isThreeLine: true,
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  StatusPill(
+                                    enumLabel(
+                                      item['status'],
+                                      _reservationStatuses,
+                                    ),
+                                  ),
+                                  if (_canOpenAppointmentChat(item['status']))
+                                    IconButton(
+                                      key: Key(
+                                        'trainer-appointment-chat-${item['id']}',
+                                      ),
+                                      tooltip: 'Otvori razgovor',
+                                      onPressed: () => openChatForReservation(
+                                        context,
+                                        item['id'].toString(),
+                                      ),
+                                      icon: const Icon(Icons.forum_outlined),
+                                    ),
+                                ],
+                              ),
+                              onTap: () async {
+                                await Navigator.push(
+                                  context,
+                                  MaterialPageRoute<void>(
+                                    builder: (_) =>
+                                        TrainerAppointmentDetails(item: item),
+                                  ),
+                                );
+                                await _load();
+                              },
                             ),
-                          );
-                          await _load();
-                        },
-                      ),
-                    ),
-                  ),
+                          ),
+                        ),
+                      )
+                      .toList(),
                 ),
-              ],
-            ),
+        ),
+      ],
     ),
   );
 }

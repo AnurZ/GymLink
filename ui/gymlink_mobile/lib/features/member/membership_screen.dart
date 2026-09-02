@@ -8,6 +8,7 @@ import '../../shared/widgets.dart';
 import 'gym_screens.dart';
 
 const _requestStatuses = ['Pending', 'Approved', 'Rejected', 'Cancelled'];
+const _visibleRequestStatuses = [0, 1, 2, 3];
 const _membershipStatuses = [
   'PendingPayment',
   'Active',
@@ -15,6 +16,7 @@ const _membershipStatuses = [
   'Cancelled',
   'Suspended',
 ];
+const _visibleMembershipStatuses = [0, 1, 2, 3, 4];
 
 class MembershipScreen extends StatefulWidget {
   const MembershipScreen({super.key});
@@ -28,6 +30,8 @@ class _MembershipScreenState extends State<MembershipScreen> {
   List<Map<String, dynamic>> _memberships = const [];
   bool _loading = true;
   Object? _error;
+  int? _requestStatus;
+  int? _membershipStatus;
 
   @override
   void initState() {
@@ -43,8 +47,11 @@ class _MembershipScreenState extends State<MembershipScreen> {
     try {
       final api = context.read<ApiClient>();
       final results = await Future.wait([
-        api.page('/api/me/membership-requests'),
-        api.page('/api/me/memberships'),
+        api.page(
+          '/api/me/membership-requests',
+          query: {'status': _requestStatus},
+        ),
+        api.page('/api/me/memberships', query: {'status': _membershipStatus}),
       ]);
       _requests = results[0].items;
       _memberships = results[1].items;
@@ -100,82 +107,136 @@ class _MembershipScreenState extends State<MembershipScreen> {
       loading: _loading,
       error: _error,
       onRetry: _load,
-      child: _requests.isEmpty && _memberships.isEmpty
-          ? ListView(
-              children: const [
-                SizedBox(
-                  height: 500,
-                  child: EmptyState(
-                    title: 'Još nemate članstvo',
-                    message: 'Otvorite teretanu i izaberite odgovarajući plan.',
-                    icon: Icons.card_membership,
-                  ),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            'Aktivna i prethodna članstva',
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<int?>(
+            key: const Key('membership-status-filter'),
+            initialValue: _membershipStatus,
+            decoration: const InputDecoration(labelText: 'Status članstva'),
+            items: [
+              const DropdownMenuItem(value: null, child: Text('Svi statusi')),
+              ..._visibleMembershipStatuses.map(
+                (status) => DropdownMenuItem(
+                  value: status,
+                  child: Text(enumLabel(status, _membershipStatuses)),
                 ),
-              ],
+              ),
+            ],
+            onChanged: (value) {
+              _membershipStatus = value;
+              _load();
+            },
+          ),
+          const SizedBox(height: 10),
+          if (_memberships.isEmpty)
+            SizedBox(
+              height: 220,
+              child: EmptyState(
+                title: _membershipStatus == null
+                    ? 'Još nemate članstvo'
+                    : 'Nema članstava',
+                message: _membershipStatus == null
+                    ? 'Otvorite teretanu i izaberite odgovarajući plan.'
+                    : 'Nema članstava za izabrani status.',
+                icon: Icons.card_membership,
+              ),
             )
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Text(
-                  'Aktivna i prethodna članstva',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 10),
-                ..._memberships.map(
-                  (item) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Card(
-                      child: ListTile(
-                        title: Text(item['gymName'].toString()),
-                        subtitle: Text(
-                          '${item['planName']} · ${_date(item['startsAtUtc'])} – ${_date(item['endsAtUtc'])}',
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            StatusPill(
-                              enumLabel(item['status'], _membershipStatuses),
-                            ),
-                            const SizedBox(width: 6),
-                            const Icon(Icons.chevron_right),
-                          ],
-                        ),
-                        onTap: () => _openMembership(item),
-                      ),
+          else
+            ..._memberships.map(
+              (item) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Card(
+                  child: ListTile(
+                    title: Text(item['gymName'].toString()),
+                    subtitle: Text(
+                      '${item['planName']} · ${_date(item['startsAtUtc'])} – ${_date(item['endsAtUtc'])}',
                     ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        StatusPill(
+                          enumLabel(item['status'], _membershipStatuses),
+                        ),
+                        const SizedBox(width: 6),
+                        const Icon(Icons.chevron_right),
+                      ],
+                    ),
+                    onTap: () => _openMembership(item),
                   ),
                 ),
-                const SizedBox(height: 18),
-                Text(
-                  'Zahtjevi',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 10),
-                ..._requests.map(
-                  (item) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Card(
-                      child: ListTile(
-                        title: Text('${item['gymName']} · ${item['planName']}'),
-                        subtitle: Text('${item['price']} ${item['currency']}'),
-                        trailing: StatusPill(
-                          enumLabel(item['status'], _requestStatuses),
-                        ),
-                        onTap:
-                            (item['allowedActions'] as List? ?? const [])
-                                .contains('cancel')
-                            ? () => _cancelRequest(item)
-                            : null,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
+          const SizedBox(height: 18),
+          Text(
+            'Zahtjevi',
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<int?>(
+            key: const Key('membership-request-status-filter'),
+            initialValue: _requestStatus,
+            decoration: const InputDecoration(labelText: 'Status zahtjeva'),
+            items: [
+              const DropdownMenuItem(value: null, child: Text('Svi statusi')),
+              ..._visibleRequestStatuses.map(
+                (status) => DropdownMenuItem(
+                  value: status,
+                  child: Text(enumLabel(status, _requestStatuses)),
+                ),
+              ),
+            ],
+            onChanged: (value) {
+              _requestStatus = value;
+              _load();
+            },
+          ),
+          const SizedBox(height: 10),
+          if (_requests.isEmpty)
+            SizedBox(
+              height: 220,
+              child: EmptyState(
+                title: _requestStatus == null
+                    ? 'Još nemate zahtjeva'
+                    : 'Nema zahtjeva',
+                message: _requestStatus == null
+                    ? 'Zahtjevi će se prikazati nakon izbora plana članstva.'
+                    : 'Nema zahtjeva za izabrani status.',
+                icon: Icons.assignment_outlined,
+              ),
+            )
+          else
+            ..._requests.map(
+              (item) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Card(
+                  child: ListTile(
+                    title: Text('${item['gymName']} · ${item['planName']}'),
+                    subtitle: Text('${item['price']} ${item['currency']}'),
+                    trailing: StatusPill(
+                      enumLabel(item['status'], _requestStatuses),
+                    ),
+                    onTap:
+                        (item['allowedActions'] as List? ?? const []).contains(
+                          'cancel',
+                        )
+                        ? () => _cancelRequest(item)
+                        : null,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     ),
   );
 

@@ -1203,6 +1203,92 @@ void main() {
     },
   );
 
+  testWidgets('Clanarine filters memberships and requests independently', (
+    tester,
+  ) async {
+    final membershipStatuses = <String?>[];
+    final requestStatuses = <String?>[];
+    final client = MockClient((request) async {
+      if (request.url.path == '/api/me/memberships') {
+        membershipStatuses.add(request.url.queryParameters['status']);
+      } else if (request.url.path == '/api/me/membership-requests') {
+        requestStatuses.add(request.url.queryParameters['status']);
+      }
+      return http.Response(
+        jsonEncode(_page(const <Object>[])),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
+    final api = ApiClient(
+      _TestTokenSource(),
+      httpClient: client,
+      baseUrlOverride: 'http://test.local',
+    );
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: MembershipScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Još nemate članstvo'), findsOneWidget);
+    expect(find.text('Još nemate zahtjeva'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('membership-status-filter')));
+    await tester.pumpAndSettle();
+    expect(find.text('PendingPayment'), findsOneWidget);
+    expect(find.text('Active'), findsOneWidget);
+    expect(find.text('Expired'), findsOneWidget);
+    expect(find.text('Cancelled'), findsOneWidget);
+    expect(find.text('Suspended'), findsOneWidget);
+    await tester.tap(find.text('Active'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Nema članstava'), findsOneWidget);
+    expect(membershipStatuses, [null, '1']);
+    expect(requestStatuses, [null, null]);
+
+    final requestFilter = find.byKey(
+      const Key('membership-request-status-filter'),
+    );
+    await tester.ensureVisible(requestFilter);
+    await tester.tap(requestFilter);
+    await tester.pumpAndSettle();
+    expect(find.text('Pending'), findsOneWidget);
+    expect(find.text('Approved'), findsOneWidget);
+    expect(find.text('Rejected'), findsOneWidget);
+    await tester.tap(find.text('Rejected'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Nema zahtjeva'), findsOneWidget);
+    expect(membershipStatuses, [null, '1', '1']);
+    expect(requestStatuses, [null, null, '2']);
+
+    final membershipFilter = find.byKey(const Key('membership-status-filter'));
+    await tester.drag(find.byType(ListView), const Offset(0, 600));
+    await tester.pumpAndSettle();
+    await tester.tap(membershipFilter);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Svi statusi').last);
+    await tester.pumpAndSettle();
+
+    expect(membershipStatuses, [null, '1', '1', null]);
+    expect(requestStatuses, [null, null, '2', '2']);
+
+    await tester.drag(find.byType(ListView), const Offset(0, 300));
+    await tester.pumpAndSettle();
+    expect(membershipStatuses, hasLength(5));
+    expect(requestStatuses, hasLength(5));
+    expect(membershipStatuses.last, isNull);
+    expect(requestStatuses.last, '2');
+  });
+
   testWidgets('Termini details show active Stripe deadline and retry action', (
     tester,
   ) async {
@@ -1325,6 +1411,96 @@ void main() {
     );
     expect(reservationLoads, 2);
   });
+
+  testWidgets(
+    'Trainer Termini status filter preserves range and selected status',
+    (tester) async {
+      final requestedStatuses = <String?>[];
+      final requestedRanges = <String?>[];
+      final client = MockClient((request) async {
+        requestedStatuses.add(request.url.queryParameters['status']);
+        requestedRanges.add(request.url.queryParameters['fromUtc']);
+        final items = request.url.queryParameters['status'] == '2'
+            ? <Object>[
+                {
+                  'id': 'reservation-completed',
+                  'memberName': 'Član Test',
+                  'gymName': 'GymLink Centar',
+                  'offeringName': 'Individualni trening',
+                  'startsAtUtc': '2026-08-01T10:00:00Z',
+                  'endsAtUtc': '2026-08-01T11:00:00Z',
+                  'durationMinutes': 60,
+                  'price': 30,
+                  'currency': 'BAM',
+                  'status': 2,
+                  'paymentMethod': 1,
+                  'allowedActions': <Object>[],
+                  'concurrencyToken': 'token-1',
+                },
+              ]
+            : const <Object>[];
+        return http.Response(
+          jsonEncode(_page(items)),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      });
+      final api = ApiClient(
+        _TestTokenSource(),
+        httpClient: client,
+        baseUrlOverride: 'http://test.local',
+      );
+      final controller = ReservationRefreshController();
+      addTearDown(api.close);
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        Provider<ApiClient>.value(
+          value: api,
+          child: MaterialApp(
+            theme: buildGymLinkTheme(),
+            home: Scaffold(
+              body: TrainerAppointmentsScreen(controller: controller),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const Key('trainer-appointment-status-filter')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Confirmed'), findsOneWidget);
+      expect(find.text('Completed'), findsOneWidget);
+      expect(find.text('Cancelled'), findsOneWidget);
+      expect(find.text('Pending'), findsNothing);
+      await tester.tap(find.text('Completed'));
+      await tester.pumpAndSettle();
+
+      expect(requestedStatuses, [null, '2']);
+      expect(requestedRanges, everyElement(isNotNull));
+      expect(find.text('Član Test'), findsOneWidget);
+
+      await tester.tap(find.text('Član Test'));
+      await tester.pumpAndSettle();
+      expect(find.byType(TrainerAppointmentDetails), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(requestedStatuses, hasLength(3));
+      expect(requestedStatuses.last, '2');
+
+      controller.refresh();
+      await tester.pumpAndSettle();
+      expect(requestedStatuses, hasLength(4));
+      expect(requestedStatuses.last, '2');
+
+      await tester.drag(find.byType(ListView).first, const Offset(0, 300));
+      await tester.pumpAndSettle();
+      expect(requestedStatuses, hasLength(5));
+      expect(requestedStatuses.last, '2');
+      expect(requestedRanges, everyElement(isNotNull));
+    },
+  );
 
   testWidgets('trainer completion uses user-facing confirmation copy', (
     tester,
