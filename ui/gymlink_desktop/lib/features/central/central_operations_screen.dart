@@ -178,7 +178,7 @@ class _GymPickerDialogState extends State<_GymPickerDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => GymLinkDialog(
     title: const Text('Odaberite teretanu'),
     content: SizedBox(
       width: 680,

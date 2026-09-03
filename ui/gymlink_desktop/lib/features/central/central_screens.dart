@@ -1945,8 +1945,9 @@ class _GymCreateDialogState extends State<_GymCreateDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => GymLinkDialog(
     title: const Text('Dodaj teretanu'),
+    closeEnabled: !_busy,
     content: SizedBox(
       width: 900,
       height: 700,
@@ -2363,8 +2364,9 @@ class _GymAdminManagementDialogState extends State<_GymAdminManagementDialog> {
   );
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => GymLinkDialog(
     title: const Text('Upravljaj GymAdminom'),
+    closeEnabled: !_busy,
     content: SizedBox(
       width: 560,
       child: SingleChildScrollView(
@@ -3073,8 +3075,9 @@ class _RoleDialogState extends State<_RoleDialog> {
   @override
   Widget build(BuildContext context) {
     final needsTenant = _role == 'GymAdmin';
-    return AlertDialog(
+    return GymLinkDialog(
       title: const Text('Dodijeli predefinisanu ulogu'),
+      closeEnabled: !_saving,
       content: SizedBox(
         width: 480,
         child: Form(
@@ -3297,8 +3300,9 @@ class _ReferenceDialogState extends State<_ReferenceDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => GymLinkDialog(
     title: Text(widget.value == null ? 'Novi zapis' : 'Uredi zapis'),
+    closeEnabled: !_saving,
     content: SizedBox(
       width: 440,
       child: Form(

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,9 +17,107 @@ import 'package:gymlink_desktop/features/auth/password_reset_screens.dart';
 import 'package:gymlink_desktop/features/gym_admin/gym_admin_screens.dart';
 import 'package:gymlink_desktop/features/notifications/notification_screen.dart';
 import 'package:gymlink_desktop/features/reporting/reporting_screens.dart';
+import 'package:gymlink_desktop/shared/widgets.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  test('all production dialogs use the shared desktop wrapper', () {
+    final directAlertDialogs = Directory('lib')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((file) => file.path.endsWith('.dart'))
+        .where((file) => file.readAsStringSync().contains('AlertDialog('))
+        .map((file) => file.path.replaceAll('\\', '/'))
+        .toList();
+
+    expect(directAlertDialogs, ['lib/shared/widgets.dart']);
+  });
+
+  testWidgets('dialog X is upper-right and cancels confirmation', (
+    tester,
+  ) async {
+    bool? confirmed;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () async {
+                confirmed = await confirmAction(
+                  context,
+                  title: 'Potvrda',
+                  message: 'Nastaviti?',
+                );
+              },
+              child: const Text('Otvori'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Otvori'));
+    await tester.pumpAndSettle();
+
+    final title = find.text('Potvrda');
+    final close = find.byKey(const Key('dialog-close'));
+    expect(find.byTooltip('Zatvori'), findsOneWidget);
+    expect(tester.getCenter(close).dx, greaterThan(tester.getCenter(title).dx));
+
+    await tester.tap(close);
+    await tester.pumpAndSettle();
+    expect(confirmed, isFalse);
+    expect(find.text('Potvrda'), findsNothing);
+  });
+
+  testWidgets('reason dialog X follows its in-flight submit lock', (
+    tester,
+  ) async {
+    final submitted = Completer<void>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () => submitReasonedAction(
+                context,
+                title: 'Razlog akcije',
+                onSubmit: (_) => submitted.future,
+              ),
+              child: const Text('Otvori razlog'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Otvori razlog'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Razlog'),
+      'Odobrena promjena',
+    );
+    await tester.tap(find.text('Potvrdi'));
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const Key('dialog-close')))
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, 'Odustani'))
+          .onPressed,
+      isNull,
+    );
+
+    submitted.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Razlog akcije'), findsNothing);
+  });
+
   testWidgets('global error banner resets its timeout and can be closed', (
     tester,
   ) async {
@@ -188,7 +287,7 @@ void main() {
       expect(saved, isTrue);
       expect(printed, isTrue);
 
-      await tester.tap(find.text('Zatvori'));
+      await tester.tap(find.byTooltip('Zatvori'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('export-pdf-menu')));
       await tester.pumpAndSettle();
@@ -960,6 +1059,31 @@ void main() {
     expect(find.text('Radno vrijeme'), findsWidgets);
   });
 
+  testWidgets('CentralAdmin X discards the gym form without creating', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1800, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _CentralAdminApi();
+    await tester.pumpWidget(_centralHarness(api));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Dodaj teretanu'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Naziv'),
+      'Nespremljena teretana',
+    );
+    await tester.tap(find.byKey(const Key('dialog-close')));
+    await tester.pumpAndSettle();
+
+    expect(api.creationBody, isNull);
+    expect(find.text('Nespremljena teretana'), findsNothing);
+    expect(find.text('Dodaj teretanu'), findsOneWidget);
+  });
+
   testWidgets('complete gym wizard sends activation-ready payload', (
     tester,
   ) async {
@@ -1648,6 +1772,39 @@ void main() {
     expect((api.savedSchedule?['shifts'] as List), isNotEmpty);
   });
 
+  testWidgets('GymAdmin X discards promotion without submitting', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _GymAdminTrainerApi();
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: TrainerManagementScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Dodaj trenera'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Biografija'),
+      'Ovaj unos ne smije biti poslan.',
+    );
+    await tester.tap(find.byKey(const Key('dialog-close')));
+    await tester.pumpAndSettle();
+
+    expect(api.promotionBody, isNull);
+    expect(find.text('Ovaj unos ne smije biti poslan.'), findsNothing);
+    expect(find.text('Lista trenera'), findsOneWidget);
+  });
+
   testWidgets('GymAdmin promotes an eligible active member to trainer', (
     tester,
   ) async {
@@ -2023,7 +2180,7 @@ void main() {
       expect(find.text('Napredak je bio vidljiv.'), findsOneWidget);
       expect(find.text('Stranica 2 od 2'), findsOneWidget);
 
-      await tester.tap(find.byType(CloseButton));
+      await tester.tap(find.byTooltip('Zatvori'));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('trainer-reviews-title')), findsNothing);
     },

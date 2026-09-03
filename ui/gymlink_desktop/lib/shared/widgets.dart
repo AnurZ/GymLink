@@ -99,6 +99,42 @@ String enumLabel(Object? value, List<String> values) {
   return value?.toString() ?? '';
 }
 
+class GymLinkDialog extends StatelessWidget {
+  const GymLinkDialog({
+    required this.title,
+    this.icon,
+    this.content,
+    this.actions,
+    this.closeEnabled = true,
+    super.key,
+  });
+
+  final Widget title;
+  final Widget? icon;
+  final Widget? content;
+  final List<Widget>? actions;
+  final bool closeEnabled;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    icon: icon,
+    title: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: title),
+        IconButton(
+          key: const Key('dialog-close'),
+          tooltip: 'Zatvori',
+          onPressed: closeEnabled ? () => Navigator.pop(context) : null,
+          icon: const Icon(Icons.close),
+        ),
+      ],
+    ),
+    content: content,
+    actions: actions,
+  );
+}
+
 Future<bool> confirmAction(
   BuildContext context, {
   required String title,
@@ -107,7 +143,7 @@ Future<bool> confirmAction(
 }) async =>
     await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => GymLinkDialog(
         title: Text(title),
         content: Text(message),
         actions: [
@@ -197,8 +233,9 @@ class _ReasonDialogState extends State<_ReasonDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => GymLinkDialog(
     title: Text(widget.title),
+    closeEnabled: !_busy,
     content: Form(
       key: _formKey,
       child: Column(

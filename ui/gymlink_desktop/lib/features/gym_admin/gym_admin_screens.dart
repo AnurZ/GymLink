@@ -335,7 +335,7 @@ class _TenantMembershipRequestsScreenState
       final membership = item['membership'] is Map
           ? Map<String, dynamic>.from(item['membership'] as Map)
           : null;
-      return AlertDialog(
+      return GymLinkDialog(
         title: const Text('Detalji zahtjeva'),
         content: SizedBox(
           width: 520,
@@ -894,7 +894,7 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
     if (!mounted) return;
     final addOffering = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => GymLinkDialog(
         icon: const Icon(Icons.warning_amber_rounded),
         title: const Text('Dodajte uslugu trenera'),
         content: Text(
@@ -1308,17 +1308,10 @@ class _TrainerReviewsDialogState extends State<_TrainerReviewsDialog> {
         : (_reviews!.totalCount / _pageSize).ceil();
     final canNavigate = !_loading && _error == null && _reviews != null;
 
-    return AlertDialog(
-      title: Row(
-        children: [
-          Expanded(
-            child: Text(
-              'Recenzije · ${widget.trainer['displayName']}',
-              key: const Key('trainer-reviews-title'),
-            ),
-          ),
-          CloseButton(onPressed: () => Navigator.pop(context)),
-        ],
+    return GymLinkDialog(
+      title: Text(
+        'Recenzije · ${widget.trainer['displayName']}',
+        key: const Key('trainer-reviews-title'),
       ),
       content: SizedBox(
         width: 680,
@@ -2780,8 +2773,9 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => GymLinkDialog(
     title: const Text('Dodaj trenera'),
+    closeEnabled: !_saving,
     content: SizedBox(
       width: 620,
       child: AsyncPanel(
@@ -3028,8 +3022,9 @@ class _OfferingDialogState extends State<_OfferingDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => GymLinkDialog(
     title: const Text('Nova usluga'),
+    closeEnabled: !_saving,
     content: SizedBox(
       width: 460,
       child: Form(
@@ -3229,8 +3224,9 @@ class _PlanDialogState extends State<_PlanDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => GymLinkDialog(
     title: const Text('Novi plan članstva'),
+    closeEnabled: !_saving,
     content: SizedBox(
       width: 420,
       child: Form(
@@ -3414,8 +3410,9 @@ class _GymEditorDialogState extends State<_GymEditorDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => GymLinkDialog(
     title: const Text('Uredi profil teretane'),
+    closeEnabled: !_saving,
     content: SizedBox(
       width: 720,
       child: Form(

@@ -150,7 +150,7 @@ class _GymAdminReportsScreenState extends State<GymAdminReportsScreen> {
       setState(() => _exporting = false);
       await showDialog<void>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
+        builder: (dialogContext) => GymLinkDialog(
           title: const Text('PDF izvještaj je spreman'),
           content: Text(
             report.recordCount == 0
