@@ -2787,13 +2787,6 @@ class _GymGalleryApi extends ApiClient {
         },
       };
     }
-    if (path == '/api/reference-data/lookups') {
-      return {
-        'cities': <Object>[],
-        'equipment': <Object>[],
-        'trainingTypes': <Object>[],
-      };
-    }
     throw StateError('Unexpected get request: $path');
   }
 
@@ -2804,6 +2797,11 @@ class _GymGalleryApi extends ApiClient {
   }) async {
     if (path == '/api/tenant/membership-plans') {
       return const PagedData(items: [], page: 1, pageSize: 50, totalCount: 0);
+    }
+    if (path == '/api/reference-data/cities' ||
+        path == '/api/reference-data/equipment' ||
+        path == '/api/reference-data/training-types') {
+      return const PagedData(items: [], page: 1, pageSize: 100, totalCount: 0);
     }
     throw StateError('Unexpected page request: $path');
   }
@@ -3559,23 +3557,17 @@ class _GymAdminTrainerApi extends ApiClient {
         totalCount: 1,
       );
     }
-    throw StateError('Unexpected page request: $path');
-  }
-
-  @override
-  Future<Object?> get(
-    String path, {
-    Map<String, Object?> query = const {},
-    bool authenticated = true,
-  }) async {
-    if (path == '/api/reference-data/lookups') {
-      return {
-        'trainingTypes': [
+    if (path == '/api/reference-data/training-types') {
+      return const PagedData(
+        items: [
           {'id': 'type-1', 'name': 'Funkcionalni trening'},
         ],
-      };
+        page: 1,
+        pageSize: 100,
+        totalCount: 1,
+      );
     }
-    throw StateError('Unexpected get request: $path');
+    throw StateError('Unexpected page request: $path');
   }
 
   @override

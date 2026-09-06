@@ -433,6 +433,26 @@ final class ApiClient {
     return PagedData.fromJson(Map<String, dynamic>.from(json! as Map));
   }
 
+  Future<List<Map<String, dynamic>>> allPages(
+    String path, {
+    Map<String, Object?> query = const {},
+    bool authenticated = true,
+  }) async {
+    const pageSize = 100;
+    var pageNumber = 1;
+    final items = <Map<String, dynamic>>[];
+    while (true) {
+      final result = await page(
+        path,
+        query: {...query, 'page': pageNumber, 'pageSize': pageSize},
+        authenticated: authenticated,
+      );
+      items.addAll(result.items);
+      if (!result.hasMore) return List.unmodifiable(items);
+      pageNumber++;
+    }
+  }
+
   Future<List<Map<String, dynamic>>> list(
     String path, {
     Map<String, Object?> query = const {},

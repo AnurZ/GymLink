@@ -479,4 +479,24 @@ class ApiClient {
       (await get(path, query: {'page': 1, 'pageSize': 50, ...query}))! as Map,
     ),
   );
+
+  Future<List<Map<String, dynamic>>> allPages(
+    String path, {
+    Map<String, Object?> query = const {},
+  }) async {
+    const pageSize = 100;
+    var pageNumber = 1;
+    final items = <Map<String, dynamic>>[];
+    while (true) {
+      final result = await page(
+        path,
+        query: {...query, 'page': pageNumber, 'pageSize': pageSize},
+      );
+      items.addAll(result.items);
+      if (result.page * result.pageSize >= result.totalCount) {
+        return List.unmodifiable(items);
+      }
+      pageNumber++;
+    }
+  }
 }

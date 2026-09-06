@@ -85,9 +85,3 @@ public sealed record UpdateTrainingTypeRequest : CreateTrainingTypeRequest
 {
     public bool IsActive { get; init; }
 }
-
-public sealed record ReferenceLookupsDto(
-    IReadOnlyList<CountryDto> Countries,
-    IReadOnlyList<CityDto> Cities,
-    IReadOnlyList<EquipmentDto> Equipment,
-    IReadOnlyList<TrainingTypeDto> TrainingTypes);

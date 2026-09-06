@@ -3,17 +3,13 @@ using GymLink.Application.Abstractions;
 using GymLink.Application.Common;
 using GymLink.Domain.ReferenceData;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Memory;
 
 namespace GymLink.Application.ReferenceData;
 
 public sealed class ReferenceDataService(
     IApplicationDbContext dbContext,
-    IMapper mapper,
-    IMemoryCache cache) : IReferenceDataService
+    IMapper mapper) : IReferenceDataService
 {
-    private const string LookupsCacheKey = "reference-data:active:v1";
-
     public Task<PagedResult<CountryDto>> SearchCountriesAsync(
         ReferenceSearchRequest request,
         CancellationToken cancellationToken)
@@ -54,7 +50,6 @@ public sealed class ReferenceDataService(
         var entity = new Country { Code = code, Name = name };
         dbContext.Countries.Add(entity);
         await dbContext.SaveChangesAsync(cancellationToken);
-        InvalidateLookups();
         return mapper.Map<CountryDto>(entity);
     }
 
@@ -77,7 +72,6 @@ public sealed class ReferenceDataService(
         entity.Name = name;
         entity.IsActive = request.IsActive;
         await dbContext.SaveChangesAsync(cancellationToken);
-        InvalidateLookups();
         return mapper.Map<CountryDto>(entity);
     }
 
@@ -142,7 +136,6 @@ public sealed class ReferenceDataService(
         var entity = new City { CountryId = request.CountryId, Name = name };
         dbContext.Cities.Add(entity);
         await dbContext.SaveChangesAsync(cancellationToken);
-        InvalidateLookups();
         return new CityDto(entity.Id, entity.CountryId, country.Name, entity.Name, entity.IsActive);
     }
 
@@ -169,7 +162,6 @@ public sealed class ReferenceDataService(
         entity.Name = name;
         entity.IsActive = request.IsActive;
         await dbContext.SaveChangesAsync(cancellationToken);
-        InvalidateLookups();
         return new CityDto(entity.Id, entity.CountryId, country.Name, entity.Name, entity.IsActive);
     }
 
@@ -195,7 +187,6 @@ public sealed class ReferenceDataService(
         var entity = new Equipment { Name = name };
         dbContext.Equipment.Add(entity);
         await dbContext.SaveChangesAsync(cancellationToken);
-        InvalidateLookups();
         return mapper.Map<EquipmentDto>(entity);
     }
 
@@ -210,7 +201,6 @@ public sealed class ReferenceDataService(
         entity.Name = name;
         entity.IsActive = request.IsActive;
         await dbContext.SaveChangesAsync(cancellationToken);
-        InvalidateLookups();
         return mapper.Map<EquipmentDto>(entity);
     }
 
@@ -236,7 +226,6 @@ public sealed class ReferenceDataService(
         var entity = new TrainingType { Name = name, Description = request.Description?.Trim() };
         dbContext.TrainingTypes.Add(entity);
         await dbContext.SaveChangesAsync(cancellationToken);
-        InvalidateLookups();
         return mapper.Map<TrainingTypeDto>(entity);
     }
 
@@ -252,54 +241,52 @@ public sealed class ReferenceDataService(
         entity.Description = request.Description?.Trim();
         entity.IsActive = request.IsActive;
         await dbContext.SaveChangesAsync(cancellationToken);
-        InvalidateLookups();
         return mapper.Map<TrainingTypeDto>(entity);
     }
 
     public Task DeleteTrainingTypeAsync(Guid id, CancellationToken cancellationToken) =>
         DeleteAsync(dbContext.TrainingTypes, id, "training_type_not_found", cancellationToken);
 
-    public async Task<ReferenceLookupsDto> GetActiveLookupsAsync(CancellationToken cancellationToken)
-    {
-        var result = await cache.GetOrCreateAsync(
-            LookupsCacheKey,
-            async entry =>
-            {
-                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10);
-                var countries = await dbContext.Countries.AsNoTracking()
-                    .Where(x => x.IsActive)
-                    .OrderBy(x => x.Name)
-                    .ThenBy(x => x.Id)
-                    .Select(x => new CountryDto(x.Id, x.Code, x.Name, x.IsActive))
-                    .Take(PagedRequest.MaximumPageSize)
-                    .ToListAsync(cancellationToken);
-                var cities = await (
-                        from city in dbContext.Cities.AsNoTracking()
-                        join country in dbContext.Countries.AsNoTracking()
-                            on city.CountryId equals country.Id
-                        where city.IsActive && country.IsActive
-                        orderby country.Name, city.Name, city.Id
-                        select new CityDto(city.Id, city.CountryId, country.Name, city.Name, city.IsActive))
-                    .Take(PagedRequest.MaximumPageSize)
-                    .ToListAsync(cancellationToken);
-                var equipment = await dbContext.Equipment.AsNoTracking()
-                    .Where(x => x.IsActive)
-                    .OrderBy(x => x.Name)
-                    .ThenBy(x => x.Id)
-                    .Select(x => new EquipmentDto(x.Id, x.Name, x.IsActive))
-                    .Take(PagedRequest.MaximumPageSize)
-                    .ToListAsync(cancellationToken);
-                var trainingTypes = await dbContext.TrainingTypes.AsNoTracking()
-                    .Where(x => x.IsActive)
-                    .OrderBy(x => x.Name)
-                    .ThenBy(x => x.Id)
-                    .Select(x => new TrainingTypeDto(x.Id, x.Name, x.Description, x.IsActive))
-                    .Take(PagedRequest.MaximumPageSize)
-                    .ToListAsync(cancellationToken);
-                return new ReferenceLookupsDto(countries, cities, equipment, trainingTypes);
-            });
-        return result!;
-    }
+    public Task<PagedResult<CountryDto>> GetActiveCountriesAsync(
+        PagedRequest request,
+        CancellationToken cancellationToken) =>
+        dbContext.Countries.AsNoTracking()
+            .Where(x => x.IsActive)
+            .OrderBy(x => x.Name)
+            .ThenBy(x => x.Id)
+            .Select(x => new CountryDto(x.Id, x.Code, x.Name, x.IsActive))
+            .ToPagedResultAsync(request, cancellationToken);
+
+    public Task<PagedResult<CityDto>> GetActiveCitiesAsync(
+        PagedRequest request,
+        CancellationToken cancellationToken) =>
+        (from city in dbContext.Cities.AsNoTracking()
+         join country in dbContext.Countries.AsNoTracking()
+             on city.CountryId equals country.Id
+         where city.IsActive && country.IsActive
+         orderby country.Name, city.Name, city.Id
+         select new CityDto(city.Id, city.CountryId, country.Name, city.Name, city.IsActive))
+        .ToPagedResultAsync(request, cancellationToken);
+
+    public Task<PagedResult<EquipmentDto>> GetActiveEquipmentAsync(
+        PagedRequest request,
+        CancellationToken cancellationToken) =>
+        dbContext.Equipment.AsNoTracking()
+            .Where(x => x.IsActive)
+            .OrderBy(x => x.Name)
+            .ThenBy(x => x.Id)
+            .Select(x => new EquipmentDto(x.Id, x.Name, x.IsActive))
+            .ToPagedResultAsync(request, cancellationToken);
+
+    public Task<PagedResult<TrainingTypeDto>> GetActiveTrainingTypesAsync(
+        PagedRequest request,
+        CancellationToken cancellationToken) =>
+        dbContext.TrainingTypes.AsNoTracking()
+            .Where(x => x.IsActive)
+            .OrderBy(x => x.Name)
+            .ThenBy(x => x.Id)
+            .Select(x => new TrainingTypeDto(x.Id, x.Name, x.Description, x.IsActive))
+            .ToPagedResultAsync(request, cancellationToken);
 
     private static IQueryable<T> ApplyReferenceFilter<T>(
         IQueryable<T> query,
@@ -342,7 +329,6 @@ public sealed class ReferenceDataService(
                 exception);
         }
 
-        InvalidateLookups();
     }
 
     private static async Task<T> FindRequiredAsync<T>(
@@ -377,5 +363,4 @@ public sealed class ReferenceDataService(
         }
     }
 
-    private void InvalidateLookups() => cache.Remove(LookupsCacheKey);
 }

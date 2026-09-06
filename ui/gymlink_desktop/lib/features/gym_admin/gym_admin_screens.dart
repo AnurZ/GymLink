@@ -1004,8 +1004,8 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
   Future<void> _addOffering({String? trainerId}) async {
     final api = context.read<ApiClient>();
     try {
-      final lookups = Map<String, dynamic>.from(
-        (await api.get('/api/reference-data/lookups'))! as Map,
+      final trainingTypes = await api.allPages(
+        '/api/reference-data/training-types',
       );
       if (!mounted) return;
       final saved = await showDialog<bool>(
@@ -1014,10 +1014,7 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
           trainers: _trainers
               .where((item) => item['isActive'] == true)
               .toList(),
-          types: (lookups['trainingTypes'] as List? ?? const [])
-              .whereType<Map>()
-              .map((item) => Map<String, dynamic>.from(item))
-              .toList(),
+          types: trainingTypes,
           initialTrainerId: trainerId,
           onSubmit: (body) =>
               api.post('/api/tenant/trainer-offerings', body: body),
@@ -2048,12 +2045,18 @@ class _GymCatalogScreenState extends State<GymCatalogScreen> {
       final results = await Future.wait([
         api.get('/api/tenant/gym'),
         api.page('/api/tenant/membership-plans'),
-        api.get('/api/reference-data/lookups'),
+        api.allPages('/api/reference-data/cities'),
+        api.allPages('/api/reference-data/equipment'),
+        api.allPages('/api/reference-data/training-types'),
       ]);
       _gym = Map<String, dynamic>.from(results[0]! as Map);
       _resetGalleryDraft();
       _plans = (results[1] as PagedData).items;
-      _lookups = Map<String, dynamic>.from(results[2]! as Map);
+      _lookups = {
+        'cities': results[2],
+        'equipment': results[3],
+        'trainingTypes': results[4],
+      };
       _error = null;
     } catch (error) {
       _error = error;
@@ -2706,14 +2709,12 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
           '/api/tenant/trainer-candidates',
           query: {'query': _search.text.trim()},
         ),
-        api.get('/api/reference-data/lookups'),
+        api.allPages('/api/reference-data/training-types'),
       ]);
       _candidates = (results[0] as PagedData).items;
-      final lookups = Map<String, dynamic>.from(results[1]! as Map);
-      _trainingTypes = (lookups['trainingTypes'] as List? ?? const [])
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .toList(growable: false);
+      _trainingTypes = List<Map<String, dynamic>>.unmodifiable(
+        results[1] as List<Map<String, dynamic>>,
+      );
       if (!_candidates.contains(_candidate)) {
         _candidate = _candidates.firstOrNull;
       }

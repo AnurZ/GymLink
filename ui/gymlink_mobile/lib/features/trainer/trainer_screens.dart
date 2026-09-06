@@ -943,18 +943,13 @@ class _TrainerOfferingsScreenState extends State<TrainerOfferingsScreen> {
   Future<void> _create() async {
     final api = context.read<ApiClient>();
     try {
-      final lookups = Map<String, dynamic>.from(
-        (await api.get('/api/reference-data/lookups'))! as Map,
+      final trainingTypes = await api.allPages(
+        '/api/reference-data/training-types',
       );
       if (!mounted) return;
       final created = await showDialog<bool>(
         context: context,
-        builder: (_) => _OfferingDialog(
-          trainingTypes: (lookups['trainingTypes'] as List? ?? const [])
-              .whereType<Map>()
-              .map((item) => Map<String, dynamic>.from(item))
-              .toList(),
-        ),
+        builder: (_) => _OfferingDialog(trainingTypes: trainingTypes),
       );
       if (created == true) await _load();
     } on ApiProblem catch (error) {

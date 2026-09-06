@@ -64,16 +64,26 @@ void main() {
           },
         ]);
       }
-      if (request.url.path == '/api/reference-data/lookups') {
+      if (request.url.path == '/api/reference-data/cities') {
         return _jsonResponse({
-          'cities': [
+          'items': [
             {'id': 'city-1', 'name': 'Sarajevo'},
             {'id': 'city-2', 'name': 'Mostar'},
           ],
-          'trainingTypes': [
+          'page': 1,
+          'pageSize': 100,
+          'totalCount': 2,
+        });
+      }
+      if (request.url.path == '/api/reference-data/training-types') {
+        return _jsonResponse({
+          'items': [
             {'id': 'type-1', 'name': 'Snaga'},
             {'id': 'type-2', 'name': 'Yoga'},
           ],
+          'page': 1,
+          'pageSize': 100,
+          'totalCount': 2,
         });
       }
       if (request.url.path == '/api/me/preferences' &&

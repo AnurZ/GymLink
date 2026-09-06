@@ -128,7 +128,7 @@ void main() {
       }),
     );
 
-    await api.get('/api/reference-data/lookups');
+    await api.get('/api/reference-data/training-types');
     await api.get('/api/trainers/trainer-1/reviews');
 
     expect(
@@ -178,7 +178,7 @@ void main() {
       }),
     );
 
-    await api.get('/api/reference-data/lookups');
+    await api.get('/api/reference-data/training-types');
 
     expect(tokens.refreshCount, 1);
     expect(tokens.invalidateCount, 0);
@@ -186,6 +186,36 @@ void main() {
       'Bearer old-token',
       'Bearer new-token',
     ]);
+  });
+
+  test('allPages follows bounded lookup pagination', () async {
+    final captured = <http.Request>[];
+    final api = ApiClient(
+      _AuthenticatedTokens(),
+      baseUrlOverride: 'https://example.test',
+      httpClient: MockClient((request) async {
+        captured.add(request);
+        final page = int.parse(request.url.queryParameters['page']!);
+        return http.Response(
+          jsonEncode({
+            'items': [
+              {'id': 'city-$page'},
+            ],
+            'page': page,
+            'pageSize': 100,
+            'totalCount': 101,
+          }),
+          200,
+        );
+      }),
+    );
+
+    final items = await api.allPages('/api/reference-data/cities');
+
+    expect(items.map((item) => item['id']), ['city-1', 'city-2']);
+    expect(captured, hasLength(2));
+    expect(captured[0].url.queryParameters, {'page': '1', 'pageSize': '100'});
+    expect(captured[1].url.queryParameters, {'page': '2', 'pageSize': '100'});
   });
 
   test('trainer image URLs and multipart upload use the API origin', () async {

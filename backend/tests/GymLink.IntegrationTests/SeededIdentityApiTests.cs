@@ -137,6 +137,13 @@ public sealed class SeededIdentityApiTests
                 await client.GetStringAsync($"/api/trainers/{trainerId}/offerings?page=1&pageSize=1"));
             var offeringId = offerings.RootElement.GetProperty("items")[0].GetProperty("id").GetGuid();
             var localDate = DateOnly.FromDateTime(DateTime.UtcNow);
+            var lookupPaths = new[]
+            {
+                "/api/reference-data/countries?page=1&pageSize=1",
+                "/api/reference-data/cities?page=1&pageSize=1",
+                "/api/reference-data/equipment?page=1&pageSize=1",
+                "/api/reference-data/training-types?page=1&pageSize=1",
+            };
             var protectedPaths = new[]
             {
                 "/api/gyms?page=1&pageSize=1",
@@ -151,8 +158,7 @@ public sealed class SeededIdentityApiTests
                     $"&toLocalDate={localDate:yyyy-MM-dd}",
                 $"/api/trainers/{trainerId}/reviews?page=1&pageSize=1",
                 $"/api/gyms/{gymId}/reviews?page=1&pageSize=1",
-                "/api/reference-data/lookups",
-            };
+            }.Concat(lookupPaths).ToArray();
 
             client.DefaultRequestHeaders.Authorization = null;
             foreach (var path in protectedPaths)
@@ -176,9 +182,15 @@ public sealed class SeededIdentityApiTests
                 Authorize(client, session);
                 (await client.GetAsync("/api/gyms?page=1&pageSize=1"))
                     .EnsureSuccessStatusCode();
-                (await client.GetAsync("/api/reference-data/lookups"))
-                    .EnsureSuccessStatusCode();
+                foreach (var path in lookupPaths)
+                {
+                    (await client.GetAsync(path)).EnsureSuccessStatusCode();
+                }
             }
+
+            Assert.Equal(
+                HttpStatusCode.BadRequest,
+                (await client.GetAsync("/api/reference-data/equipment?page=1&pageSize=101")).StatusCode);
 
             client.DefaultRequestHeaders.Authorization = null;
             var refreshed = await client.PostAsJsonAsync(

@@ -166,11 +166,11 @@ final class RecommendationRepository {
 
   Future<({List<PreferenceLookup> cities, List<PreferenceLookup> types})>
   getLookups() async {
-    final json = Map<String, dynamic>.from(
-      (await _api.get('/api/reference-data/lookups'))! as Map,
-    );
-    List<PreferenceLookup> parse(String key) => (json[key] as List? ?? const [])
-        .whereType<Map>()
+    final results = await Future.wait([
+      _api.allPages('/api/reference-data/cities'),
+      _api.allPages('/api/reference-data/training-types'),
+    ]);
+    List<PreferenceLookup> parse(List<Map<String, dynamic>> items) => items
         .map(
           (item) => PreferenceLookup(
             id: item['id'].toString(),
@@ -178,7 +178,7 @@ final class RecommendationRepository {
           ),
         )
         .toList(growable: false);
-    return (cities: parse('cities'), types: parse('trainingTypes'));
+    return (cities: parse(results[0]), types: parse(results[1]));
   }
 
   String? mediaUrl(String? value) => _api.mediaUrl(value);

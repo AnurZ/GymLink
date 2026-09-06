@@ -24,5 +24,8 @@ public interface IReferenceDataService
     Task<TrainingTypeDto> UpdateTrainingTypeAsync(Guid id, UpdateTrainingTypeRequest request, CancellationToken cancellationToken);
     Task DeleteTrainingTypeAsync(Guid id, CancellationToken cancellationToken);
 
-    Task<ReferenceLookupsDto> GetActiveLookupsAsync(CancellationToken cancellationToken);
+    Task<PagedResult<CountryDto>> GetActiveCountriesAsync(PagedRequest request, CancellationToken cancellationToken);
+    Task<PagedResult<CityDto>> GetActiveCitiesAsync(PagedRequest request, CancellationToken cancellationToken);
+    Task<PagedResult<EquipmentDto>> GetActiveEquipmentAsync(PagedRequest request, CancellationToken cancellationToken);
+    Task<PagedResult<TrainingTypeDto>> GetActiveTrainingTypesAsync(PagedRequest request, CancellationToken cancellationToken);
 }

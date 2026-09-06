@@ -461,6 +461,7 @@ void main() {
     'trainer offering validates fields inline and keeps dialog open',
     (tester) async {
       var postCount = 0;
+      final lookupPages = <String?>[];
       final api = ApiClient(
         _TestTokenSource(),
         baseUrlOverride: 'http://test.local',
@@ -469,11 +470,18 @@ void main() {
               request.method == 'GET') {
             return _jsonResponse(_page(const []));
           }
-          if (request.url.path == '/api/reference-data/lookups') {
+          if (request.url.path == '/api/reference-data/training-types') {
+            final page = request.url.queryParameters['page'];
+            lookupPages.add(page);
             return _jsonResponse({
-              'trainingTypes': [
-                {'id': 'type-1', 'name': 'Individualni trening'},
+              'items': [
+                page == '1'
+                    ? {'id': 'type-1', 'name': 'Individualni trening'}
+                    : {'id': 'type-2', 'name': 'Druga stranica'},
               ],
+              'page': int.parse(page!),
+              'pageSize': 100,
+              'totalCount': 101,
             });
           }
           if (request.url.path == '/api/tenant/trainer-offerings' &&
@@ -496,6 +504,12 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.tap(find.text('Dodaj uslugu'));
+      await tester.pumpAndSettle();
+      expect(lookupPages, ['1', '2']);
+      await tester.tap(find.text('Individualni trening'));
+      await tester.pumpAndSettle();
+      expect(find.text('Druga stranica'), findsOneWidget);
+      await tester.tap(find.text('Druga stranica'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Sačuvaj'));
       await tester.pump();
@@ -531,12 +545,12 @@ void main() {
             request.method == 'GET') {
           return _jsonResponse(_page(const []));
         }
-        if (request.url.path == '/api/reference-data/lookups') {
-          return _jsonResponse({
-            'trainingTypes': [
+        if (request.url.path == '/api/reference-data/training-types') {
+          return _jsonResponse(
+            _page([
               {'id': 'type-1', 'name': 'Individualni trening'},
-            ],
-          });
+            ]),
+          );
         }
         postCount++;
         return _jsonResponse(

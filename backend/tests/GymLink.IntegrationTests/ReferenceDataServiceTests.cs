@@ -5,7 +5,6 @@ using GymLink.Application.ReferenceData;
 using GymLink.Domain.ReferenceData;
 using GymLink.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace GymLink.IntegrationTests;
@@ -13,7 +12,7 @@ namespace GymLink.IntegrationTests;
 public sealed class ReferenceDataServiceTests
 {
     [Fact]
-    public async Task Crud_search_and_lookup_cache_invalidation_round_trip_on_sql_server()
+    public async Task Crud_search_and_active_lookup_pagination_round_trip_on_sql_server()
     {
         var databaseName = $"GymLink_Phase2_{Guid.NewGuid():N}";
         var connectionString = TestSqlServer.ConnectionString(databaseName);
@@ -28,33 +27,67 @@ public sealed class ReferenceDataServiceTests
                 .BuildServiceProvider();
             var service = new ReferenceDataService(
                 context,
-                provider.GetRequiredService<IMapper>(),
-                provider.GetRequiredService<IMemoryCache>());
+                provider.GetRequiredService<IMapper>());
 
             var country = await service.CreateCountryAsync(
                 new CreateCountryRequest { Code = " bih ", Name = " Bosnia and Herzegovina " },
                 CancellationToken.None);
+            var inactiveCountry = new Country
+            {
+                Code = "XX",
+                Name = "Inactive country",
+                IsActive = false,
+            };
+            context.Countries.Add(inactiveCountry);
             context.Equipment.AddRange(Enumerable.Range(0, 101).Select(index => new Equipment
             {
                 Name = $"Equipment {index:D3}",
             }));
+            context.Equipment.Add(new Equipment { Name = "Inactive equipment", IsActive = false });
+            context.TrainingTypes.AddRange(
+                new TrainingType { Name = "Strength" },
+                new TrainingType { Name = "Inactive type", IsActive = false });
             await context.SaveChangesAsync();
-            var initialLookups = await service.GetActiveLookupsAsync(CancellationToken.None);
             var city = await service.CreateCityAsync(
                 new CreateCityRequest { CountryId = country.Id, Name = " Sarajevo " },
                 CancellationToken.None);
-            var refreshedLookups = await service.GetActiveLookupsAsync(CancellationToken.None);
+            context.Cities.AddRange(
+                new City { CountryId = country.Id, Name = "Inactive city", IsActive = false },
+                new City { CountryId = inactiveCountry.Id, Name = "Hidden parent city" });
+            await context.SaveChangesAsync();
+
+            var countries = await service.GetActiveCountriesAsync(
+                new PagedRequest(),
+                CancellationToken.None);
+            var cities = await service.GetActiveCitiesAsync(
+                new PagedRequest(),
+                CancellationToken.None);
+            var firstEquipmentPage = await service.GetActiveEquipmentAsync(
+                new PagedRequest { Page = 1, PageSize = PagedRequest.MaximumPageSize },
+                CancellationToken.None);
+            var secondEquipmentPage = await service.GetActiveEquipmentAsync(
+                new PagedRequest { Page = 2, PageSize = PagedRequest.MaximumPageSize },
+                CancellationToken.None);
+            var trainingTypes = await service.GetActiveTrainingTypesAsync(
+                new PagedRequest(),
+                CancellationToken.None);
             var search = await service.SearchCitiesAsync(
                 new CitySearchRequest { Query = "Sara", Page = 1, PageSize = 10 },
                 CancellationToken.None);
 
             Assert.Equal("BIH", country.Code);
-            Assert.Equal(PagedRequest.MaximumPageSize, initialLookups.Equipment.Count);
-            Assert.Equal("Equipment 000", initialLookups.Equipment[0].Name);
-            Assert.Equal("Equipment 099", initialLookups.Equipment[^1].Name);
-            Assert.Empty(initialLookups.Cities);
-            Assert.Single(refreshedLookups.Cities);
-            Assert.Equal(city.Id, refreshedLookups.Cities[0].Id);
+            Assert.Single(countries.Items);
+            Assert.Equal(country.Id, countries.Items[0].Id);
+            Assert.Single(cities.Items);
+            Assert.Equal(city.Id, cities.Items[0].Id);
+            Assert.Equal(101, firstEquipmentPage.TotalCount);
+            Assert.Equal(PagedRequest.MaximumPageSize, firstEquipmentPage.Items.Count);
+            Assert.Equal("Equipment 000", firstEquipmentPage.Items[0].Name);
+            Assert.Equal("Equipment 099", firstEquipmentPage.Items[^1].Name);
+            Assert.Single(secondEquipmentPage.Items);
+            Assert.Equal("Equipment 100", secondEquipmentPage.Items[0].Name);
+            Assert.Single(trainingTypes.Items);
+            Assert.Equal("Strength", trainingTypes.Items[0].Name);
             Assert.Single(search.Items);
             Assert.Equal(1, search.TotalCount);
 

@@ -134,7 +134,10 @@ void main() {
       '/api/trainers/trainer-1/availability-calendar',
       '/api/trainers/trainer-1/reviews',
       '/api/gyms/gym-1/reviews',
-      '/api/reference-data/lookups',
+      '/api/reference-data/countries',
+      '/api/reference-data/cities',
+      '/api/reference-data/equipment',
+      '/api/reference-data/training-types',
     ];
 
     for (final path in paths) {
@@ -146,6 +149,36 @@ void main() {
       captured.map((request) => request.headers['authorization']).toSet(),
       {'Bearer token'},
     );
+  });
+
+  test('allPages follows bounded lookup pagination', () async {
+    final captured = <http.Request>[];
+    final api = ApiClient(
+      _AuthenticatedTokens(),
+      baseUrlOverride: 'https://example.test',
+      httpClient: MockClient((request) async {
+        captured.add(request);
+        final page = int.parse(request.url.queryParameters['page']!);
+        return http.Response(
+          jsonEncode({
+            'items': [
+              {'id': 'type-$page'},
+            ],
+            'page': page,
+            'pageSize': 100,
+            'totalCount': 101,
+          }),
+          200,
+        );
+      }),
+    );
+
+    final items = await api.allPages('/api/reference-data/training-types');
+
+    expect(items.map((item) => item['id']), ['type-1', 'type-2']);
+    expect(captured, hasLength(2));
+    expect(captured[0].url.queryParameters, {'page': '1', 'pageSize': '100'});
+    expect(captured[1].url.queryParameters, {'page': '2', 'pageSize': '100'});
   });
 
   test('auth calls remain anonymous even when a token exists', () async {

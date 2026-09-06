@@ -8,6 +8,7 @@ using GymLink.Application.Common;
 using GymLink.Application.Identity;
 using GymLink.Application.Memberships;
 using GymLink.Application.Payments;
+using GymLink.Application.ReferenceData;
 using GymLink.Contracts.Messaging.V1;
 using GymLink.Domain.Common;
 using GymLink.Domain.Enums;
@@ -177,12 +178,10 @@ public sealed class Phase4MembershipApiTests
             Assert.NotNull(candidates);
             var candidate = Assert.Single(candidates.Items);
             Assert.Equal(member.User.Id, candidate.UserId);
-            using var lookups = JsonDocument.Parse(
-                await client.GetStringAsync("/api/reference-data/lookups"));
-            var trainingTypeId = lookups.RootElement
-                .GetProperty("trainingTypes")[0]
-                .GetProperty("id")
-                .GetGuid();
+            var trainingTypes = await client.GetFromJsonAsync<PagedResult<TrainingTypeDto>>(
+                "/api/reference-data/training-types?page=1&pageSize=100");
+            Assert.NotNull(trainingTypes);
+            var trainingTypeId = trainingTypes.Items[0].Id;
 
             var promotion = await client.PostAsJsonAsync(
                 "/api/tenant/trainers",
