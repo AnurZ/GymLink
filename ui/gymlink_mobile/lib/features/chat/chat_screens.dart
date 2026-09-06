@@ -760,7 +760,7 @@ class _Composer extends StatelessWidget {
           children: [
             IconButton(
               key: const Key('chat-image-picker'),
-              tooltip: 'PoÅ¡alji sliku',
+              tooltip: 'Pošalji sliku',
               onPressed: sending || sendingImage ? null : onImage,
               icon: sendingImage
                   ? const SizedBox.square(

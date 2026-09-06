@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gymlink_mobile/core/api.dart';
@@ -76,6 +78,44 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('byte transport failures preserve correct Bosnian copy', () async {
+    final failures = <({Object error, String code, String message})>[
+      (
+        error: TimeoutException('timed out'),
+        code: 'request_timeout',
+        message: 'Zahtjev je istekao. Provjerite vezu i pokušajte ponovo.',
+      ),
+      (
+        error: const SocketException('offline'),
+        code: 'network_unavailable',
+        message: 'Nije moguće povezati se sa serverom.',
+      ),
+      (
+        error: http.ClientException('offline'),
+        code: 'network_error',
+        message: 'Mrežni zahtjev nije uspio. Pokušajte ponovo.',
+      ),
+    ];
+
+    for (final failure in failures) {
+      final api = ApiClient(
+        _Tokens(),
+        baseUrlOverride: 'https://example.test',
+        httpClient: MockClient((_) async => throw failure.error),
+      );
+
+      await expectLater(
+        api.getBytes('/uploads/image.jpg'),
+        throwsA(
+          isA<ApiProblem>()
+              .having((problem) => problem.code, 'code', failure.code)
+              .having((problem) => problem.message, 'message', failure.message),
+        ),
+      );
+      api.close();
+    }
   });
 
   test('paged responses keep bounded query metadata', () {

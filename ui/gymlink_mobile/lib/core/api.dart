@@ -234,19 +234,19 @@ final class ApiClient {
       throw ApiProblem(
         status: 0,
         code: 'request_timeout',
-        message: 'Zahtjev je istekao. Provjerite vezu i pokuÅ¡ajte ponovo.',
+        message: 'Zahtjev je istekao. Provjerite vezu i pokušajte ponovo.',
       );
     } on SocketException {
       throw ApiProblem(
         status: 0,
         code: 'network_unavailable',
-        message: 'Nije moguÄ‡e povezati se sa serverom.',
+        message: 'Nije moguće povezati se sa serverom.',
       );
     } on http.ClientException {
       throw ApiProblem(
         status: 0,
         code: 'network_error',
-        message: 'MreÅ¾ni zahtjev nije uspio. PokuÅ¡ajte ponovo.',
+        message: 'Mrežni zahtjev nije uspio. Pokušajte ponovo.',
       );
     }
   }

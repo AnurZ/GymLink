@@ -537,7 +537,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('chat-image-picker')));
+    final imagePicker = find.byKey(const Key('chat-image-picker'));
+    expect(tester.widget<IconButton>(imagePicker).tooltip, 'Pošalji sliku');
+
+    await tester.tap(imagePicker);
     await tester.pumpAndSettle();
 
     expect(repository.sentImageCount, 1);
@@ -547,7 +550,7 @@ void main() {
       normalizeChatImage(_jpegBytes(), 'downloaded.webp')!.fileName,
       'downloaded.jpg',
     );
-    expect(find.byKey(const Key('chat-image-picker')), findsOneWidget);
+    expect(imagePicker, findsOneWidget);
     expect(find.byType(Image), findsOneWidget);
     expect(find.text('Slika'), findsNothing);
   });
