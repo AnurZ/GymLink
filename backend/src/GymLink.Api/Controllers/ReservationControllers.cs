@@ -193,7 +193,7 @@ public sealed class MyTrainerReservationsController(IReservationService service)
 {
     [HttpGet]
     public async Task<IActionResult> Search(
-        [FromQuery] ReservationSearchRequest request,
+        [FromQuery] StaffReservationSearchRequest request,
         CancellationToken cancellationToken) =>
         Ok(await service.SearchTrainerAsync(request, cancellationToken));
 
@@ -209,20 +209,13 @@ public sealed class TenantReservationsController(IReservationService service) : 
 {
     [HttpGet]
     public async Task<IActionResult> Search(
-        [FromQuery] ReservationSearchRequest request,
+        [FromQuery] StaffReservationSearchRequest request,
         CancellationToken cancellationToken) =>
         Ok(await service.SearchTenantAsync(request, cancellationToken));
 
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> Get(Guid id, CancellationToken cancellationToken) =>
         Ok(await service.GetTenantAsync(id, cancellationToken));
-
-    [HttpPost("{id:guid}/confirm")]
-    public async Task<IActionResult> Confirm(
-        Guid id,
-        ReservationConcurrencyRequest request,
-        CancellationToken cancellationToken) =>
-        Ok(await service.ConfirmAsync(id, request, cancellationToken));
 
     [HttpPost("{id:guid}/cancel")]
     public async Task<IActionResult> Cancel(

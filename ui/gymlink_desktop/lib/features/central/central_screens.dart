@@ -9,7 +9,7 @@ import 'package:provider/provider.dart';
 import '../../core/api.dart';
 import '../../shared/widgets.dart';
 
-const _registrationStatuses = ['Draft', 'Submitted', 'Approved', 'Rejected'];
+const _registrationStatuses = {1: 'Submitted', 2: 'Approved', 3: 'Rejected'};
 const _gymAdminEligibilityHint =
     'Registrujte novi aktivni korisnički račun kroz mobilnu aplikaciju. '
     'Račun mora imati ulogu člana, bez aktivnog članstva i bez druge aktivne '
@@ -233,11 +233,10 @@ class _RegistrationManagementScreenState
             decoration: const InputDecoration(labelText: 'Status pregleda'),
             items: [
               const DropdownMenuItem(value: null, child: Text('Svi statusi')),
-              ...List.generate(
-                _registrationStatuses.length,
-                (index) => DropdownMenuItem(
-                  value: index,
-                  child: Text(_registrationStatuses[index]),
+              ..._registrationStatuses.entries.map(
+                (entry) => DropdownMenuItem(
+                  value: entry.key,
+                  child: Text(entry.value),
                 ),
               ),
             ],
@@ -321,10 +320,8 @@ class _RegistrationManagementScreenState
                               ),
                               DataCell(
                                 StatusPill(
-                                  enumLabel(
-                                    item['status'],
-                                    _registrationStatuses,
-                                  ),
+                                  _registrationStatuses[status] ??
+                                      'Unknown (${item['status']})',
                                 ),
                               ),
                               DataCell(

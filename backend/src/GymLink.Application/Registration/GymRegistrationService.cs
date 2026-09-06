@@ -97,6 +97,7 @@ internal sealed class GymRegistrationService(
         RegistrationSearchRequest request,
         CancellationToken cancellationToken)
     {
+        ValidateSearchStatus(request);
         var userId = RequireUser();
         var query =
                 from registration in dbContext.GymRegistrationRequests.AsNoTracking()
@@ -134,6 +135,7 @@ internal sealed class GymRegistrationService(
         RegistrationSearchRequest request,
         CancellationToken cancellationToken)
     {
+        ValidateSearchStatus(request);
         var query =
             from registration in dbContext.GymRegistrationRequests.AsNoTracking()
             join city in dbContext.Cities.AsNoTracking() on registration.CityId equals city.Id
@@ -322,6 +324,17 @@ internal sealed class GymRegistrationService(
             ?? throw new NotFoundException(
                 "registration_not_found",
                 "The registration request was not found.");
+    }
+
+    private static void ValidateSearchStatus(RegistrationSearchRequest request)
+    {
+        request.Validate();
+        if (request.Status.HasValue && !Enum.IsDefined(request.Status.Value))
+        {
+            throw new ApplicationRuleException(
+                "registration_status_invalid",
+                "Registration status must be Submitted, Approved, or Rejected.");
+        }
     }
 
     private async Task<GymRegistrationRequest> GetSubmittedEntityAsync(

@@ -35,7 +35,7 @@ public sealed class AdminOperationsController(
     [HttpGet("reservations")]
     public async Task<IActionResult> SearchReservations(
         Guid gymId,
-        [FromQuery] ReservationSearchRequest request,
+        [FromQuery] StaffReservationSearchRequest request,
         CancellationToken cancellationToken) =>
         Ok(await reservations.SearchAdminGymAsync(gymId, request, cancellationToken));
 

@@ -269,37 +269,6 @@ public sealed class Phase9ChatApiTests
                 HttpStatusCode.NotFound,
                 (await client.GetAsync(imageMessage.ImageUrl)).StatusCode);
 
-            var availableConversation = new TaskCompletionSource<Guid>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-            hub.On<JsonElement>(
-                "conversation:available",
-                payload =>
-                    availableConversation.TrySetResult(
-                        payload.GetProperty("conversationId").GetGuid()));
-            var pendingReservationId = await SeedReservationAsync(
-                connectionString,
-                nonParticipant.User.Id,
-                trainer.User.Id,
-                confirmed: false,
-                startInDays: 3);
-            Authorize(client, admin);
-            var pendingReservation = await client.GetFromJsonAsync<ReservationDto>(
-                $"/api/tenant/reservations/{pendingReservationId}");
-            Assert.NotNull(pendingReservation);
-            var confirmation = await client.PostAsJsonAsync(
-                $"/api/tenant/reservations/{pendingReservationId}/confirm",
-                new { concurrencyToken = pendingReservation.ConcurrencyToken });
-            confirmation.EnsureSuccessStatusCode();
-            var availableId = await availableConversation.Task.WaitAsync(
-                TimeSpan.FromSeconds(10));
-            Authorize(client, nonParticipant);
-            var automaticallyAvailable =
-                await client.GetFromJsonAsync<ConversationDto>(
-                    $"/api/me/conversations/{availableId}");
-            Assert.Equal(
-                pendingReservationId,
-                automaticallyAvailable!.OriginatingReservationId);
-
             await using (var tieContext = CreateContext(connectionString))
             {
                 var tiedAt = DateTime.UtcNow.AddMinutes(-1);
@@ -413,74 +382,6 @@ public sealed class Phase9ChatApiTests
         }
     }
 
-    [Fact]
-    public async Task Concurrent_confirmations_create_one_pair_conversation()
-    {
-        var connectionString = TestSqlServer.ConnectionString(
-            $"GymLink_Phase9_Concurrent_{Guid.NewGuid():N}");
-        try
-        {
-            await using (var migration = CreateContext(connectionString))
-            {
-                await migration.Database.MigrateAsync();
-            }
-
-            await using var factory = CreateFactory(connectionString);
-            using var firstClient = factory.CreateClient();
-            using var secondClient = factory.CreateClient();
-            var trainer = await LoginAsync(firstClient, "respecttrainer1");
-            var member = await RegisterAsync(firstClient);
-            var firstReservationId = await SeedReservationAsync(
-                connectionString,
-                member.User.Id,
-                trainer.User.Id,
-                confirmed: false,
-                startInDays: 4);
-            var secondReservationId = await SeedReservationAsync(
-                connectionString,
-                member.User.Id,
-                trainer.User.Id,
-                confirmed: false,
-                startInDays: 5);
-            var firstAdmin = await LoginAsync(firstClient, "admin.respect");
-            var secondAdmin = await LoginAsync(secondClient, "admin.respect");
-            Authorize(firstClient, firstAdmin);
-            Authorize(secondClient, secondAdmin);
-            var firstReservation = await firstClient
-                .GetFromJsonAsync<ReservationDto>(
-                    $"/api/tenant/reservations/{firstReservationId}");
-            var secondReservation = await secondClient
-                .GetFromJsonAsync<ReservationDto>(
-                    $"/api/tenant/reservations/{secondReservationId}");
-
-            var confirmations = await Task.WhenAll(
-                firstClient.PostAsJsonAsync(
-                    $"/api/tenant/reservations/{firstReservationId}/confirm",
-                    new { concurrencyToken = firstReservation!.ConcurrencyToken }),
-                secondClient.PostAsJsonAsync(
-                    $"/api/tenant/reservations/{secondReservationId}/confirm",
-                    new { concurrencyToken = secondReservation!.ConcurrencyToken }));
-            Assert.All(confirmations, response => response.EnsureSuccessStatusCode());
-
-            await using var verification = CreateContext(connectionString);
-            var conversation = Assert.Single(
-                await verification.Conversations
-                    .IgnoreQueryFilters()
-                    .Where(x =>
-                        x.MemberUserId == member.User.Id &&
-                        x.TrainerUserId == trainer.User.Id)
-                    .ToListAsync());
-            Assert.True(
-                conversation.ReservationId == firstReservationId ||
-                conversation.ReservationId == secondReservationId);
-        }
-        finally
-        {
-            await using var cleanup = CreateContext(connectionString);
-            await cleanup.Database.EnsureDeletedAsync();
-        }
-    }
-
     private static async Task<Guid> SeedReservationAsync(
         string connectionString,
         Guid memberUserId,
@@ -544,7 +445,7 @@ public sealed class Phase9ChatApiTests
             offering.Currency);
         if (confirmed)
         {
-            reservation.Confirm(trainerUserId, now);
+            reservation.ConfirmForPayInPerson(memberUserId, now);
         }
         context.AppointmentReservations.Add(reservation);
         if (!await context.UserGymAssignments.IgnoreQueryFilters().AnyAsync(x =>

@@ -454,7 +454,7 @@ internal sealed class AvailabilityService(
             request.TrainerProfileId,
             cancellationToken);
         ValidateFutureRange(request.StartsAtUtc, request.EndsAtUtc);
-        ValidateManagedStatus(request.Status);
+        var managedStatus = ToAvailabilitySlotStatus(request.Status);
         TrainerAvailabilitySlot slot;
         try
         {
@@ -472,9 +472,9 @@ internal sealed class AvailabilityService(
                     trainer.Id,
                     request.StartsAtUtc,
                     request.EndsAtUtc);
-                if (request.Status == AvailabilitySlotStatus.Unavailable)
+                if (managedStatus == AvailabilitySlotStatus.Unavailable)
                 {
-                    entity.Update(request.StartsAtUtc, request.EndsAtUtc, request.Status);
+                    entity.Update(request.StartsAtUtc, request.EndsAtUtc, managedStatus);
                 }
 
                 dbContext.TrainerAvailabilitySlots.Add(entity);
@@ -507,7 +507,7 @@ internal sealed class AvailabilityService(
     {
         var actorId = RequireUser();
         ValidateFutureRange(request.StartsAtUtc, request.EndsAtUtc);
-        ValidateManagedStatus(request.Status);
+        var managedStatus = ToAvailabilitySlotStatus(request.Status);
         TrainerAvailabilitySlot slot;
         try
         {
@@ -527,7 +527,7 @@ internal sealed class AvailabilityService(
                     request.EndsAtUtc,
                     entity.Id,
                     ct);
-                entity.Update(request.StartsAtUtc, request.EndsAtUtc, request.Status);
+                entity.Update(request.StartsAtUtc, request.EndsAtUtc, managedStatus);
                 AddOverrideAudit(actorId, writableTrainer, entity.Id, "availability.updated");
                 await eventRecorder.RecordAsync(new(
                     "availability.changed",
@@ -768,15 +768,17 @@ internal sealed class AvailabilityService(
         }
     }
 
-    private static void ValidateManagedStatus(AvailabilitySlotStatus status)
+    private static AvailabilitySlotStatus ToAvailabilitySlotStatus(
+        ManagedAvailabilityStatus status)
     {
-        if (status is not AvailabilitySlotStatus.Available and
-            not AvailabilitySlotStatus.Unavailable)
+        if (!Enum.IsDefined(status))
         {
             throw new ApplicationRuleException(
                 "availability_status_invalid",
                 "Only Available or Unavailable can be selected by staff.");
         }
+
+        return (AvailabilitySlotStatus)(int)status;
     }
 
     private static IQueryable<TrainerAvailabilitySlot> ApplyRange(
@@ -1115,11 +1117,11 @@ internal sealed class ReservationService(
     }
 
     public async Task<PagedResult<ReservationDto>> SearchTrainerAsync(
-        ReservationSearchRequest request,
+        StaffReservationSearchRequest request,
         CancellationToken cancellationToken)
     {
         var trainer = await RequireOwnTrainerAsync(cancellationToken);
-        return await SearchAsync(request, null, null, trainer.Id, RequireTenant(), null, false, false, cancellationToken);
+        return await SearchAsync(ToReservationSearchRequest(request), null, null, trainer.Id, RequireTenant(), null, false, false, cancellationToken);
     }
 
     public async Task<ReservationDto> GetTrainerAsync(Guid id, CancellationToken cancellationToken)
@@ -1129,21 +1131,21 @@ internal sealed class ReservationService(
     }
 
     public Task<PagedResult<ReservationDto>> SearchTenantAsync(
-        ReservationSearchRequest request,
+        StaffReservationSearchRequest request,
         CancellationToken cancellationToken) =>
-        SearchAsync(request, null, null, request.TrainerProfileId, RequireTenant(), null, false, false, cancellationToken);
+        SearchAsync(ToReservationSearchRequest(request), null, null, request.TrainerProfileId, RequireTenant(), null, false, false, cancellationToken);
 
     public Task<ReservationDto> GetTenantAsync(Guid id, CancellationToken cancellationToken) =>
         GetAsync(id, null, null, RequireTenant(), null, false, false, cancellationToken);
 
     public async Task<PagedResult<ReservationDto>> SearchAdminGymAsync(
         Guid gymId,
-        ReservationSearchRequest request,
+        StaffReservationSearchRequest request,
         CancellationToken cancellationToken)
     {
         var tenantId = await ResolveGymTenantAsync(gymId, cancellationToken);
         var result = await SearchAsync(
-            request,
+            ToReservationSearchRequest(request),
             reservationId: null,
             memberId: null,
             trainerId: request.TrainerProfileId,
@@ -1162,12 +1164,6 @@ internal sealed class ReservationService(
         await dbContext.SaveChangesAsync(cancellationToken);
         return result;
     }
-
-    public Task<ReservationDto> ConfirmAsync(
-        Guid id,
-        ReservationConcurrencyRequest request,
-        CancellationToken cancellationToken) =>
-        TransitionAsync(id, request.ConcurrencyToken, null, ReservationAction.Confirm, cancellationToken);
 
     public Task<ReservationDto> CancelStaffAsync(
         Guid id,
@@ -1211,7 +1207,7 @@ internal sealed class ReservationService(
     {
         var actor = RequireUser();
         var tenantId = explicitTenantId ?? RequireTenant();
-        var provisionedConversation = await transaction.ExecuteSerializableAsync(
+        await transaction.ExecuteSerializableAsync(
             async ct =>
             {
                 var reservations = centralAdmin
@@ -1247,34 +1243,7 @@ internal sealed class ReservationService(
                 using var tenantWrite = centralAdmin
                     ? tenantMutationScope.Begin(tenantId)
                     : null;
-                ConversationProvisioningResult? conversation = null;
-                if (action == ReservationAction.Confirm)
-                {
-                    var stillEligible = await dbContext.Memberships.AnyAsync(
-                        x => x.Id == entity.MembershipId &&
-                             x.Status == MembershipStatus.Active &&
-                             x.StartsAtUtc <= entity.StartsAtUtc &&
-                             x.EndsAtUtc >= entity.EndsAtUtc,
-                        ct);
-                    if (stillEligible && entity.AvailabilitySlotId.HasValue)
-                    {
-                        stillEligible = await dbContext.TrainerAvailabilitySlots.AnyAsync(
-                            x => x.Id == entity.AvailabilitySlotId.Value &&
-                                 x.Status == AvailabilitySlotStatus.Reserved,
-                            ct);
-                    }
-                    if (!stillEligible)
-                    {
-                        throw new ConflictException(
-                            "reservation_prerequisite_invalid",
-                            "The reservation prerequisites are no longer valid.");
-                    }
-
-                    entity.Confirm(actor, now);
-                    conversation = await conversationProvisioner
-                        .EnsureForConfirmedReservationAsync(entity, ct);
-                }
-                else if (action == ReservationAction.Complete)
+                if (action == ReservationAction.Complete)
                 {
                     entity.Complete(actor, now);
                     await recommendationActivity.RecordWorkflowAsync(
@@ -1311,16 +1280,9 @@ internal sealed class ReservationService(
                 }
                 await RecordStatusAsync(entity, actor, ct);
                 await SaveAsync(ct);
-                return conversation;
+                return true;
             },
             cancellationToken);
-
-        if (provisionedConversation is { Created: true })
-        {
-            await conversationNotifier.ConversationAvailableAsync(
-                provisionedConversation,
-                CancellationToken.None);
-        }
 
         if (centralAdmin)
         {
@@ -1544,9 +1506,7 @@ internal sealed class ReservationService(
 
         if (status == ReservationStatus.Pending && staffView)
         {
-            return hasOpenCheckout
-                ? []
-                : requiresPayment ? ["cancel"] : ["confirm", "cancel"];
+            return hasOpenCheckout ? [] : ["cancel"];
         }
 
         if (status == ReservationStatus.Confirmed)
@@ -1755,9 +1715,32 @@ internal sealed class ReservationService(
 
     private enum ReservationAction
     {
-        Confirm,
         Cancel,
         Complete,
+    }
+
+    private static ReservationSearchRequest ToReservationSearchRequest(
+        StaffReservationSearchRequest request)
+    {
+        request.Validate();
+        if (request.Status.HasValue && !Enum.IsDefined(request.Status.Value))
+        {
+            throw new ApplicationRuleException(
+                "reservation_status_invalid",
+                "Staff reservation status must be Confirmed, Completed, or Cancelled.");
+        }
+
+        return new ReservationSearchRequest
+        {
+            TrainerProfileId = request.TrainerProfileId,
+            Status = request.Status.HasValue
+                ? (ReservationStatus)(int)request.Status.Value
+                : null,
+            FromUtc = request.FromUtc,
+            ToUtc = request.ToUtc,
+            Page = request.Page,
+            PageSize = request.PageSize,
+        };
     }
 }
 

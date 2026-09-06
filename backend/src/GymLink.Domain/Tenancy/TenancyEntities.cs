@@ -36,7 +36,7 @@ public sealed class GymRegistrationRequest : AuditedEntity, IConcurrencyTracked
     public decimal Latitude { get; set; }
     public decimal Longitude { get; set; }
     public string? PhoneNumber { get; set; }
-    public GymRegistrationStatus Status { get; set; } = GymRegistrationStatus.Draft;
+    public GymRegistrationStatus Status { get; set; } = GymRegistrationStatus.Submitted;
     public DateTime? SubmittedAtUtc { get; set; }
     public Guid? DecidedByUserId { get; set; }
     public DateTime? DecidedAtUtc { get; set; }
@@ -49,7 +49,7 @@ public sealed class UserGymAssignment : TenantEntity, IConcurrencyTracked
 {
     public Guid UserId { get; set; }
     public string Role { get; set; } = string.Empty;
-    public AssignmentStatus Status { get; set; } = AssignmentStatus.Invited;
+    public AssignmentStatus Status { get; set; } = AssignmentStatus.Ended;
     public DateTime StartsAtUtc { get; set; }
     public DateTime? EndsAtUtc { get; set; }
     public Guid? ApprovedByUserId { get; set; }

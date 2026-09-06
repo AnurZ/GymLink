@@ -762,6 +762,7 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
   final _trainerSearch = TextEditingController();
   final _offeringSearch = TextEditingController();
   bool _loading = true;
+  bool _refreshing = false;
   final Set<String> _imageBusy = {};
   Object? _error;
 
@@ -837,21 +838,47 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
     ),
   );
 
-  Future<void> _load() async {
-    setState(() => _loading = true);
+  Future<void> _load({bool preserveData = false}) async {
+    setState(() {
+      if (preserveData) {
+        _refreshing = true;
+      } else {
+        _loading = true;
+        _error = null;
+      }
+    });
     try {
       final api = context.read<ApiClient>();
       final results = await Future.wait([
         api.page('/api/tenant/trainers'),
         api.page('/api/tenant/trainer-offerings'),
       ]);
-      _trainers = results[0].items;
-      _offerings = results[1].items;
-      _error = null;
+      if (!mounted) return;
+      setState(() {
+        _trainers = results[0].items;
+        _offerings = results[1].items;
+        _error = null;
+      });
     } catch (error) {
-      _error = error;
+      if (!mounted) return;
+      if (preserveData) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Osvježavanje nije uspjelo. Prikazani su prethodni podaci.',
+            ),
+          ),
+        );
+      } else {
+        setState(() => _error = error);
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
+      }
     }
   }
 
@@ -1051,10 +1078,31 @@ class _TrainerManagementScreenState extends State<TrainerManagementScreen> {
                   subtitle: const Text(
                     'Aktivnog člana ove teretane možete unaprijediti u trenera.',
                   ),
-                  trailing: FilledButton.icon(
-                    onPressed: _addTrainer,
-                    icon: const Icon(Icons.person_add_alt_1),
-                    label: const Text('Dodaj trenera'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      FilledButton.tonalIcon(
+                        key: const Key('refresh-trainers-offerings'),
+                        onPressed: _loading || _refreshing
+                            ? null
+                            : () => _load(preserveData: true),
+                        icon: _refreshing
+                            ? const SizedBox.square(
+                                dimension: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.refresh),
+                        label: const Text('Osvježi'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.icon(
+                        onPressed: _addTrainer,
+                        icon: const Icon(Icons.person_add_alt_1),
+                        label: const Text('Dodaj trenera'),
+                      ),
+                    ],
                   ),
                 ),
                 const Divider(height: 1),
@@ -1838,11 +1886,6 @@ class _TenantReservationsScreenState extends State<TenantReservationsScreen> {
         message: 'Želite li označiti rezervaciju završenom?',
         action: 'Označi završenom',
       ),
-      'confirm' => const (
-        title: 'Potvrda rezervacije',
-        message: 'Želite li potvrditi ovu rezervaciju?',
-        action: 'Potvrdi',
-      ),
       _ => const (
         title: 'Promjena rezervacije',
         message: 'Želite li nastaviti?',
@@ -1958,11 +2001,6 @@ class _TenantReservationsScreenState extends State<TenantReservationsScreen> {
                               enabled: actions.isNotEmpty,
                               onSelected: (action) => _command(item, action),
                               itemBuilder: (_) => [
-                                if (actions.contains('confirm'))
-                                  const PopupMenuItem(
-                                    value: 'confirm',
-                                    child: Text('Potvrdi'),
-                                  ),
                                 if (actions.contains('complete'))
                                   const PopupMenuItem(
                                     value: 'complete',

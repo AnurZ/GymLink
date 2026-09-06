@@ -4,6 +4,19 @@ using GymLink.Domain.Enums;
 
 namespace GymLink.Application.Reservations;
 
+public enum ManagedAvailabilityStatus
+{
+    Available = (int)AvailabilitySlotStatus.Available,
+    Unavailable = (int)AvailabilitySlotStatus.Unavailable,
+}
+
+public enum StaffReservationStatus
+{
+    Confirmed = (int)ReservationStatus.Confirmed,
+    Completed = (int)ReservationStatus.Completed,
+    Cancelled = (int)ReservationStatus.Cancelled,
+}
+
 public sealed record AvailabilitySearchRequest : PagedRequest
 {
     public Guid? TrainerProfileId { get; init; }
@@ -76,7 +89,7 @@ public record CreateAvailabilityRequest
     public Guid TrainerProfileId { get; init; }
     public DateTime StartsAtUtc { get; init; }
     public DateTime EndsAtUtc { get; init; }
-    public AvailabilitySlotStatus Status { get; init; } = AvailabilitySlotStatus.Available;
+    public ManagedAvailabilityStatus Status { get; init; } = ManagedAvailabilityStatus.Available;
 }
 
 public sealed record UpdateAvailabilityRequest : CreateAvailabilityRequest
@@ -89,6 +102,14 @@ public sealed record ReservationSearchRequest : PagedRequest
 {
     public Guid? TrainerProfileId { get; init; }
     public ReservationStatus? Status { get; init; }
+    public DateTime? FromUtc { get; init; }
+    public DateTime? ToUtc { get; init; }
+}
+
+public sealed record StaffReservationSearchRequest : PagedRequest
+{
+    public Guid? TrainerProfileId { get; init; }
+    public StaffReservationStatus? Status { get; init; }
     public DateTime? FromUtc { get; init; }
     public DateTime? ToUtc { get; init; }
 }
@@ -172,16 +193,15 @@ public interface IReservationService
     Task<PagedResult<ReservationDto>> SearchMineAsync(ReservationSearchRequest request, CancellationToken cancellationToken);
     Task<ReservationDto> GetMineAsync(Guid id, CancellationToken cancellationToken);
     Task<ReservationDto> CancelMineAsync(Guid id, ReservationConcurrencyRequest request, CancellationToken cancellationToken);
-    Task<PagedResult<ReservationDto>> SearchTrainerAsync(ReservationSearchRequest request, CancellationToken cancellationToken);
+    Task<PagedResult<ReservationDto>> SearchTrainerAsync(StaffReservationSearchRequest request, CancellationToken cancellationToken);
     Task<ReservationDto> GetTrainerAsync(Guid id, CancellationToken cancellationToken);
-    Task<PagedResult<ReservationDto>> SearchTenantAsync(ReservationSearchRequest request, CancellationToken cancellationToken);
+    Task<PagedResult<ReservationDto>> SearchTenantAsync(StaffReservationSearchRequest request, CancellationToken cancellationToken);
     Task<ReservationDto> GetTenantAsync(Guid id, CancellationToken cancellationToken);
-    Task<ReservationDto> ConfirmAsync(Guid id, ReservationConcurrencyRequest request, CancellationToken cancellationToken);
     Task<ReservationDto> CancelStaffAsync(Guid id, StaffCancellationRequest request, CancellationToken cancellationToken);
     Task<ReservationDto> CompleteAsync(Guid id, ReservationConcurrencyRequest request, CancellationToken cancellationToken);
     Task<PagedResult<ReservationDto>> SearchAdminGymAsync(
         Guid gymId,
-        ReservationSearchRequest request,
+        StaffReservationSearchRequest request,
         CancellationToken cancellationToken);
     Task<ReservationDto> CompleteAdminGymAsync(
         Guid gymId,

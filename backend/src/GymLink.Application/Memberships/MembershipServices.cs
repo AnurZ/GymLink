@@ -36,8 +36,7 @@ internal sealed class MembershipRequestService(
         CreateMembershipRequest request,
         CancellationToken cancellationToken)
     {
-        if (!Enum.IsDefined(request.PaymentMethod) ||
-            request.PaymentMethod == MembershipPaymentMethod.StripeFallback)
+        if (!Enum.IsDefined(request.PaymentMethod))
         {
             throw new ApplicationRuleException(
                 "unsupported_membership_payment_method",
@@ -443,8 +442,7 @@ internal sealed class MembershipRequestService(
                   (!request.PaymentCategory.HasValue ||
                    (request.PaymentCategory == MembershipPaymentCategory.PayInPerson
                        ? entity.PaymentMethod == MembershipPaymentMethod.PayInPerson
-                       : entity.PaymentMethod == MembershipPaymentMethod.Stripe ||
-                         entity.PaymentMethod == MembershipPaymentMethod.StripeFallback)) &&
+                       : entity.PaymentMethod == MembershipPaymentMethod.Stripe)) &&
                   (!request.MembershipStatus.HasValue ||
                    membershipSource.Any(membership =>
                        membership.MembershipRequestId == entity.Id &&

@@ -143,7 +143,6 @@ internal sealed class LoggingMembershipWorkflowEventRecorder(
     private static string PaymentMethod(MembershipPaymentMethod method) => method switch
     {
         MembershipPaymentMethod.PayInPerson => "plaćanje uživo",
-        MembershipPaymentMethod.StripeFallback => "kartično plaćanje (test)",
         _ => "kartično plaćanje",
     };
 

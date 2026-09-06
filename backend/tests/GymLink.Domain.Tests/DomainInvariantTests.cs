@@ -13,6 +13,18 @@ namespace GymLink.Domain.Tests;
 public sealed class DomainInvariantTests
 {
     [Fact]
+    public void Public_enum_values_preserve_wire_compatibility_after_status_cleanup()
+    {
+        Assert.Equal(1, (int)GymRegistrationStatus.Submitted);
+        Assert.Equal(2, (int)GymRegistrationStatus.Approved);
+        Assert.Equal(3, (int)GymRegistrationStatus.Rejected);
+        Assert.Equal(1, (int)AssignmentStatus.Active);
+        Assert.Equal(3, (int)AssignmentStatus.Ended);
+        Assert.Equal(0, (int)MembershipPaymentMethod.Stripe);
+        Assert.Equal(2, (int)MembershipPaymentMethod.PayInPerson);
+    }
+
+    [Fact]
     public void Role_names_are_the_approved_closed_set()
     {
         Assert.Equal(

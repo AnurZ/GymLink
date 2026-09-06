@@ -19,6 +19,7 @@ const _reservationStatuses = [
   'Završena',
   'Otkazana',
 ];
+const _staffReservationStatuses = [1, 2, 3];
 const _paymentStatuses = ['Kreirano', 'U obradi', 'Uspješno', 'Neuspješno'];
 const _tenantStatuses = [
   'Čeka aktivaciju',
@@ -642,6 +643,7 @@ class _CentralReservationsTabState extends State<_CentralReservationsTab> {
               allLabel: 'Svi statusi',
               value: _status,
               values: _reservationStatuses,
+              valueIndexes: _staffReservationStatuses,
               onChanged: (value) {
                 _status = value;
                 _page = 1;
@@ -753,6 +755,7 @@ class _FilterDropdown extends StatelessWidget {
     required this.value,
     required this.values,
     required this.onChanged,
+    this.valueIndexes,
     super.key,
   });
 
@@ -760,6 +763,7 @@ class _FilterDropdown extends StatelessWidget {
   final String allLabel;
   final int? value;
   final List<String> values;
+  final List<int>? valueIndexes;
   final ValueChanged<int?> onChanged;
 
   @override
@@ -771,8 +775,7 @@ class _FilterDropdown extends StatelessWidget {
       decoration: InputDecoration(labelText: label),
       items: [
         DropdownMenuItem(value: null, child: Text(allLabel)),
-        ...List.generate(
-          values.length,
+        ...(valueIndexes ?? List.generate(values.length, (index) => index)).map(
           (index) => DropdownMenuItem(
             value: index,
             child: Text(values[index], overflow: TextOverflow.ellipsis),

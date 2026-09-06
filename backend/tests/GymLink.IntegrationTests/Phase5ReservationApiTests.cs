@@ -116,6 +116,21 @@ public sealed class Phase5ReservationApiTests
             var schedule = await scheduleResponse.Content.ReadFromJsonAsync<TrainerScheduleDto>();
             Assert.NotNull(schedule);
             Assert.Single(schedule.Shifts);
+
+            var invalidManagedAvailability = await setupClient.PostAsJsonAsync(
+                "/api/tenant/trainer-availability",
+                new
+                {
+                    trainerProfileId = trainer.Id,
+                    startsAtUtc = start.AddDays(10),
+                    endsAtUtc = start.AddDays(10).AddHours(1),
+                    status = (int)AvailabilitySlotStatus.Reserved,
+                });
+            Assert.Equal(HttpStatusCode.BadRequest, invalidManagedAvailability.StatusCode);
+            Assert.Equal(
+                "availability_status_invalid",
+                await ProblemCodeAsync(invalidManagedAvailability));
+
             var publicAvailability = await setupClient
                 .GetFromJsonAsync<PagedResult<AvailabilityDto>>(
                     $"/api/trainers/{trainer.Id}/availability" +
@@ -295,8 +310,15 @@ public sealed class Phase5ReservationApiTests
             var confirm = await setupClient.PostAsJsonAsync(
                 $"/api/tenant/reservations/{reservation.Id}/confirm",
                 new { concurrencyToken = reservation.ConcurrencyToken });
-            Assert.Equal(HttpStatusCode.BadRequest, confirm.StatusCode);
-            Assert.Equal("payment_confirmation_required", await ProblemCodeAsync(confirm));
+            Assert.Equal(HttpStatusCode.NotFound, confirm.StatusCode);
+
+            var invalidStaffStatus = await setupClient.GetAsync(
+                $"/api/tenant/reservations?status={(int)ReservationStatus.Pending}" +
+                "&page=1&pageSize=20");
+            Assert.Equal(HttpStatusCode.BadRequest, invalidStaffStatus.StatusCode);
+            Assert.Equal(
+                "validation_failed",
+                await ProblemCodeAsync(invalidStaffStatus));
 
             Authorize(setupClient, winningSession);
             var checkout = await setupClient.PostAsync(

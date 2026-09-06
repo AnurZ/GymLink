@@ -124,6 +124,11 @@ public sealed class Review06CentralOperationsTests
             }
 
             Authorize(client, centralAdmin);
+            var retiredDraftFilter = await client.GetAsync(
+                "/api/admin/gym-registration-requests?status=0&page=1&pageSize=10");
+            Assert.Equal(HttpStatusCode.BadRequest, retiredDraftFilter.StatusCode);
+            Assert.Equal("validation_failed", await ProblemCodeAsync(retiredDraftFilter));
+
             var membershipPage = await client.GetFromJsonAsync<PagedResult<MembershipRequestDto>>(
                 $"/api/admin/gyms/{gymId}/membership-requests" +
                 "?paymentCategory=PayInPerson&member=Central%20Cash%20Member&page=1&pageSize=10");
@@ -160,6 +165,12 @@ public sealed class Review06CentralOperationsTests
             Assert.False(confirmedCash.Membership.IsPaid);
             Assert.Empty(confirmedCash.AllowedActions);
             Assert.Empty(confirmedCash.Membership.AllowedActions);
+
+            var invalidPendingFilter = await client.GetAsync(
+                $"/api/admin/gyms/{gymId}/reservations" +
+                $"?status={(int)ReservationStatus.Pending}&page=1&pageSize=100");
+            Assert.Equal(HttpStatusCode.BadRequest, invalidPendingFilter.StatusCode);
+            Assert.Equal("validation_failed", await ProblemCodeAsync(invalidPendingFilter));
 
             var reservations = await client.GetFromJsonAsync<PagedResult<ReservationDto>>(
                 $"/api/admin/gyms/{gymId}/reservations" +

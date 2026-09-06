@@ -1508,6 +1508,14 @@ void main() {
       }
       expect(find.byTooltip('Odobri'), findsOneWidget);
       expect(find.byTooltip('Odbij'), findsOneWidget);
+      await tester.tap(
+        find.widgetWithText(DropdownButtonFormField<int?>, 'Status pregleda'),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Draft'), findsNothing);
+      expect(find.text('Submitted'), findsWidgets);
+      await tester.tap(find.text('Submitted').last);
+      await tester.pumpAndSettle();
 
       await show(const UserManagementScreen());
       await tester.pumpAndSettle();
@@ -2002,6 +2010,110 @@ void main() {
     },
   );
 
+  testWidgets(
+    'Trainer Management refreshes ratings and offerings without clearing searches',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final gate = Completer<void>();
+      final api = _TrainerManagementRefreshApi(refreshGate: gate);
+      await tester.pumpWidget(
+        Provider<ApiClient>.value(
+          value: api,
+          child: MaterialApp(
+            theme: buildGymLinkTheme(),
+            home: const Scaffold(body: TrainerManagementScreen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const Key('trainer-management-trainer-search')),
+        'Active',
+      );
+      await tester.enterText(
+        find.byKey(const Key('trainer-management-offering-search')),
+        'trening',
+      );
+      await tester.tap(find.byKey(const Key('refresh-trainers-offerings')));
+      await tester.pump();
+
+      final refreshingButton = tester.widget<FilledButton>(
+        find.byKey(const Key('refresh-trainers-offerings')),
+      );
+      expect(refreshingButton.onPressed, isNull);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('refresh-trainers-offerings')),
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('3.5'), findsOneWidget);
+      expect(find.text('Stari trening'), findsOneWidget);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('4.9'), findsOneWidget);
+      expect(find.text('Novi trening'), findsOneWidget);
+      expect(find.text('Stari trening'), findsNothing);
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const Key('trainer-management-trainer-search')),
+            )
+            .controller!
+            .text,
+        'Active',
+      );
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const Key('trainer-management-offering-search')),
+            )
+            .controller!
+            .text,
+        'trening',
+      );
+      expect(api.trainerLoads, 2);
+      expect(api.offeringLoads, 2);
+    },
+  );
+
+  testWidgets('Trainer Management keeps prior data when refresh fails', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _TrainerManagementRefreshApi(failRefresh: true);
+    await tester.pumpWidget(
+      Provider<ApiClient>.value(
+        value: api,
+        child: MaterialApp(
+          theme: buildGymLinkTheme(),
+          home: const Scaffold(body: TrainerManagementScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('refresh-trainers-offerings')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('3.5'), findsOneWidget);
+    expect(find.text('Stari trening'), findsOneWidget);
+    expect(
+      find.text('Osvježavanje nije uspjelo. Prikazani su prethodni podaci.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('GymAdmin deactivates and reactivates a trainer with a reason', (
     tester,
   ) async {
@@ -2364,6 +2476,14 @@ void main() {
       );
 
       await tester.tap(find.text('Rezervacije'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('central-reservation-status-filter')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Na čekanju'), findsNothing);
+      expect(find.text('Potvrđena'), findsWidgets);
+      await tester.tap(find.text('Potvrđena').last);
       await tester.pumpAndSettle();
       expect(find.text('Plaćanje uživo — bez online zapisa'), findsOneWidget);
       expect(
@@ -3598,5 +3718,71 @@ class _GymAdminTrainerApi extends ApiClient {
       };
     }
     throw StateError('Unexpected post request: $path');
+  }
+}
+
+class _TrainerManagementRefreshApi extends ApiClient {
+  _TrainerManagementRefreshApi({this.refreshGate, this.failRefresh = false})
+    : super(_TestTokens());
+
+  final Completer<void>? refreshGate;
+  final bool failRefresh;
+  int trainerLoads = 0;
+  int offeringLoads = 0;
+
+  @override
+  Future<PagedData> page(
+    String path, {
+    Map<String, Object?> query = const {},
+  }) async {
+    if (path == '/api/tenant/trainers') {
+      trainerLoads++;
+      if (trainerLoads > 1) {
+        await refreshGate?.future;
+        if (failRefresh) throw StateError('refresh failed');
+      }
+      final refreshed = trainerLoads > 1;
+      return PagedData(
+        items: [
+          {
+            'id': 'trainer-1',
+            'displayName': 'Active Trainer',
+            'credentials': 'Certifikat',
+            'averageRating': refreshed ? 4.9 : 3.5,
+            'reviewCount': refreshed ? 12 : 2,
+            'isActive': true,
+          },
+        ],
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
+      );
+    }
+    if (path == '/api/tenant/trainer-offerings') {
+      offeringLoads++;
+      if (offeringLoads > 1) {
+        await refreshGate?.future;
+        if (failRefresh) throw StateError('refresh failed');
+      }
+      final refreshed = offeringLoads > 1;
+      return PagedData(
+        items: [
+          {
+            'id': refreshed ? 'offering-2' : 'offering-1',
+            'trainerProfileId': 'trainer-1',
+            'name': refreshed ? 'Novi trening' : 'Stari trening',
+            'trainingType': 'Funkcionalni',
+            'durationMinutes': 60,
+            'price': 30,
+            'currency': 'BAM',
+            'isActive': true,
+          },
+        ],
+        page: 1,
+        pageSize: 20,
+        totalCount: 1,
+      );
+    }
+    throw StateError('Unexpected page request: $path');
   }
 }

@@ -1,11 +1,10 @@
 namespace GymLink.Domain.Enums;
 
-public enum GymRegistrationStatus { Draft, Submitted, Approved, Rejected }
+public enum GymRegistrationStatus { Submitted = 1, Approved = 2, Rejected = 3 }
 public enum TenantStatus { PendingActivation, Active, Inactive, Suspended }
-public enum AssignmentStatus { Invited, Active, Suspended, Ended }
+public enum AssignmentStatus { Active = 1, Ended = 3 }
 public enum MembershipRequestStatus { Pending, Approved, Rejected, Cancelled }
-// StripeFallback remains only so historical string-backed rows can be read.
-public enum MembershipPaymentMethod { Stripe, StripeFallback, PayInPerson }
+public enum MembershipPaymentMethod { Stripe = 0, PayInPerson = 2 }
 public enum MembershipStatus { PendingPayment, Active, Expired, Cancelled, Suspended }
 public enum AvailabilitySlotStatus { Available, Unavailable, Reserved, Cancelled }
 public enum TrainerShiftPeriod { Morning, Evening }

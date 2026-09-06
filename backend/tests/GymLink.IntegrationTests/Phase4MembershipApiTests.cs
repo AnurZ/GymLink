@@ -108,7 +108,7 @@ public sealed class Phase4MembershipApiTests
                 });
             Assert.Equal(HttpStatusCode.BadRequest, legacyMethod.StatusCode);
             Assert.Equal(
-                "unsupported_membership_payment_method",
+                "validation_failed",
                 await ReadProblemCodeAsync(legacyMethod));
 
             var removedRoutes = new[]
@@ -705,7 +705,6 @@ public sealed class Phase4MembershipApiTests
                 new[]
                 {
                     MembershipPaymentMethod.Stripe,
-                    MembershipPaymentMethod.StripeFallback,
                 }));
 
             var approval = await client.PostAsJsonAsync(
