@@ -58,8 +58,9 @@ class EmptyState extends StatelessWidget {
 }
 
 class StatusPill extends StatelessWidget {
-  const StatusPill(this.label, {super.key});
+  const StatusPill(this.label, {this.color, super.key});
   final String label;
+  final Color? color;
   @override
   Widget build(BuildContext context) {
     final positive =
@@ -70,11 +71,13 @@ class StatusPill extends StatelessWidget {
         label.contains('Rejected') ||
         label.contains('Cancelled') ||
         label.contains('Inactive');
-    final color = positive
-        ? GymLinkColors.success
-        : negative
-        ? GymLinkColors.danger
-        : GymLinkColors.blue;
+    final color =
+        this.color ??
+        (positive
+            ? GymLinkColors.success
+            : negative
+            ? GymLinkColors.danger
+            : GymLinkColors.blue);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: color.withValues(alpha: .12),

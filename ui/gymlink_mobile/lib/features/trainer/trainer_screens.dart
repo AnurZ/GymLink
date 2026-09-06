@@ -86,6 +86,9 @@ class _TrainerAppointmentsScreenState extends State<TrainerAppointmentsScreen> {
       padding: const EdgeInsets.all(16),
       children: [
         DropdownButtonFormField<int?>(
+          isExpanded: true,
+          isDense: false,
+          itemHeight: null,
           key: const Key('trainer-appointment-status-filter'),
           initialValue: _status,
           decoration: const InputDecoration(labelText: 'Status'),
@@ -1124,6 +1127,9 @@ class _OfferingDialogState extends State<_OfferingDialog> {
           ),
           const SizedBox(height: 10),
           DropdownButtonFormField<Map<String, dynamic>>(
+            isExpanded: true,
+            isDense: false,
+            itemHeight: null,
             initialValue: _type,
             decoration: const InputDecoration(labelText: 'Tip treninga'),
             items: widget.trainingTypes

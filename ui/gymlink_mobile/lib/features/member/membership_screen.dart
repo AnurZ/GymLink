@@ -118,6 +118,9 @@ class _MembershipScreenState extends State<MembershipScreen> {
           ),
           const SizedBox(height: 10),
           DropdownButtonFormField<int?>(
+            isExpanded: true,
+            isDense: false,
+            itemHeight: null,
             key: const Key('membership-status-filter'),
             initialValue: _membershipStatus,
             decoration: const InputDecoration(labelText: 'Status članstva'),
@@ -183,6 +186,9 @@ class _MembershipScreenState extends State<MembershipScreen> {
           ),
           const SizedBox(height: 10),
           DropdownButtonFormField<int?>(
+            isExpanded: true,
+            isDense: false,
+            itemHeight: null,
             key: const Key('membership-request-status-filter'),
             initialValue: _requestStatus,
             decoration: const InputDecoration(labelText: 'Status zahtjeva'),

@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/api.dart';
+import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 
 const _requestStatuses = ['Na čekanju', 'Odobren', 'Odbijen', 'Otkazan'];
@@ -489,14 +490,30 @@ class _CentralMembershipsTabState extends State<_CentralMembershipsTab> {
                                 ),
                               ),
                               DataCell(
-                                Text(
-                                  membership == null
-                                      ? '—'
-                                      : enumLabel(
+                                membership == null
+                                    ? const Text('—')
+                                    : StatusPill(
+                                        enumLabel(
                                           membership['status'],
                                           _membershipStatuses,
                                         ),
-                                ),
+                                        color: switch (_enumIndex(
+                                          membership['status'],
+                                          const [
+                                            'PendingPayment',
+                                            'Active',
+                                            'Expired',
+                                            'Cancelled',
+                                            'Suspended',
+                                          ],
+                                        )) {
+                                          1 => GymLinkColors.success,
+                                          2 => Colors.blueGrey,
+                                          3 => GymLinkColors.danger,
+                                          4 => Colors.orange.shade800,
+                                          _ => GymLinkColors.blue,
+                                        },
+                                      ),
                               ),
                               DataCell(Text(_date(item['requestedAtUtc']))),
                               DataCell(
@@ -635,6 +652,7 @@ class _CentralReservationsTabState extends State<_CentralReservationsTab> {
         alignment: Alignment.centerLeft,
         child: Wrap(
           spacing: 12,
+          runSpacing: 12,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             _FilterDropdown(
@@ -709,6 +727,17 @@ class _CentralReservationsTabState extends State<_CentralReservationsTab> {
                                     item['status'],
                                     _reservationStatuses,
                                   ),
+                                  color:
+                                      switch (_enumIndex(item['status'], const [
+                                        'Pending',
+                                        'Confirmed',
+                                        'Completed',
+                                        'Cancelled',
+                                      ])) {
+                                        2 => GymLinkColors.success,
+                                        3 => GymLinkColors.danger,
+                                        _ => GymLinkColors.blue,
+                                      },
                                 ),
                               ),
                               DataCell(
@@ -768,18 +797,17 @@ class _FilterDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SizedBox(
-    width: 190,
+    width: MediaQuery.textScalerOf(context).scale(190),
     child: DropdownButtonFormField<int?>(
+      isDense: false,
+      itemHeight: null,
       initialValue: value,
       isExpanded: true,
       decoration: InputDecoration(labelText: label),
       items: [
         DropdownMenuItem(value: null, child: Text(allLabel)),
         ...(valueIndexes ?? List.generate(values.length, (index) => index)).map(
-          (index) => DropdownMenuItem(
-            value: index,
-            child: Text(values[index], overflow: TextOverflow.ellipsis),
-          ),
+          (index) => DropdownMenuItem(value: index, child: Text(values[index])),
         ),
       ],
       onChanged: onChanged,

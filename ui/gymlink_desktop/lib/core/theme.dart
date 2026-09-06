@@ -23,8 +23,10 @@ ThemeData buildGymLinkTheme() => ThemeData(
   ),
   inputDecorationTheme: InputDecorationTheme(
     filled: true,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
     fillColor: const Color(0xFFF1F3F6),
-    border: OutlineInputBorder(
+    // Filled borders reserve space for floating labels inside the field.
+    border: UnderlineInputBorder(
       borderRadius: BorderRadius.circular(12),
       borderSide: BorderSide.none,
     ),

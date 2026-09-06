@@ -429,6 +429,8 @@ class _TenantMembershipRequestsScreenState
           SizedBox(
             width: 210,
             child: DropdownButtonFormField<int?>(
+              isDense: false,
+              itemHeight: null,
               key: const Key('membership-request-status-filter'),
               initialValue: _status,
               isExpanded: true,
@@ -456,6 +458,8 @@ class _TenantMembershipRequestsScreenState
           SizedBox(
             width: 210,
             child: DropdownButtonFormField<int?>(
+              isDense: false,
+              itemHeight: null,
               key: const Key('membership-payment-method-filter'),
               initialValue: _paymentCategory,
               isExpanded: true,
@@ -475,6 +479,8 @@ class _TenantMembershipRequestsScreenState
           SizedBox(
             width: 210,
             child: DropdownButtonFormField<int?>(
+              isDense: false,
+              itemHeight: null,
               key: const Key('linked-membership-status-filter'),
               initialValue: _membershipStatus,
               isExpanded: true,
@@ -1679,6 +1685,9 @@ class _TenantAvailabilityScreenState extends State<TenantAvailabilityScreen> {
             SizedBox(
               width: 380,
               child: DropdownButtonFormField<String>(
+                isExpanded: true,
+                isDense: false,
+                itemHeight: null,
                 initialValue: _trainerId,
                 decoration: const InputDecoration(labelText: 'Trener'),
                 items: _trainers
@@ -1926,6 +1935,9 @@ class _TenantReservationsScreenState extends State<TenantReservationsScreen> {
             SizedBox(
               width: 300,
               child: DropdownButtonFormField<int?>(
+                isExpanded: true,
+                isDense: false,
+                itemHeight: null,
                 key: const Key('reservation-status-filter'),
                 initialValue: _status,
                 decoration: const InputDecoration(labelText: 'Status'),
@@ -2850,6 +2862,8 @@ class _TrainerPromotionDialogState extends State<_TrainerPromotionDialog> {
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<Map<String, dynamic>>(
+                  isDense: false,
+                  itemHeight: null,
                   initialValue: _candidate,
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Aktivni član'),
@@ -3072,6 +3086,9 @@ class _OfferingDialogState extends State<_OfferingDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             DropdownButtonFormField<Map<String, dynamic>>(
+              isExpanded: true,
+              isDense: false,
+              itemHeight: null,
               initialValue: _trainer,
               decoration: const InputDecoration(labelText: 'Trener'),
               items: widget.trainers
@@ -3089,6 +3106,9 @@ class _OfferingDialogState extends State<_OfferingDialog> {
             ),
             const SizedBox(height: 10),
             DropdownButtonFormField<Map<String, dynamic>>(
+              isExpanded: true,
+              isDense: false,
+              itemHeight: null,
               initialValue: _type,
               decoration: const InputDecoration(labelText: 'Tip treninga'),
               items: widget.types
@@ -3498,6 +3518,9 @@ class _GymEditorDialogState extends State<_GymEditorDialog> {
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
+                isExpanded: true,
+                isDense: false,
+                itemHeight: null,
                 initialValue: _cityId,
                 decoration: const InputDecoration(labelText: 'Grad'),
                 items: _items('cities')

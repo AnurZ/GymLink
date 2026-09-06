@@ -2026,6 +2026,8 @@ void main() {
       ),
     );
 
+    await tester.ensureVisible(find.text('Promijeni lozinku'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Promijeni lozinku'));
     await tester.pump();
 

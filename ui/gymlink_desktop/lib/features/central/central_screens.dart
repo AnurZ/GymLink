@@ -229,6 +229,9 @@ class _RegistrationManagementScreenState
         child: SizedBox(
           width: 300,
           child: DropdownButtonFormField<int?>(
+            isExpanded: true,
+            isDense: false,
+            itemHeight: null,
             initialValue: _status,
             decoration: const InputDecoration(labelText: 'Status pregleda'),
             items: [
@@ -598,6 +601,8 @@ class _GymManagementScreenState extends State<GymManagementScreen> {
           SizedBox(
             width: 230,
             child: DropdownButtonFormField<int?>(
+              isDense: false,
+              itemHeight: null,
               isExpanded: true,
               initialValue: _status,
               decoration: const InputDecoration(labelText: 'Status'),
@@ -2380,6 +2385,8 @@ class _GymAdminManagementDialogState extends State<_GymAdminManagementDialog> {
             const SizedBox(height: 10),
             if (_activeGymAdmin case final administrator?) ...[
               DropdownButtonFormField<String>(
+                isDense: false,
+                itemHeight: null,
                 key: const Key('current-gym-admin-dropdown'),
                 initialValue: administrator['id'].toString(),
                 isExpanded: true,
@@ -3095,6 +3102,9 @@ class _RoleDialogState extends State<_RoleDialog> {
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
+                isExpanded: true,
+                isDense: false,
+                itemHeight: null,
                 initialValue: _role,
                 decoration: const InputDecoration(labelText: 'Uloga'),
                 items: const [
@@ -3116,6 +3126,9 @@ class _RoleDialogState extends State<_RoleDialog> {
               if (needsTenant) ...[
                 const SizedBox(height: 10),
                 DropdownButtonFormField<Map<String, dynamic>>(
+                  isExpanded: true,
+                  isDense: false,
+                  itemHeight: null,
                   initialValue: _tenant,
                   decoration: const InputDecoration(labelText: 'Teretana'),
                   items: widget.tenants
@@ -3353,6 +3366,9 @@ class _ReferenceDialogState extends State<_ReferenceDialog> {
             ],
             if (widget.kind == _ReferenceKind.city)
               DropdownButtonFormField<Map<String, dynamic>>(
+                isExpanded: true,
+                isDense: false,
+                itemHeight: null,
                 initialValue: _country,
                 decoration: const InputDecoration(labelText: 'Država'),
                 items: widget.countries

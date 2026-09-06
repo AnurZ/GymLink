@@ -1430,6 +1430,8 @@ class _BookingScreenState extends State<BookingScreen> {
           _trainerCard(context),
           const SizedBox(height: 14),
           DropdownButtonFormField<String>(
+            isDense: false,
+            itemHeight: null,
             key: const Key('booking-offering'),
             isExpanded: true,
             initialValue: _offeringId,

@@ -86,6 +86,9 @@ class _MemberReservationsScreenState extends State<MemberReservationsScreen> {
       padding: const EdgeInsets.all(16),
       children: [
         DropdownButtonFormField<int?>(
+          isExpanded: true,
+          isDense: false,
+          itemHeight: null,
           key: const Key('reservation-status-filter'),
           initialValue: _status,
           decoration: const InputDecoration(labelText: 'Status'),

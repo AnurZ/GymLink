@@ -500,6 +500,9 @@ class _PreferenceEditorScreenState extends State<PreferenceEditorScreen> {
                           ),
                           const SizedBox(height: 10),
                           DropdownButtonFormField<String>(
+                            isExpanded: true,
+                            isDense: false,
+                            itemHeight: null,
                             initialValue: _items[index].cityId,
                             decoration: const InputDecoration(
                               labelText: 'Grad',
@@ -516,6 +519,9 @@ class _PreferenceEditorScreenState extends State<PreferenceEditorScreen> {
                           ),
                           const SizedBox(height: 12),
                           DropdownButtonFormField<String>(
+                            isExpanded: true,
+                            isDense: false,
+                            itemHeight: null,
                             initialValue: _items[index].trainingTypeId,
                             decoration: const InputDecoration(
                               labelText: 'Tip treninga',

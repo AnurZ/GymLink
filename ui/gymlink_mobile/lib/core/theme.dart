@@ -37,16 +37,18 @@ ThemeData buildGymLinkTheme() {
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       fillColor: const Color(0xFFF2F3F6),
-      border: OutlineInputBorder(
+      // Filled borders reserve space for floating labels inside the field.
+      border: UnderlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide.none,
       ),
-      enabledBorder: OutlineInputBorder(
+      enabledBorder: UnderlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide.none,
       ),
-      focusedBorder: OutlineInputBorder(
+      focusedBorder: UnderlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: const BorderSide(color: GymLinkColors.blue, width: 1.5),
       ),
